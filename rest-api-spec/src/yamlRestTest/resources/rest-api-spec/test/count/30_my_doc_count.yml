@@ -1,0 +1,22 @@
+setup:
+  - do:
+      indices.create:
+        index:  test
+  - do:
+      index:
+        index:  test
+        id:     "1"
+        body:   { foo: bar }
+
+  - do:
+      indices.refresh:
+        index: [test]
+
+---
+"my doc count across all indexes":
+  - do:
+      my_doc_count: {}
+
+  - match: {my_doc_count : 1}
+  - match: {per_node_doc_counts.0.doc_count: 1}
+

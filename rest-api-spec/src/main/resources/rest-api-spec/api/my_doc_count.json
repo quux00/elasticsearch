@@ -1,0 +1,26 @@
+ {
+   "my_doc_count":{
+    "documentation":{
+      "url":"https://www.elastic.co/guide/en/elasticsearch/reference/master/search-count.html",
+      "description":"Returns number of documents in all indexes (primary shards only)."
+    },
+    "stability":"stable",
+    "visibility":"public",
+    "headers":{
+      "accept": [ "application/json"],
+      "content_type": ["application/json"]
+    },
+    "url":{
+      "paths":[
+        {
+          "path":"/_my_doc_count",
+          "methods":[
+            "GET"
+          ]
+        }
+      ]
+    },
+    "params":{
+    }
+  }
+}

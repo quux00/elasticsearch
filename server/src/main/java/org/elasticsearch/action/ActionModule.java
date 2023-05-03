@@ -272,6 +272,9 @@ import org.elasticsearch.common.settings.IndexScopedSettings;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.settings.SettingsFilter;
 import org.elasticsearch.common.util.concurrent.ThreadContext;
+import org.elasticsearch.example.MyDocCountAction;
+import org.elasticsearch.example.RestMyDocCountAction;
+import org.elasticsearch.example.TransportMyDocCountAction;
 import org.elasticsearch.gateway.TransportNodesListGatewayStartedShards;
 import org.elasticsearch.health.GetHealthAction;
 import org.elasticsearch.health.RestGetHealthAction;
@@ -608,6 +611,7 @@ public class ActionModule extends AbstractModule {
         }
         ActionRegistry actions = new ActionRegistry();
 
+        actions.register(MyDocCountAction.INSTANCE, TransportMyDocCountAction.class);
         actions.register(MainAction.INSTANCE, TransportMainAction.class);
         actions.register(NodesInfoAction.INSTANCE, TransportNodesInfoAction.class);
         actions.register(RemoteInfoAction.INSTANCE, TransportRemoteInfoAction.class);
@@ -796,6 +800,7 @@ public class ActionModule extends AbstractModule {
                 handler.routes().forEach(route -> restController.registerHandler(route, placeholderRestHandler));
             }
         };
+        registerHandler.accept(new RestMyDocCountAction());
         registerHandler.accept(new RestAddVotingConfigExclusionAction());
         registerHandler.accept(new RestClearVotingConfigExclusionsAction());
         registerHandler.accept(new RestMainAction());
