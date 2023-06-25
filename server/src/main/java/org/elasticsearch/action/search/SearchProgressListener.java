@@ -32,6 +32,12 @@ public abstract class SearchProgressListener {
 
     private List<SearchShard> shards;
 
+    private String progressStatus;
+
+    public String getProgressStatus() {
+        return progressStatus;
+    }
+
     /**
      * Executed when shards are ready to be queried.
      *
@@ -96,6 +102,7 @@ public abstract class SearchProgressListener {
     protected void onFetchFailure(int shardIndex, SearchShardTarget shardTarget, Exception exc) {}
 
     final void notifyListShards(List<SearchShard> shards, List<SearchShard> skippedShards, Clusters clusters, boolean fetchPhase) {
+        progressStatus = "initializing";
         this.shards = shards;
         try {
             onListShards(shards, skippedShards, clusters, fetchPhase);
@@ -105,6 +112,7 @@ public abstract class SearchProgressListener {
     }
 
     final void notifyQueryResult(int shardIndex) {
+        progressStatus = "query phase";
         try {
             onQueryResult(shardIndex);
         } catch (Exception e) {
@@ -113,6 +121,7 @@ public abstract class SearchProgressListener {
     }
 
     final void notifyQueryFailure(int shardIndex, SearchShardTarget shardTarget, Exception exc) {
+        progressStatus = "query failure";
         try {
             onQueryFailure(shardIndex, shardTarget, exc);
         } catch (Exception e) {
@@ -121,6 +130,7 @@ public abstract class SearchProgressListener {
     }
 
     final void notifyPartialReduce(List<SearchShard> shards, TotalHits totalHits, InternalAggregations aggs, int reducePhase) {
+        progressStatus = "query phase (partial reduce)";
         try {
             onPartialReduce(shards, totalHits, aggs, reducePhase);
         } catch (Exception e) {
@@ -129,6 +139,7 @@ public abstract class SearchProgressListener {
     }
 
     protected final void notifyFinalReduce(List<SearchShard> shards, TotalHits totalHits, InternalAggregations aggs, int reducePhase) {
+        progressStatus = "query phase (final reduce)";
         try {
             onFinalReduce(shards, totalHits, aggs, reducePhase);
         } catch (Exception e) {
@@ -137,6 +148,7 @@ public abstract class SearchProgressListener {
     }
 
     final void notifyFetchResult(int shardIndex) {
+        progressStatus = "fetch phase";
         try {
             onFetchResult(shardIndex);
         } catch (Exception e) {
@@ -145,6 +157,7 @@ public abstract class SearchProgressListener {
     }
 
     final void notifyFetchFailure(int shardIndex, SearchShardTarget shardTarget, Exception exc) {
+        progressStatus = "fetch failure";
         try {
             onFetchFailure(shardIndex, shardTarget, exc);
         } catch (Exception e) {

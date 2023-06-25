@@ -8,9 +8,15 @@
 
 package org.elasticsearch.action.search;
 
+import org.elasticsearch.action.support.replication.ReplicationTask;
+import org.elasticsearch.common.Strings;
+import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.tasks.CancellableTask;
+import org.elasticsearch.tasks.Task;
 import org.elasticsearch.tasks.TaskId;
+import org.elasticsearch.xcontent.XContentBuilder;
 
+import java.io.IOException;
 import java.util.Map;
 import java.util.function.Supplier;
 
@@ -35,6 +41,61 @@ public class SearchTask extends CancellableTask {
     }
 
     @Override
+    public Status getStatus() {
+        if (progressListener == null){
+            return null;
+        }
+        return new Status(progressListener.getProgressStatus());
+    }
+
+    public static class Status implements Task.Status {
+
+        private String phase;
+
+        public Status(String phase) {
+            this.phase = phase;
+        }
+
+        @Override
+        public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
+            builder.startObject();
+            builder.field("phase", phase);
+            builder.endObject();
+            return builder;
+        }
+
+        @Override
+        public String getWriteableName() {
+            return "mp_search_status";
+        }
+
+        @Override
+        public void writeTo(StreamOutput out) throws IOException {
+            out.writeString(phase);
+        }
+
+        @Override
+        public String toString() {
+            return Strings.toString(this);
+        }
+
+        // Implements equals and hashcode for testing
+        @Override
+        public boolean equals(Object obj) {
+            if (obj == null || obj.getClass() != SearchTask.Status.class) {
+                return false;
+            }
+            SearchTask.Status other = (SearchTask.Status) obj;
+            return phase.equals(other.phase);
+        }
+
+        @Override
+        public int hashCode() {
+            return phase.hashCode();
+        }
+    }
+
+        @Override
     public final String getDescription() {
         return descriptionSupplier.get();
     }
