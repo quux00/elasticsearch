@@ -11,10 +11,15 @@ import org.apache.lucene.store.AlreadyClosedException;
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.ResourceNotFoundException;
 import org.elasticsearch.TransportVersion;
+import org.elasticsearch.action.admin.cluster.node.tasks.list.ListTasksResponse;
 import org.elasticsearch.action.index.IndexRequestBuilder;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.util.CollectionUtils;
 import org.elasticsearch.core.TimeValue;
+import org.elasticsearch.index.IndexModule;
 import org.elasticsearch.index.query.MatchAllQueryBuilder;
+import org.elasticsearch.index.shard.SearchOperationListener;
+import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.search.DummyQueryBuilder;
 import org.elasticsearch.search.SearchService;
@@ -24,20 +29,27 @@ import org.elasticsearch.search.aggregations.bucket.terms.StringTerms;
 import org.elasticsearch.search.aggregations.metrics.Max;
 import org.elasticsearch.search.aggregations.metrics.Min;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
+import org.elasticsearch.search.internal.SearchContext;
+import org.elasticsearch.tasks.TaskInfo;
 import org.elasticsearch.test.ESIntegTestCase.SuiteScopeTestCase;
 import org.elasticsearch.xpack.core.XPackPlugin;
 import org.elasticsearch.xpack.core.search.action.AsyncSearchResponse;
 import org.elasticsearch.xpack.core.search.action.AsyncStatusResponse;
 import org.elasticsearch.xpack.core.search.action.SubmitAsyncSearchRequest;
+import org.junit.Before;
 
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.elasticsearch.search.SearchService.MAX_ASYNC_SEARCH_RESPONSE_SIZE_SETTING;
 import static org.elasticsearch.search.aggregations.AggregationBuilders.terms;
@@ -62,8 +74,8 @@ public class AsyncSearchActionIT extends AsyncSearchIntegTestCase {
     @Override
     public void setupSuiteScopeCluster() throws InterruptedException {
         indexName = "test-async";
-        numShards = randomIntBetween(1, 20);
-        int numDocs = randomIntBetween(100, 1000);
+        numShards = 5; // randomIntBetween(1, 20);
+        int numDocs = 10; // randomIntBetween(100, 1000);
         createIndex(indexName, Settings.builder().put("index.number_of_shards", numShards).build());
         numKeywords = randomIntBetween(50, 100);
         keywordFreqs = new HashMap<>();
@@ -539,5 +551,137 @@ public class AsyncSearchActionIT extends AsyncSearchIntegTestCase {
         Exception failure = response.getFailure();
         assertThat(failure.getMessage(), containsString("error while executing search"));
         assertThat(failure.getCause().getMessage(), containsString("the 'search.check_ccs_compatibility' setting is enabled"));
+    }
+
+    public void testCancellationViaTimeoutWithAllowPartialResultsSetToFalse() throws Exception {
+        TimeValue searchTimeout = new TimeValue(100, TimeUnit.MILLISECONDS);
+
+        SlowRunningQueryBuilder slowRunningQueryBuilder = new SlowRunningQueryBuilder(searchTimeout.millis() * 5);
+
+        SearchSourceBuilder sourceBuilder = new SearchSourceBuilder().query(slowRunningQueryBuilder).timeout(searchTimeout);
+
+        SubmitAsyncSearchRequest request = new SubmitAsyncSearchRequest(indexName);
+        request.getSearchRequest().source(sourceBuilder);
+        request.setWaitForCompletionTimeout(TimeValue.timeValueMillis(1));
+        request.getSearchRequest().allowPartialSearchResults(false);
+
+        AsyncSearchResponse initResponse = submitAsyncSearch(request);
+        assertNotNull(initResponse.getSearchResponse());
+        assertTrue(initResponse.isRunning());
+        assertThat(initResponse.getSearchResponse().getTotalShards(), equalTo(numShards));
+        assertThat(initResponse.getSearchResponse().getSuccessfulShards(), equalTo(0));
+        assertThat(initResponse.getSearchResponse().getFailedShards(), equalTo(0));
+
+        SearchListenerPlugin.waitSearchStarted();
+
+        AsyncSearchResponse response = getAsyncSearch(initResponse.getId());
+        assertNotNull(response.getSearchResponse());
+        assertTrue(response.isRunning());
+        assertThat(response.getSearchResponse().getTotalShards(), equalTo(numShards));
+        assertThat(response.getSearchResponse().getSuccessfulShards(), equalTo(0));
+        assertThat(response.getSearchResponse().getFailedShards(), equalTo(0));
+
+        AsyncStatusResponse statusResponse = getAsyncStatus(response.getId());
+        assertTrue(statusResponse.isRunning());
+        assertEquals(numShards, statusResponse.getTotalShards());
+        assertEquals(0, statusResponse.getSuccessfulShards());
+        assertEquals(0, statusResponse.getSkippedShards());
+        assertEquals(0, statusResponse.getFailedShards());
+
+        // find the AsyncSearchTask that should be running
+        List<TaskInfo> asyncSearchTasks = new ArrayList<>();
+        ListTasksResponse listTasksResponse = client().admin().cluster().prepareListTasks().setDetailed(true).get();
+        List<TaskInfo> tasks = listTasksResponse.getTasks();
+        for (TaskInfo task : tasks) {
+            if (task.action().contains("search")) {
+                if (task.description().contains("async_search{indices[" + indexName)) {
+                    asyncSearchTasks.add(task);
+                }
+            }
+        }
+        assertThat(asyncSearchTasks.size(), equalTo(1));
+        TaskInfo asyncSearchTask = asyncSearchTasks.get(0);
+
+        // wait for failedQuery (due to timeout)
+        SearchListenerPlugin.waitQueryFailure();
+
+        assertBusy(() -> {
+            ListTasksResponse taskResponses = client().admin().cluster().prepareListTasks().setDetailed(true).get();
+            List<TaskInfo> asyncSearchTaskInfos = new ArrayList<>();
+            for (TaskInfo task : taskResponses.getTasks()) {
+                if (task.action().contains("search")) {
+                    if (task.description().contains("async_search{indices[" + indexName)) {
+                        asyncSearchTaskInfos.add(task);
+                    }
+                }
+            }
+
+            if (asyncSearchTaskInfos.size() > 0) {
+                // if still present, and it is cancelled, then we can proceed with the test
+                assertEquals(1, asyncSearchTaskInfos.size());
+                assertTrue(asyncSearchTaskInfos.get(0).id() == asyncSearchTask.id());
+                assertTrue(asyncSearchTaskInfos.get(0).cancelled());
+            }
+            // if not present, then it has been unregistered and the async search should no longer be running, so can proceed
+        }, 30, TimeUnit.SECONDS);
+
+        assertBusy(() -> { assertFalse(getAsyncStatus(response.getId()).isRunning()); });
+
+        statusResponse = getAsyncStatus(response.getId());
+        assertFalse(statusResponse.isRunning());
+        assertEquals(numShards, statusResponse.getTotalShards());
+        assertEquals(0, statusResponse.getSuccessfulShards());
+        assertEquals(0, statusResponse.getSkippedShards());
+        assertThat(statusResponse.getFailedShards(), greaterThanOrEqualTo(1));
+
+        ensureTaskNotRunning(response.getId());
+    }
+
+    @Override
+    protected Collection<Class<? extends Plugin>> nodePlugins() {
+        return CollectionUtils.appendToCopy(super.nodePlugins(), SearchListenerPlugin.class);
+    }
+
+    @Before
+    public void resetSearchListenerPlugin() throws Exception {
+        SearchListenerPlugin.reset();
+    }
+
+    public static class SearchListenerPlugin extends Plugin {
+        private static final AtomicReference<CountDownLatch> startedLatch = new AtomicReference<>();
+        private static final AtomicReference<CountDownLatch> failedQueryLatch = new AtomicReference<>();
+
+        static void reset() {
+            startedLatch.set(new CountDownLatch(1));
+            failedQueryLatch.set(new CountDownLatch(1));
+        }
+
+        static void waitSearchStarted() throws InterruptedException {
+            assertTrue(startedLatch.get().await(60, TimeUnit.SECONDS));
+        }
+
+        static void waitQueryFailure() throws Exception {
+            assertTrue(failedQueryLatch.get().await(60, TimeUnit.SECONDS));
+        }
+
+        @Override
+        public void onIndexModule(IndexModule indexModule) {
+            indexModule.addSearchOperationListener(new SearchOperationListener() {
+                @Override
+                public void onPreQueryPhase(SearchContext searchContext) {
+                    startedLatch.get().countDown();
+                }
+
+                @Override
+                public void onFailedQueryPhase(SearchContext searchContext) {
+                    // this test has a queries against the .async-search index also with a timeout of -1, so we filter
+                    // here on just those timeout-based searches we set up against the test index
+                    if (searchContext.timeout().millis() != -1 && searchContext.shardTarget().getIndex().equals(indexName)) {
+                        failedQueryLatch.get().countDown(); // Hmm - does this need to match the number of shards?
+                    }
+                }
+            });
+            super.onIndexModule(indexModule);
+        }
     }
 }

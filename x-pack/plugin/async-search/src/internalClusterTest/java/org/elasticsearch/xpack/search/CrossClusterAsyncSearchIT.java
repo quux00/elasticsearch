@@ -254,7 +254,6 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
                 .get();
             List<TaskInfo> tasks = listTasksResponse.getTasks();
             assertThat(tasks.size(), equalTo(1));
-            final TaskInfo rootTask = tasks.get(0);
 
             AtomicReference<List<TaskInfo>> remoteClusterSearchTasks = new AtomicReference<>();
             assertBusy(() -> {
