@@ -8,6 +8,8 @@
 
 package org.elasticsearch.action.search;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.elasticsearch.TransportVersion;
 import org.elasticsearch.Version;
 import org.elasticsearch.action.ActionRequest;
@@ -41,6 +43,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.stream.Collectors;
 
 import static org.elasticsearch.action.ValidateActions.addValidationError;
 
@@ -55,6 +58,8 @@ import static org.elasticsearch.action.ValidateActions.addValidationError;
  * @see SearchResponse
  */
 public class SearchRequest extends ActionRequest implements IndicesRequest.Replaceable, Rewriteable<SearchRequest> {
+
+    private static final Logger logger = LogManager.getLogger(SearchRequest.class);
 
     public static final ToXContent.Params FORMAT_PARAMS = new ToXContent.MapParams(Collections.singletonMap("pretty", "false"));
 
@@ -122,6 +127,7 @@ public class SearchRequest extends ActionRequest implements IndicesRequest.Repla
         this.finalReduce = true;
         this.minCompatibleShardNode = minCompatibleShardNode;
         this.ccsMinimizeRoundtrips = minCompatibleShardNode == null;
+        logger.warn("AAA SearchRequest(Version) ctor");
     }
 
     /**
@@ -155,6 +161,7 @@ public class SearchRequest extends ActionRequest implements IndicesRequest.Repla
         }
         indices(indices);
         this.source = source;
+        logger.warn("AAA SearchRequest(indices, source) ctor");
     }
 
     @Override
@@ -223,6 +230,7 @@ public class SearchRequest extends ActionRequest implements IndicesRequest.Repla
         this.waitForCheckpoints = searchRequest.waitForCheckpoints;
         this.waitForCheckpointsTimeout = searchRequest.waitForCheckpointsTimeout;
         this.forceSyntheticSource = searchRequest.forceSyntheticSource;
+        logger.warn("AAA SearchRequest(private) ctor");
     }
 
     /**
@@ -277,6 +285,8 @@ public class SearchRequest extends ActionRequest implements IndicesRequest.Repla
         } else {
             forceSyntheticSource = false;
         }
+
+        logger.warn("AAA SearchRequest(StreamInput) ctor");
     }
 
     @Override
@@ -633,6 +643,7 @@ public class SearchRequest extends ActionRequest implements IndicesRequest.Repla
      */
     @Override
     public String[] indices() {
+        logger.warn("AAA SearchRequest indices: " + Arrays.stream(indices).collect(Collectors.toList()));
         return indices;
     }
 
@@ -827,6 +838,7 @@ public class SearchRequest extends ActionRequest implements IndicesRequest.Repla
 
     @Override
     public SearchRequest rewrite(QueryRewriteContext ctx) throws IOException {
+        logger.warn("AAA SearchRequest rewrite");
         if (source == null) {
             return this;
         }
@@ -864,6 +876,7 @@ public class SearchRequest extends ActionRequest implements IndicesRequest.Repla
 
     @Override
     public SearchTask createTask(long id, String type, String action, TaskId parentTaskId, Map<String, String> headers) {
+        logger.warn("AAA SearchRequest createTask");
         return new SearchTask(id, type, action, this::buildDescription, parentTaskId, headers);
     }
 
