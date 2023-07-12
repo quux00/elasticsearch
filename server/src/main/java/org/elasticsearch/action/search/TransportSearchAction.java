@@ -8,6 +8,8 @@
 
 package org.elasticsearch.action.search;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.elasticsearch.TransportVersion;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionListenerResponseHandler;
@@ -73,6 +75,8 @@ import org.elasticsearch.transport.Transport;
 import org.elasticsearch.transport.TransportRequestOptions;
 import org.elasticsearch.transport.TransportService;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -103,7 +107,7 @@ import static org.elasticsearch.threadpool.ThreadPool.Names.SYSTEM_CRITICAL_READ
 import static org.elasticsearch.threadpool.ThreadPool.Names.SYSTEM_READ;
 
 public class TransportSearchAction extends HandledTransportAction<SearchRequest, SearchResponse> {
-
+    private static final Logger logger = LogManager.getLogger(TransportSearchAction.class);
     private static final DeprecationLogger DEPRECATION_LOGGER = DeprecationLogger.getLogger(TransportSearchAction.class);
     public static final String FROZEN_INDICES_DEPRECATION_MESSAGE = "Searching frozen indices [{}] is deprecated."
         + " Consider cold or frozen tiers in place of frozen indices. The frozen feature will be removed in a feature release.";
@@ -301,6 +305,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                 searchContext = null;
                 remoteClusterIndices = remoteClusterService.groupIndices(rewritten.indicesOptions(), rewritten.indices());
             }
+
             OriginalIndices localIndices = remoteClusterIndices.remove(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY);
             final ClusterState clusterState = clusterService.state();
             if (remoteClusterIndices.isEmpty()) {
@@ -321,17 +326,36 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                         && rewritten.source().aggregations() != null
                             ? searchService.aggReduceContextBuilder(task::isCancelled, rewritten.source().aggregations())
                             : null;
-                    final int totalClusters = (localIndices == null ? 0 : 1) + remoteClusterIndices.size();
-                    var initClusters = new SearchResponse.Clusters(totalClusters, 0, 0, remoteClusterIndices.size(), true);
+                    // final int totalClusters = (localIndices == null ? 0 : 1) + remoteClusterIndices.size();
+
+                    // For query: POST blogs,remote1:*,*:web*/_async_search?ccs_minimize_roundtrips=true
+                    /*
+                       RRR: remoteClusterIndices.keySet(): [remote2, remote1]
+                       RRR: remoteClusterIndices.values():
+                        [OriginalIndices{indices=[web*], indicesOptions=IndicesOptions[ignore_unavailable=false, allow_no_ind
+                         OriginalIndices{indices=[*, web*], indicesOptions=IndicesOptions[ignore_unavailable=false, ...
+                       so these are unresolved indices - TODO: where do they get resolved?
+                     */
+                    logger.warn("RRR: remoteClusterIndices.keySet(): {}", remoteClusterIndices.keySet());
+                    logger.warn("RRR: remoteClusterIndices.values(): {}", remoteClusterIndices.values());
+
+                    /// MP: TODO: instead of passing in remoteClusterIndices.size we shoudl pass in remoteClusterIndices.keySet()
+                    Set<String> clusterAliases = new HashSet<>(remoteClusterIndices.keySet());
+                    SearchResponse.Clusters initClusters;
                     if (localIndices == null) {
+                        initClusters = new SearchResponse.Clusters(clusterAliases, true);
                         // Notify the progress listener that a CCS with minimize_roundtrips is happening remote-only (no local shards)
                         task.getProgressListener().notifyListShards(Collections.emptyList(), Collections.emptyList(), initClusters, false);
+                    } else {
+                        clusterAliases.add("");
+                        initClusters = new SearchResponse.Clusters(clusterAliases, true);
                     }
                     ccsRemoteReduce(
                         parentTaskId,
                         rewritten,
                         localIndices,
                         remoteClusterIndices,
+                        initClusters,
                         timeProvider,
                         aggregationReduceContextBuilder,
                         remoteClusterService,
@@ -343,7 +367,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                             r,
                             localIndices,
                             clusterState,
-                            initClusters,
+                            initClusters, /// MP: TODO is the local search going to reuse the Clusters object or overwrite it?
                             searchContext,
                             searchPhaseProvider.apply(l)
                         )
@@ -459,6 +483,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         SearchRequest searchRequest,
         OriginalIndices localIndices,
         Map<String, OriginalIndices> remoteIndices,
+        SearchResponse.Clusters clusters,
         SearchTimeProvider timeProvider,
         AggregationReduceContext.Builder aggReduceContextBuilder,
         RemoteClusterService remoteClusterService,
@@ -498,6 +523,28 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                         searchResponse.isTerminatedEarly(),
                         searchResponse.getNumReducePhases()
                     );
+                    SearchResponse.Cluster cluster = clusters.getCluster(clusterAlias);
+                    if (searchResponse.getFailedShards() == 0) {
+                        cluster.setStatus(SearchResponse.Cluster.Status.SUCCESS);
+                    } else {
+                        if (searchResponse.getTotalShards() > searchResponse.getFailedShards()) {
+                            cluster.setStatus(SearchResponse.Cluster.Status.PARTIAL);
+                        } else {
+                            cluster.setStatus(SearchResponse.Cluster.Status.FAILED);
+                        }
+                        for (ShardSearchFailure shardFailure : searchResponse.getShardFailures()) {
+                            cluster.addFailure(shardFailure);
+                        }
+                    }
+                    cluster.setTotalShards(searchResponse.getTotalShards());
+                    cluster.setSuccessfulShards(searchResponse.getSuccessfulShards());
+                    cluster.setSkippedShards(searchResponse.getSkippedShards());
+                    cluster.setFailedShards(searchResponse.getFailedShards());
+                    cluster.setSearchLatencyMillis(timeProvider.buildTookInMillis()); // is this right? or use took from response?
+                    // TODO: - other possibly interesting things to add to the Cluster object
+                    // searchResponse.isTimedOut();
+                    // searchResponse.isTerminatedEarly();
+
                     listener.onResponse(
                         new SearchResponse(
                             internalSearchResponse,
@@ -507,7 +554,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                             searchResponse.getSkippedShards(),
                             timeProvider.buildTookInMillis(),
                             searchResponse.getShardFailures(),
-                            new SearchResponse.Clusters(1, 1, 0),
+                            clusters,
                             searchResponse.pointInTimeId()
                         )
                     );
@@ -515,9 +562,14 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
 
                 @Override
                 public void onFailure(Exception e) {
+                    SearchResponse.Cluster cluster = clusters.getCluster(clusterAlias);
+                    cluster.addFailure(new ShardSearchFailure(e));
                     if (skipUnavailable) {
-                        listener.onResponse(SearchResponse.empty(timeProvider::buildTookInMillis, new SearchResponse.Clusters(1, 0, 1)));
+                        cluster.setStatus(SearchResponse.Cluster.Status.SKIPPED);
+                        cluster.setSearchLatencyMillis(timeProvider.buildTookInMillis()); // TODO: is this right?
+                        listener.onResponse(SearchResponse.empty(timeProvider::buildTookInMillis, clusters));
                     } else {
+                        cluster.setStatus(SearchResponse.Cluster.Status.FAILED);
                         listener.onFailure(wrapRemoteClusterFailure(clusterAlias, e));
                     }
                 }
@@ -528,8 +580,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                 timeProvider,
                 aggReduceContextBuilder
             );
-            AtomicInteger skippedClusters = new AtomicInteger(0);
-            final AtomicReference<Exception> exceptions = new AtomicReference<>();
+            // AtomicInteger skippedClusters = new AtomicInteger(0);  /// MP: TODO: I no lnoger use this but does MRT=false need it?
+            final AtomicReference<Exception> exceptions = new AtomicReference<>(); /// MP: TODO do we still need this?
             int totalClusters = remoteIndices.size() + (localIndices == null ? 0 : 1);
             final CountDown countDown = new CountDown(totalClusters);
             for (Map.Entry<String, OriginalIndices> entry : remoteIndices.entrySet()) {
@@ -544,14 +596,14 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     timeProvider.absoluteStartMillis(),
                     false
                 );
+                // create a CCSListener for every remote search coordinator
                 ActionListener<SearchResponse> ccsListener = createCCSListener(
                     clusterAlias,
                     skipUnavailable,
                     countDown,
-                    skippedClusters,
                     exceptions,
                     searchResponseMerger,
-                    totalClusters,
+                    clusters,
                     listener
                 );
                 Client remoteClusterClient = remoteClusterService.getRemoteClusterClient(threadPool, clusterAlias);
@@ -562,10 +614,9 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY,
                     false,
                     countDown,
-                    skippedClusters,
                     exceptions,
                     searchResponseMerger,
-                    totalClusters,
+                    clusters,
                     listener
                 );
                 SearchRequest ccsLocalSearchRequest = SearchRequest.subSearchRequest(
@@ -630,8 +681,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     clusterAlias,
                     skipUnavailable,
                     responsesCountDown,
-                    skippedClusters,
                     exceptions,
+                    null,
                     listener
                 ) {
                     @Override
@@ -691,32 +742,62 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         String clusterAlias,
         boolean skipUnavailable,
         CountDown countDown,
-        AtomicInteger skippedClusters,
         AtomicReference<Exception> exceptions,
         SearchResponseMerger searchResponseMerger,
-        int totalClusters,
+        SearchResponse.Clusters clusters,
         ActionListener<SearchResponse> originalListener
     ) {
         return new CCSActionListener<SearchResponse, SearchResponse>(
             clusterAlias,
             skipUnavailable,
             countDown,
-            skippedClusters,
             exceptions,
+            clusters.getCluster(clusterAlias),
             originalListener
         ) {
             @Override
             void innerOnResponse(SearchResponse searchResponse) {
+                int total = searchResponse.getTotalShards();
+                int success = searchResponse.getSuccessfulShards();
+                cluster.setTotalShards(total);
+                cluster.setSuccessfulShards(success);
+                cluster.setSkippedShards(searchResponse.getSkippedShards());
+                cluster.setFailedShards(searchResponse.getFailedShards());
+
+                /// MP: TODO: probably need to use the
+                Instant now = Instant.now();
+                Instant start = Instant.ofEpochMilli(startTime);
+                cluster.setSearchLatencyMillis(Duration.between(start, now).toMillis());
+
+                if (total > success) {
+                    if (success == 0) {
+                        cluster.setStatus(SearchResponse.Cluster.Status.FAILED);
+                    } else {
+                        cluster.setStatus(SearchResponse.Cluster.Status.PARTIAL);
+                    }
+                    // MP TODO: does a fully skipped cluster with skip_ynavailable=true come through here when disconnected?
+                    // MP TODO: A: no, it calls onFailure
+                    ShardSearchFailure[] shardFailures = searchResponse.getShardFailures();
+                    if (shardFailures != null) {
+                        for (ShardSearchFailure shardFailure : shardFailures) {
+                            cluster.addFailure(shardFailure);
+                            logger.warn("UUU YYY innerOnResponse - failure: ", shardFailure);
+                        }
+                    }
+                } else {
+                    cluster.setStatus(SearchResponse.Cluster.Status.SUCCESS);
+                }
+                SearchResponse.Clusters clusters = searchResponse.getClusters();
+                // I imagine these will always be Cluster.EMPTY, but logging for now to find out
+                System.err.println("UUU innerOnResponse Clusters object from " + cluster.getClusterAlias() + ": " + clusters);
+                System.err.println("UUU innerOnResponse Cluster obj I just populated: " + cluster);
                 searchResponseMerger.add(searchResponse);
             }
 
             @Override
             SearchResponse createFinalResponse() {
-                SearchResponse.Clusters clusters = new SearchResponse.Clusters(
-                    totalClusters,
-                    searchResponseMerger.numResponses(),
-                    skippedClusters.get()
-                );
+                logger.warn("UUU XXX TSA createFinalResponse");
+                System.err.println("UUU createFinalResponse - Clusters ID: {}" + clusters.uniqueId);
                 return searchResponseMerger.getMergedResponse(clusters);
             }
         };
@@ -1249,24 +1330,27 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         private final String clusterAlias;
         private final boolean skipUnavailable;
         private final CountDown countDown;
-        private final AtomicInteger skippedClusters;
         private final AtomicReference<Exception> exceptions;
+        protected final SearchResponse.Cluster cluster;
         private final ActionListener<FinalResponse> originalListener;
+        protected final long startTime;
 
         CCSActionListener(
             String clusterAlias,
             boolean skipUnavailable,
             CountDown countDown,
-            AtomicInteger skippedClusters,
             AtomicReference<Exception> exceptions,
+            SearchResponse.Cluster cluster,
             ActionListener<FinalResponse> originalListener
         ) {
             this.clusterAlias = clusterAlias;
             this.skipUnavailable = skipUnavailable;
             this.countDown = countDown;
-            this.skippedClusters = skippedClusters;
             this.exceptions = exceptions;
+            this.cluster = cluster;
             this.originalListener = originalListener;
+            this.startTime = System.currentTimeMillis();
+            logger.warn("YYY CCSActionListener ctor: start time: " + startTime);
         }
 
         @Override
@@ -1279,9 +1363,13 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
 
         @Override
         public final void onFailure(Exception e) {
+            logger.warn("YYY TSA onFailure: cluster: {} ,e: {}; stacktrace: ", clusterAlias, e.getMessage(), e);
+            /// MP: TODO: problem here is that this is called for the disconnect route, so we can't know how many shards we are missing
+            cluster.addFailure(new ShardSearchFailure(e));
             if (skipUnavailable) {
-                skippedClusters.incrementAndGet();
+                cluster.setStatus(SearchResponse.Cluster.Status.SKIPPED);
             } else {
+                cluster.setStatus(SearchResponse.Cluster.Status.FAILED);
                 Exception exception = e;
                 if (RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY.equals(clusterAlias) == false) {
                     exception = wrapRemoteClusterFailure(clusterAlias, e);
@@ -1293,6 +1381,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     });
                 }
             }
+            logger.warn("YYY TSA onFailure: cluster: AFTER {}", cluster);
             maybeFinish();
         }
 
@@ -1309,6 +1398,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     }
                     originalListener.onResponse(response);
                 } else {
+                    // NOTE: for AsyncSearch CCS: originalListener is org.elasticsearch.xpack.search.AsyncSearchTask$Listener
                     originalListener.onFailure(exceptions.get());
                 }
             }

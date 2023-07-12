@@ -8,6 +8,8 @@
 
 package org.elasticsearch.common.lucene.search.function;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.index.IndexReader;
 import org.apache.lucene.index.LeafReaderContext;
 import org.apache.lucene.search.BooleanClause;
@@ -25,20 +27,25 @@ import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.lucene.Lucene;
+import org.elasticsearch.index.query.functionscore.FunctionScoreQueryBuilder;
 
 import java.io.IOException;
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.concurrent.ThreadLocalRandom;
 
 /**
  * A query that allows for a pluggable boost function / filter. If it matches
  * the filter, it will be boosted by the formula.
  */
 public class FunctionScoreQuery extends Query {
+    private static final Logger logger = LogManager.getLogger(FunctionScoreQuery.class);
     public static final float DEFAULT_MAX_BOOST = Float.MAX_VALUE;
 
     public static class FilterScoreFunction extends ScoreFunction {
@@ -53,6 +60,7 @@ public class FunctionScoreQuery extends Query {
 
         @Override
         public LeafScoreFunction getLeafScoreFunction(LeafReaderContext ctx) throws IOException {
+            logger.warn("QQQx getLeafScoreFunction");
             return function.getLeafScoreFunction(ctx);
         }
 
@@ -77,6 +85,7 @@ public class FunctionScoreQuery extends Query {
 
         @Override
         protected ScoreFunction rewrite(IndexReader reader) throws IOException {
+            logger.warn("QQQx rewrite");
             Query newFilter = filter.rewrite(new IndexSearcher(reader));
             if (newFilter == filter) {
                 return this;
@@ -86,6 +95,7 @@ public class FunctionScoreQuery extends Query {
 
         @Override
         public float getWeight() {
+            logger.warn("QQQx getWeight");
             return function.getWeight();
         }
     }
@@ -196,12 +206,14 @@ public class FunctionScoreQuery extends Query {
 
     @Override
     public void visit(QueryVisitor visitor) {
+        logger.warn("QQQx visit");
         // Highlighters must visit the child query to extract terms
         subQuery.visit(visitor.getSubVisitor(BooleanClause.Occur.MUST, this));
     }
 
     @Override
     public Query rewrite(IndexSearcher searcher) throws IOException {
+        logger.warn("QQQx rewrite (second one down below)");
         Query rewritten = super.rewrite(searcher);
         if (rewritten != this) {
             return rewritten;
@@ -221,6 +233,7 @@ public class FunctionScoreQuery extends Query {
 
     @Override
     public Weight createWeight(IndexSearcher searcher, org.apache.lucene.search.ScoreMode scoreMode, float boost) throws IOException {
+        logger.warn("QQQx createWeight (second one down below)");
         if (scoreMode == org.apache.lucene.search.ScoreMode.COMPLETE_NO_SCORES && minScore == null) {
             return subQuery.createWeight(searcher, scoreMode, boost);
         }
@@ -260,6 +273,7 @@ public class FunctionScoreQuery extends Query {
         }
 
         private FunctionFactorScorer functionScorer(LeafReaderContext context) throws IOException {
+            logger.warn("QQQx functionScorer");
             Scorer subQueryScorer = subQueryWeight.scorer(context);
             if (subQueryScorer == null) {
                 return null;
@@ -377,6 +391,9 @@ public class FunctionScoreQuery extends Query {
         private final float maxBoost;
         private final boolean needsScores;
 
+        private long startTimeMillis;
+        private int numSecondsTimeout;
+
         private FunctionFactorScorer(
             CustomBoostFactorWeight w,
             Scorer scorer,
@@ -396,10 +413,24 @@ public class FunctionScoreQuery extends Query {
             this.scoreCombiner = scoreCombiner;
             this.maxBoost = maxBoost;
             this.needsScores = needsScores;
+            this.startTimeMillis = System.currentTimeMillis();
+            this.numSecondsTimeout = ThreadLocalRandom.current().nextInt(5, 45);
         }
 
         @Override
         public float score() throws IOException {
+            long startTime = FunctionScoreQueryBuilder.startTime.get();
+            logger.warn("QQQx FunctionFactorScorer.score: startTime: " + startTime);
+            if (startTime > 0) {
+                Instant startInstant = Instant.ofEpochMilli(startTime);
+                Instant now = Instant.now();
+                Duration diff = Duration.between(startInstant, now);
+                logger.warn("QQQx FunctionFactorScorer.score timeout: {} vs time diff : {}", numSecondsTimeout, diff.getSeconds());
+                if (diff.getSeconds() > numSecondsTimeout) {
+                    logger.warn("QQQx FunctionFactorScorer.score TIME IS UP!!! throwing Exception");
+                    throw new NullPointerException("QQQx OH NOES!!");
+                }
+            }
             int docId = docID();
             // Even if the weight is created with needsScores=false, it might
             // be costly to call score(), so we explicitly check if scores
@@ -421,6 +452,7 @@ public class FunctionScoreQuery extends Query {
         }
 
         protected double computeScore(int docId, float subQueryScore) throws IOException {
+            logger.warn("QQQx FunctionFactorScorer.computeScore");
             double factor = 1d;
             switch (scoreMode) {
                 case FIRST:

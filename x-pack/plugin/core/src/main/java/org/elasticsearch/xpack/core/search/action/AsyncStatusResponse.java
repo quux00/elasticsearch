@@ -174,7 +174,7 @@ public class AsyncStatusResponse extends ActionResponse implements SearchStatusR
         builder.timeField("expiration_time_in_millis", "expiration_time", expirationTimeMillis);
         RestActions.buildBroadcastShardsHeader(builder, params, totalShards, successfulShards, skippedShards, failedShards, null);
         if (clusters != null) {
-            builder = clusters.toXContent(builder, null);
+            builder = clusters.toXContent(builder, params);
         }
         if (isRunning == false) { // completion status information is only available for a completed search
             builder.field("completion_status", completionStatus.getStatus());

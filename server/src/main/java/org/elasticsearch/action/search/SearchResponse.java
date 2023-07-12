@@ -8,6 +8,8 @@
 
 package org.elasticsearch.action.search;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.search.TotalHits;
 import org.elasticsearch.TransportVersion;
 import org.elasticsearch.action.ActionResponse;
@@ -39,10 +41,14 @@ import org.elasticsearch.xcontent.XContentParser.Token;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 import static org.elasticsearch.action.search.ShardSearchFailure.readShardSearchFailure;
@@ -52,7 +58,7 @@ import static org.elasticsearch.common.xcontent.XContentParserUtils.ensureExpect
  * A response of a search request.
  */
 public class SearchResponse extends ActionResponse implements ChunkedToXContentObject {
-
+    private static final Logger logger = LogManager.getLogger(SearchResponse.class);
     private static final ParseField SCROLL_ID = new ParseField("_scroll_id");
     private static final ParseField POINT_IN_TIME_ID = new ParseField("pit_id");
     private static final ParseField TOOK = new ParseField("took");
@@ -316,6 +322,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         return innerFromXContent(parser);
     }
 
+    /// MP: TODO what is this used for? Do I need to add a parser for the new clusters/details section?
     public static SearchResponse innerFromXContent(XContentParser parser) throws IOException {
         ensureExpectedToken(Token.FIELD_NAME, parser.currentToken(), parser);
         String currentFieldName = parser.currentName();
@@ -404,6 +411,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
                                 total = parser.intValue();
                             } else if (Clusters.SKIPPED_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                                 skipped = parser.intValue();
+                                // TODO: need to add FAILED_FIELD and the clusterInfo map here??
                             } else {
                                 parser.skipChildren();
                             }
@@ -464,8 +472,198 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
     }
 
     /**
-     * Holds info about the clusters that the search was executed on: how many in total, how many of them were successful
-     * and how many of them were skipped.
+     * Represents the search metadata about a particular cluster involved in a cross-cluster search.
+     * The Cluster object can represent both the local cluster and a remote cluster.
+     * For the local cluster, clusterAlias should be specified as RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY.
+     * Its XContent is put into the "details" section the "_clusters" entry in the SearchResponse.
+     * This is not an immutable class, since it needs to be updated as the search progress
+     * (especially important for async CCS searches).
+     */
+    public static class Cluster implements ToXContentFragment, Writeable {
+        private final String clusterAlias;
+        private Status status;
+        private List<ShardSearchFailure> failures;
+        // TODO: I think these should all be boxed, so can do writeOptionalInt in transport layer
+        private Integer totalShards;  // TODO: use these to update the _shards fields (otherwise skipped clusters aren't counted)
+        private Integer successfulShards;
+        private Integer skippedShards;
+        private Integer failedShards;
+        private List<String> indexes; // TODO: need this? do we need to track shards per index? Can we even do that?
+        private Long searchLatencyMillis;
+
+        /**
+         * Marks the status of a Cluster search involved in a Cross-Cluster search.
+         */
+        public enum Status /*implements Writeable*/ {
+            RUNNING,  // still running
+            SUCCESS,  // all shards completed search
+            PARTIAL,  // only some shards completed the search, partial results from cluster
+            SKIPPED,  // entire cluster was skipped
+            FAILED;   // search was failed due to errors on this cluster
+
+            @Override
+            public String toString() {
+                return this.name().toLowerCase();
+            }
+        }
+
+        public Cluster(String clusterAlias) {
+            this.clusterAlias = clusterAlias;
+            this.failures = new ArrayList<>();
+            this.status = Status.RUNNING;
+        }
+
+        public Cluster(StreamInput in) throws IOException {
+            this.clusterAlias = in.readString();
+            this.status = Status.valueOf(in.readString().toUpperCase());
+            this.totalShards = in.readOptionalVInt();
+            this.successfulShards = in.readOptionalVInt();
+            this.skippedShards = in.readOptionalVInt();
+            this.failedShards = in.readOptionalVInt();
+            this.searchLatencyMillis = in.readOptionalVLong();
+            this.failures = in.readList(ShardSearchFailure::readShardSearchFailure);
+        }
+
+        @Override
+        public void writeTo(StreamOutput out) throws IOException {
+            out.writeString(clusterAlias);
+            out.writeString(status.toString());
+            out.writeOptionalVInt(totalShards);
+            out.writeOptionalVInt(successfulShards);
+            out.writeOptionalVInt(skippedShards);
+            out.writeOptionalVInt(failedShards);
+            out.writeOptionalVLong(searchLatencyMillis);
+            out.writeList(failures);
+        }
+
+        @Override
+        public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
+            String name = clusterAlias;
+            if (clusterAlias.equals("")) {
+                name = "(local)";
+            }
+            builder.startObject(name);
+            {
+                builder.field("status", status.toString());
+                if (totalShards != null) {
+                    builder.field("total_shards", totalShards);
+                }
+                if (successfulShards != null) {
+                    builder.field("successful_shards", successfulShards);
+                }
+                if (skippedShards != null) {
+                    builder.field("skipped_shards", skippedShards);
+                }
+                if (failedShards != null) {
+                    builder.field("failed_shards", failedShards);
+                }
+                if (totalShards != null && successfulShards != null) {
+                    String percentSuccessful = String.format("%.2f", (successfulShards.floatValue() / totalShards.floatValue()) * 100);
+                    builder.field("percent_shards_successful", percentSuccessful);
+                }
+                if (searchLatencyMillis != null) {
+                    builder.field("search_duration", searchLatencyMillis.doubleValue());
+                }
+                if (failures != null && failures.isEmpty() == false) {
+                    builder.startArray("errors");
+                    for (ShardSearchFailure failure : failures) {
+                        failure.toXContent(builder, params);
+                    }
+                    builder.endArray();
+                }
+            }
+            builder.endObject();
+            return builder;
+        }
+
+        public String getClusterAlias() {
+            return clusterAlias;
+        }
+
+        public Status getStatus() {
+            return status;
+        }
+
+        public void setStatus(Status status) {
+            this.status = status;
+        }
+
+        public List<ShardSearchFailure> getFailures() {
+            return failures;
+        }
+
+        public void addFailure(ShardSearchFailure f) {
+            this.failures.add(f);
+        }
+
+        public Long getSearchLatencyMillis() {
+            return searchLatencyMillis;
+        }
+
+        public void setSearchLatencyMillis(Long searchLatencyMillis) {
+            this.searchLatencyMillis = searchLatencyMillis;
+        }
+
+        public int getTotalShards() {
+            return totalShards;
+        }
+
+        public void setTotalShards(int totalShards) {
+            this.totalShards = totalShards;
+        }
+
+        public int getSuccessfulShards() {
+            return successfulShards;
+        }
+
+        public void setSuccessfulShards(int successfulShards) {
+            this.successfulShards = successfulShards;
+        }
+
+        public int getSkippedShards() {
+            return skippedShards;
+        }
+
+        public void setSkippedShards(int skippedShards) {
+            this.skippedShards = skippedShards;
+        }
+
+        public int getFailedShards() {
+            return failedShards;
+        }
+
+        public void setFailedShards(int failedShards) {
+            this.failedShards = failedShards;
+        }
+
+        @Override
+        public String toString() {
+            return "Cluster{"
+                + "clusterAlias='"
+                + clusterAlias
+                + '\''
+                + ", status="
+                + status
+                + ", failures="
+                + failures
+                + ", totalShards="
+                + totalShards
+                + ", successfulShards="
+                + successfulShards
+                + ", skippedShards="
+                + skippedShards
+                + ", failedShards="
+                + failedShards
+                + ", searchLatencyMillis="
+                + searchLatencyMillis
+                + '}';
+        }
+    }
+
+    /**
+     * Holds info about the clusters that the search was executed on: how many in total, how many
+     * of them were successful, how many of them were skipped and details about the search metadata
+     * on each cluster in a map of SearchResponse.Cluster objects.
      */
     public static class Clusters implements ToXContentFragment, Writeable {
 
@@ -475,6 +673,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         static final ParseField SUCCESSFUL_FIELD = new ParseField("successful");
         static final ParseField SKIPPED_FIELD = new ParseField("skipped");
         static final ParseField TOTAL_FIELD = new ParseField("total");
+        static final ParseField FAILED_FIELD = new ParseField("failed");
 
         private final int total;
         private final int successful;
@@ -486,6 +685,11 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         private final transient int remoteClusters;
         private final transient boolean ccsMinimizeRoundtrips;
 
+        // key to map is clusterAlias on the primary querying cluster of a CCS minimize_roundtrips=true query
+        private final Map<String, Cluster> clusterInfo;
+
+        public UUID uniqueId; // FIXME - remove - for testing only
+
         /**
          * A Clusters object meant for use with CCS holding additional information about
          * the number of remote clusters and whether ccsMinimizeRoundtrips is being used.
@@ -495,6 +699,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
          * @param remoteClusters number of remote clusters in the search
          * @param ccsMinimizeRoundtrips specifies whether a CCS search is using minimizeRoundtrips feature
          */
+        @Deprecated  // use the one that passes in the Map<clusterAlias, OriginalIndices>
         public Clusters(int total, int successful, int skipped, int remoteClusters, boolean ccsMinimizeRoundtrips) {
             assert total >= 0 && successful >= 0 && skipped >= 0 && remoteClusters >= 0
                 : "total: " + total + " successful: " + successful + " skipped: " + skipped + " remote: " + remoteClusters;
@@ -509,6 +714,41 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             this.skipped = skipped;
             this.remoteClusters = remoteClusters;
             this.ccsMinimizeRoundtrips = ccsMinimizeRoundtrips;
+            this.clusterInfo = new ConcurrentHashMap<>();
+            this.uniqueId = UUID.randomUUID();
+            logger.warn("UUU Clusters that creates clusterInfo: uniqueId: {}", uniqueId.toString());
+        }
+
+        public Clusters(Set<String> clusterAliases, boolean ccsMinimizeRoundtrips) {
+            // assert total >= 0 && successful >= 0 && skipped >= 0 && remoteClustersCount >= 0
+            // : "total: " + total + " successful: " + successful + " skipped: " + skipped + " remote: " + remoteClustersCount;
+            // assert successful <= total : "total: " + total + " successful: " + successful + " skipped: " + skipped;
+            // assert remoteClustersCount <= total : "total: " + total + " remote: " + remoteClustersCount;
+            // assert ccsMinimizeRoundtrips == false || remoteClustersCount > 0
+            // : "ccsMinimizeRoundtrips is true but remoteClusters count is not a positive number: " + remoteClustersCount;
+            this.total = clusterAliases.size();
+            this.successful = 0;
+            this.skipped = 0;
+            this.remoteClusters = clusterAliases.contains("") ? total - 1 : total;
+            this.ccsMinimizeRoundtrips = ccsMinimizeRoundtrips;
+            this.clusterInfo = new ConcurrentHashMap<>();
+            for (String clusterAlias : clusterAliases) {
+                clusterInfo.put(clusterAlias, new Cluster(clusterAlias));
+            }
+            this.uniqueId = UUID.randomUUID();
+            logger.warn("QQQ Clusters that creates clusterInfo: uniqueId: {}", uniqueId.toString());
+        }
+
+        public void addCluster(Cluster c) {
+            clusterInfo.put(c.getClusterAlias(), c);
+        }
+
+        public Cluster getCluster(String clusterAlias) {
+            return clusterInfo.get(clusterAlias);
+        }
+
+        public Map<String, Cluster> getClusterInfo() {
+            return clusterInfo;
         }
 
         /**
@@ -533,11 +773,19 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             this.skipped = skipped;
             this.remoteClusters = -1;  // means "unknown" and not needed for this usage
             this.ccsMinimizeRoundtrips = false;
+            this.clusterInfo = Collections.emptyMap();  // will never be used if created from this constructor
+            this.uniqueId = UUID.randomUUID(); // FIXME - remove
         }
 
         public Clusters(StreamInput in) throws IOException {
             // when coming across the wire, we don't have context to know if this Cluster is in a final state, so set finalState=false
-            this(in.readVInt(), in.readVInt(), in.readVInt(), false);
+            // TODO: do asserts
+            this.total = in.readVInt();
+            this.successful = in.readVInt();
+            this.skipped = in.readVInt();
+            this.clusterInfo = in.readMapValues(Cluster::new, Cluster::getClusterAlias);
+            this.remoteClusters = -1;  // means "unknown" and not needed for this usage
+            this.ccsMinimizeRoundtrips = false;
         }
 
         @Override
@@ -545,16 +793,52 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             out.writeVInt(total);
             out.writeVInt(successful);
             out.writeVInt(skipped);
+            if (out.getTransportVersion().onOrAfter(TransportVersion.V_8_500_032)) {
+                out.writeMapValues(clusterInfo);
+            }
         }
 
         @Override
         public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
+            logger.warn("YYY SearchResponse Clusters toXContent: ID: {}", uniqueId);
             if (total > 0) {
                 builder.startObject(_CLUSTERS_FIELD.getPreferredName());
                 builder.field(TOTAL_FIELD.getPreferredName(), total);
-                builder.field(SUCCESSFUL_FIELD.getPreferredName(), successful);
-                builder.field(SKIPPED_FIELD.getPreferredName(), skipped);
+                if (clusterInfo.size() == 0) { // will only have content if it is doing a cross-cluster search
+                    logger.warn("UUU XXX XContent: DEBUG 1");
+                    builder.field(SUCCESSFUL_FIELD.getPreferredName(), successful);
+                    builder.field(SKIPPED_FIELD.getPreferredName(), skipped);
+                    builder.field(FAILED_FIELD.getPreferredName(), 0);  /// MP: TODO probably not right, since local can fail?
+                } else {
+                    logger.warn("UUU XXX XContent: DEBUG 2");
+                    int successCount = 0;
+                    int skippedCount = 0;
+                    int failedCount = 0;
+                    for (Cluster cluster : clusterInfo.values()) {
+                        switch (cluster.getStatus()) {
+                            case SUCCESS:
+                            case PARTIAL:
+                                successCount++;
+                                break;
+                            case SKIPPED:
+                                skippedCount++;
+                                break;
+                            case FAILED:
+                                failedCount++;
+                                break;
+                        }
+                    }
+                    builder.field(SUCCESSFUL_FIELD.getPreferredName(), successCount);
+                    builder.field(SKIPPED_FIELD.getPreferredName(), skippedCount);
+                    builder.field(FAILED_FIELD.getPreferredName(), failedCount);
+                    builder.startObject("details");
+                    for (Cluster cluster : clusterInfo.values()) {
+                        cluster.toXContent(builder, params);
+                    }
+                    builder.endObject();
+                }
                 builder.endObject();
+
             }
             return builder;
         }

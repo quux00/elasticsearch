@@ -1,0 +1,295 @@
+*  [2023-07-12T12:47:21,574][ =WARN= ][o.e.n.Node               ] [node-1] version [8.10.0-SNAPSHOT] is a pre-release version of Elasticsearch and is not suitable for production
+*  [2023-07-12T12:47:22,013][INFO ][o.e.c.u.FeatureFlag      ] [node-1] The current build is a snapshot, feature flag [query_rules] is enabled
+*  [2023-07-12T12:47:23,582][INFO ][o.e.c.u.FeatureFlag      ] [node-1] The current build is a snapshot, feature flag [dlm] is enabled
+*  [2023-07-12T12:47:24,957][INFO ][o.e.e.NodeEnvironment    ] [node-1] using [1] data paths, mounts [[/System/Volumes/Data (/dev/disk3s1)]], net usable_space [773.6gb], net total_space [926.3gb], types [apfs]
+*  [2023-07-12T12:47:24,957][INFO ][o.e.e.NodeEnvironment    ] [node-1] heap size [1gb], compressed ordinary object pointers [ ~true~ ]
+*  [2023-07-12T12:47:24,978][INFO ][o.e.n.Node               ] [node-1] node name [node-1], node ID [TWPzFQ7HSyqssgmbRNUwsQ], cluster name [querying], roles [data_hot, ml, data_frozen, ingest, data_cold, data, remote_cluster_client, master, data_warm, data_content, transform]
+*  [2023-07-12T12:47:25,139][INFO ][o.e.c.u.FeatureFlag      ] [node-1] The current build is a snapshot, feature flag [inference_rescorer] is enabled
+*  [2023-07-12T12:47:25,530][INFO ][o.e.c.u.FeatureFlag      ] [node-1] The current build is a snapshot, feature flag [synonyms_api] is enabled
+*  [2023-07-12T12:47:26,173][INFO ][o.e.x.m.p.l.CppLogMessageHandler] [node-1] [controller/39567] [Main.cc@123] controller (64 bit): Version 8.10.0-SNAPSHOT (Build 70362470b11a8c) Copyright (c) 2023 Elasticsearch BV
+*  [2023-07-12T12:47:26,338][INFO ][o.e.x.s.Security         ] [node-1] Security is disabled
+*  [2023-07-12T12:47:26,523][INFO ][o.e.x.p.ProfilingPlugin  ] [node-1] Profiling is enabled
+*  [2023-07-12T12:47:26,533][INFO ][o.e.x.p.ProfilingPlugin  ] [node-1] profiling index templates will not be installed or reinstalled
+*  [2023-07-12T12:47:26,885][INFO ][o.e.t.n.NettyAllocator   ] [node-1] creating NettyAllocator with the following configs: [name=unpooled, suggested_max_allocation_size=1mb, factors={es.unsafe.use_unpooled_allocator=null, g1gc_enabled= ~true~ , g1gc_region_size=4mb, heap_size=1gb}]
+*  [2023-07-12T12:47:26,900][INFO ][o.e.i.r.RecoverySettings ] [node-1] using rate limit [40mb] with [default=40mb, read=0b, write=0b, max=0b]
+*  [2023-07-12T12:47:26,923][INFO ][o.e.d.DiscoveryModule    ] [node-1] using discovery type [multi-node] and seed hosts providers [settings]
+*  [2023-07-12T12:47:27,469][INFO ][o.e.n.Node               ] [node-1] initialized
+*  [2023-07-12T12:47:27,469][INFO ][o.e.n.Node               ] [node-1] starting ...
+*  [2023-07-12T12:47:27,495][INFO ][o.e.x.s.c.f.PersistentCache] [node-1] persistent cache index loaded
+*  [2023-07-12T12:47:27,495][INFO ][o.e.x.d.l.DeprecationIndexingComponent] [node-1] deprecation component started
+*  [2023-07-12T12:47:27,552][INFO ][o.e.t.TransportService   ] [node-1] publish_address {192.168.86.44:9300}, bound_addresses {[::1]:9300}, {127.0.0.1:9300}, {192.168.86.44:9300}
+*  [2023-07-12T12:47:27,713][INFO ][o.e.b.BootstrapChecks    ] [node-1] bound or publishing to a non-loopback address, enforcing bootstrap checks
+*  [2023-07-12T12:47:27,715][INFO ][o.e.c.c.ClusterBootstrapService] [node-1] this node has not joined a bootstrapped cluster yet; [cluster.initial_master_nodes] is set to [node-1]
+*  [2023-07-12T12:47:27,717][INFO ][o.e.c.c.Coordinator      ] [node-1] setting initial configuration to VotingConfiguration{TWPzFQ7HSyqssgmbRNUwsQ}
+*  [2023-07-12T12:47:27,849][INFO ][o.e.c.s.MasterService    ] [node-1] elected-as-master ([1] nodes joined in term 1)[_FINISH_ELECTION_, {node-1}{TWPzFQ7HSyqssgmbRNUwsQ}{V0uFRcx4Thu0obpNrJv19A}{node-1}{192.168.86.44}{192.168.86.44:9300}{cdfhilmrstw}{8.10.0}{7000099-8100099} completing election], term: 1, version: 1, delta: master node changed {previous [], current [{node-1}{TWPzFQ7HSyqssgmbRNUwsQ}{V0uFRcx4Thu0obpNrJv19A}{node-1}{192.168.86.44}{192.168.86.44:9300}{cdfhilmrstw}{8.10.0}{7000099-8100099}]}
+*  [2023-07-12T12:47:27,877][INFO ][o.e.c.c.CoordinationState] [node-1] cluster UUID set to [X1bz6clFSoO-14E_66XxMQ]
+*  [2023-07-12T12:47:27,903][INFO ][o.e.c.s.ClusterApplierService] [node-1] master node changed {previous [], current [{node-1}{TWPzFQ7HSyqssgmbRNUwsQ}{V0uFRcx4Thu0obpNrJv19A}{node-1}{192.168.86.44}{192.168.86.44:9300}{cdfhilmrstw}{8.10.0}{7000099-8100099}]}, term: 1, version: 1, reason: Publication{term=1, version=1}
+*  [2023-07-12T12:47:27,917][INFO ][o.e.c.f.AbstractFileWatchingService] [node-1] starting file watcher ...
+*  [2023-07-12T12:47:27,920][INFO ][o.e.c.f.AbstractFileWatchingService] [node-1] file settings service up and running [tid=66]
+*  [2023-07-12T12:47:27,922][INFO ][o.e.c.c.NodeJoinExecutor ] [node-1] node-join: [{node-1}{TWPzFQ7HSyqssgmbRNUwsQ}{V0uFRcx4Thu0obpNrJv19A}{node-1}{192.168.86.44}{192.168.86.44:9300}{cdfhilmrstw}{8.10.0}{7000099-8100099}] with reason [completing election]
+*  [2023-07-12T12:47:27,925][INFO ][o.e.h.AbstractHttpServerTransport] [node-1] publish_address {192.168.86.44:9200}, bound_addresses {[::1]:9200}, {127.0.0.1:9200}, {192.168.86.44:9200}
+*  [2023-07-12T12:47:27,926][INFO ][o.e.n.Node               ] [node-1] started {node-1}{TWPzFQ7HSyqssgmbRNUwsQ}{V0uFRcx4Thu0obpNrJv19A}{node-1}{192.168.86.44}{192.168.86.44:9300}{cdfhilmrstw}{8.10.0}{7000099-8100099}{ml.allocated_processors_double=10.0, ml.max_jvm_size=1073741824, ml.allocated_processors=10, ml.machine_memory=68719476736, xpack.installed= ~true~ }
+*  [2023-07-12T12:47:27,961][INFO ][o.e.g.GatewayService     ] [node-1] recovered [0] indices into cluster_state
+*  [2023-07-12T12:47:28,023][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding template [.monitoring-alerts-7] for index patterns [.monitoring-alerts-7]
+*  [2023-07-12T12:47:28,028][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding template [.monitoring-kibana] for index patterns [.monitoring-kibana-7-*]
+*  [2023-07-12T12:47:28,035][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding template [.monitoring-logstash] for index patterns [.monitoring-logstash-7-*]
+*  [2023-07-12T12:47:28,050][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding index template [.monitoring-logstash-mb] for index patterns [.monitoring-logstash-8-*]
+*  [2023-07-12T12:47:28,057][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding index template [.monitoring-ent-search-mb] for index patterns [.monitoring-ent-search-8-*]
+*  [2023-07-12T12:47:28,075][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding index template [.monitoring-es-mb] for index patterns [.monitoring-es-8-*]
+*  [2023-07-12T12:47:28,086][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding index template [.monitoring-beats-mb] for index patterns [.monitoring-beats-8-*]
+*  [2023-07-12T12:47:28,094][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding index template [.monitoring-kibana-mb] for index patterns [.monitoring-kibana-8-*]
+*  [2023-07-12T12:47:28,099][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding template [.monitoring-es] for index patterns [.monitoring-es-7-*]
+*  [2023-07-12T12:47:28,103][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding template [.monitoring-beats] for index patterns [.monitoring-beats-7-*]
+*  [2023-07-12T12:47:28,107][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding index template [.ml-notifications-000002] for index patterns [.ml-notifications-000002]
+*  [2023-07-12T12:47:28,109][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding index template [.ml-state] for index patterns [.ml-state*]
+*  [2023-07-12T12:47:28,111][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding index template [.ml-stats] for index patterns [.ml-stats-*]
+*  [2023-07-12T12:47:28,118][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding component template [behavioral_analytics-events-mappings]
+*  [2023-07-12T12:47:28,126][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding index template [.ml-anomalies-] for index patterns [.ml-anomalies-*]
+*  [2023-07-12T12:47:28,129][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding component template [synthetics-mappings]
+*  [2023-07-12T12:47:28,131][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding component template [logs-mappings]
+*  [2023-07-12T12:47:28,132][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding component template [metrics-mappings]
+*  [2023-07-12T12:47:28,133][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding component template [metrics-settings]
+*  [2023-07-12T12:47:28,138][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding component template [ecs@dynamic_templates]
+*  [2023-07-12T12:47:28,139][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding component template [synthetics-settings]
+*  [2023-07-12T12:47:28,141][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding component template [data-streams-mappings]
+*  [2023-07-12T12:47:28,144][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding index template [ilm-history] for index patterns [ilm-history-5*]
+*  [2023-07-12T12:47:28,149][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding index template [.watch-history-16] for index patterns [.watcher-history-16*]
+*  [2023-07-12T12:47:28,151][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding index template [.slm-history] for index patterns [.slm-history-5*]
+*  [2023-07-12T12:47:28,153][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding component template [.deprecation-indexing-mappings]
+*  [2023-07-12T12:47:28,154][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding component template [.deprecation-indexing-settings]
+*  [2023-07-12T12:47:28,157][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding index template [.fleet-fileds-fromhost-data] for index patterns [.fleet-fileds-fromhost-data-*]
+*  [2023-07-12T12:47:28,159][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding index template [.fleet-fileds-tohost-meta] for index patterns [.fleet-fileds-tohost-meta-*]
+*  [2023-07-12T12:47:28,162][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding index template [.fleet-fileds-fromhost-meta] for index patterns [.fleet-fileds-fromhost-meta-*]
+*  [2023-07-12T12:47:28,164][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding index template [.fleet-fileds-tohost-data] for index patterns [.fleet-fileds-tohost-data-*]
+*  [2023-07-12T12:47:28,202][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding index template [metrics] for index patterns [metrics-*-*]
+*  [2023-07-12T12:47:28,205][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding index template [.deprecation-indexing-template] for index patterns [.logs-deprecation.*]
+*  [2023-07-12T12:47:28,207][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding index template [synthetics] for index patterns [synthetics-*-*]
+*  [2023-07-12T12:47:28,238][INFO ][o.e.x.i.a.TransportPutLifecycleAction] [node-1] adding index lifecycle policy [.monitoring-8-ilm-policy]
+*  [2023-07-12T12:47:28,278][INFO ][o.e.x.i.a.TransportPutLifecycleAction] [node-1] adding index lifecycle policy [ml-size-based-ilm-policy]
+*  [2023-07-12T12:47:28,307][INFO ][o.e.x.i.a.TransportPutLifecycleAction] [node-1] adding index lifecycle policy [behavioral_analytics-events-default_policy]
+*  [2023-07-12T12:47:28,347][INFO ][o.e.x.i.a.TransportPutLifecycleAction] [node-1] adding index lifecycle policy [metrics]
+*  [2023-07-12T12:47:28,375][INFO ][o.e.x.i.a.TransportPutLifecycleAction] [node-1] adding index lifecycle policy [logs]
+*  [2023-07-12T12:47:28,402][INFO ][o.e.x.i.a.TransportPutLifecycleAction] [node-1] adding index lifecycle policy [synthetics]
+*  [2023-07-12T12:47:28,481][INFO ][o.e.x.c.t.IndexTemplateRegistry] [node-1] adding ingest pipeline behavioral_analytics-events-final_pipeline
+*  [2023-07-12T12:47:28,481][INFO ][o.e.x.c.t.IndexTemplateRegistry] [node-1] adding ingest pipeline logs@json-message
+*  [2023-07-12T12:47:28,482][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding component template [behavioral_analytics-events-settings]
+*  [2023-07-12T12:47:28,512][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding index template [behavioral_analytics-events-default] for index patterns [behavioral_analytics-events-*]
+*  [2023-07-12T12:47:28,539][INFO ][o.e.x.i.a.TransportPutLifecycleAction] [node-1] adding index lifecycle policy [90-days-default]
+*  [2023-07-12T12:47:28,566][INFO ][o.e.x.i.a.TransportPutLifecycleAction] [node-1] adding index lifecycle policy [30-days-default]
+*  [2023-07-12T12:47:28,593][INFO ][o.e.x.i.a.TransportPutLifecycleAction] [node-1] adding index lifecycle policy [365-days-default]
+*  [2023-07-12T12:47:28,631][INFO ][o.e.x.i.a.TransportPutLifecycleAction] [node-1] adding index lifecycle policy [180-days-default]
+*  [2023-07-12T12:47:28,694][INFO ][o.e.x.i.a.TransportPutLifecycleAction] [node-1] adding index lifecycle policy [watch-history-ilm-policy-16]
+*  [2023-07-12T12:47:28,740][INFO ][o.e.x.i.a.TransportPutLifecycleAction] [node-1] adding index lifecycle policy [7-days-default]
+*  [2023-07-12T12:47:28,773][INFO ][o.e.x.i.a.TransportPutLifecycleAction] [node-1] adding index lifecycle policy [ilm-history-ilm-policy]
+*  [2023-07-12T12:47:28,816][INFO ][o.e.x.i.a.TransportPutLifecycleAction] [node-1] adding index lifecycle policy [.deprecation-indexing-ilm-policy]
+*  [2023-07-12T12:47:28,896][INFO ][o.e.x.i.a.TransportPutLifecycleAction] [node-1] adding index lifecycle policy [slm-history-ilm-policy]
+*  [2023-07-12T12:47:29,005][INFO ][o.e.x.i.a.TransportPutLifecycleAction] [node-1] adding index lifecycle policy [.fleet-actions-results-ilm-policy]
+*  [2023-07-12T12:47:29,053][INFO ][o.e.x.i.a.TransportPutLifecycleAction] [node-1] adding index lifecycle policy [.fleet-file-tohost-data-ilm-policy]
+*  [2023-07-12T12:47:29,217][INFO ][o.e.x.i.a.TransportPutLifecycleAction] [node-1] adding index lifecycle policy [.fleet-file-tohost-meta-ilm-policy]
+*  [2023-07-12T12:47:29,310][INFO ][o.e.x.i.a.TransportPutLifecycleAction] [node-1] adding index lifecycle policy [.fleet-file-fromhost-meta-ilm-policy]
+*  [2023-07-12T12:47:29,375][INFO ][o.e.c.s.MasterService    ] [node-1] node-join[{node-2}{j4TUtc3yQASSUOYr9-c75g}{GwoTWeh0SDm5YXz5MsxG3w}{node-2}{127.0.0.1}{127.0.0.1:9304}{cdfhilmrstw}{8.10.0}{7000099-8100099} joining], term: 1, version: 27, delta: added {{node-2}{j4TUtc3yQASSUOYr9-c75g}{GwoTWeh0SDm5YXz5MsxG3w}{node-2}{127.0.0.1}{127.0.0.1:9304}{cdfhilmrstw}{8.10.0}{7000099-8100099}}
+*  [2023-07-12T12:47:29,563][INFO ][o.e.c.s.ClusterApplierService] [node-1] added {{node-2}{j4TUtc3yQASSUOYr9-c75g}{GwoTWeh0SDm5YXz5MsxG3w}{node-2}{127.0.0.1}{127.0.0.1:9304}{cdfhilmrstw}{8.10.0}{7000099-8100099}}, term: 1, version: 27, reason: Publication{term=1, version=27}
+*  [2023-07-12T12:47:29,571][INFO ][o.e.c.c.NodeJoinExecutor ] [node-1] node-join: [{node-2}{j4TUtc3yQASSUOYr9-c75g}{GwoTWeh0SDm5YXz5MsxG3w}{node-2}{127.0.0.1}{127.0.0.1:9304}{cdfhilmrstw}{8.10.0}{7000099-8100099}] with reason [joining]
+*  [2023-07-12T12:47:29,576][INFO ][o.e.x.i.a.TransportPutLifecycleAction] [node-1] adding index lifecycle policy [.fleet-file-fromhost-data-ilm-policy]
+*  [2023-07-12T12:47:30,099][INFO ][o.e.l.ClusterStateLicenseService] [node-1] license [053ad127-19d6-4424-b678-9eb0f658a104] mode [basic] - valid
+*  [2023-07-12T12:47:30,174][INFO ][o.e.x.c.t.IndexTemplateRegistry] [node-1] adding ingest pipeline logs-default-pipeline
+*  [2023-07-12T12:47:30,176][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding component template [logs-settings]
+*  [2023-07-12T12:47:30,235][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding index template [logs] for index patterns [logs-*-*]
+*  [2023-07-12T12:47:45,279][INFO ][o.e.c.m.MetadataIndexTemplateService] [node-1] adding template [blogs] for index patterns [blogs]
+*  [2023-07-12T12:47:45,420][INFO ][o.e.c.m.MetadataCreateIndexService] [node-1] [blogs] creating index, cause [auto(bulk api)], templates [blogs], shards [3]/[0]
+*  [2023-07-12T12:47:45,734][INFO ][o.e.i.m.MapperService    ] [node-1] [blogs] reloading search analyzers
+*  [2023-07-12T12:47:45,961][INFO ][o.e.c.r.a.AllocationService] [node-1] current.health="GREEN" message="Cluster health status changed from [YELLOW] to [GREEN] (reason: [shards started [[blogs][1]]])." previous.health="YELLOW" reason="shards started [[blogs][1]]"
+*  [2023-07-12T12:47:50,292][INFO ][o.e.c.m.MetadataCreateIndexService] [node-1] [.ds-.logs-deprecation.elasticsearch-default-2023.07.12-000001] creating index, cause [initialize_data_stream], templates [.deprecation-indexing-template], shards [1]/[1]
+*  [2023-07-12T12:47:50,293][INFO ][o.e.c.m.MetadataCreateDataStreamService] [node-1] adding data stream [.logs-deprecation.elasticsearch-default] with write index [.ds-.logs-deprecation.elasticsearch-default-2023.07.12-000001], backing indices [], and aliases []
+*  [2023-07-12T12:47:50,492][INFO ][o.e.i.m.MapperService    ] [node-1] [.ds-.logs-deprecation.elasticsearch-default-2023.07.12-000001] reloading search analyzers
+*  [2023-07-12T12:47:50,498][INFO ][o.e.x.i.IndexLifecycleTransition] [node-1] moving index [.ds-.logs-deprecation.elasticsearch-default-2023.07.12-000001] from [null] to [{"phase":"new","action":"complete","name":"complete"}] in policy [.deprecation-indexing-ilm-policy]
+*  [2023-07-12T12:47:50,572][INFO ][o.e.x.i.IndexLifecycleTransition] [node-1] moving index [.ds-.logs-deprecation.elasticsearch-default-2023.07.12-000001] from [{"phase":"new","action":"complete","name":"complete"}] to [{"phase":"hot","action":"unfollow","name":"branch-check-unfollow-prerequisites"}] in policy [.deprecation-indexing-ilm-policy]
+*  [2023-07-12T12:47:50,687][INFO ][o.e.x.i.IndexLifecycleTransition] [node-1] moving index [.ds-.logs-deprecation.elasticsearch-default-2023.07.12-000001] from [{"phase":"hot","action":"unfollow","name":"branch-check-unfollow-prerequisites"}] to [{"phase":"hot","action":"rollover","name":"check-rollover-ready"}] in policy [.deprecation-indexing-ilm-policy]
+*  [2023-07-12T12:47:50,742][INFO ][o.e.c.m.MetadataMappingService] [node-1] [.ds-.logs-deprecation.elasticsearch-default-2023.07.12-000001/DHlafsUiROyPNVr4rLkTug] update_mapping [_doc]
+*  [2023-07-12T12:47:51,087][INFO ][o.e.c.r.a.AllocationService] [node-1] current.health="GREEN" message="Cluster health status changed from [YELLOW] to [GREEN] (reason: [shards started [[.ds-.logs-deprecation.elasticsearch-default-2023.07.12-000001][0]]])." previous.health="YELLOW" reason="shards started [[.ds-.logs-deprecation.elasticsearch-default-2023.07.12-000001][0]]"
+*  [2023-07-12T12:47:55,590][INFO ][o.e.c.m.MetadataCreateIndexService] [node-1] [.ds-ilm-history-5-2023.07.12-000001] creating index, cause [initialize_data_stream], templates [ilm-history], shards [1]/[0]
+*  [2023-07-12T12:47:55,591][INFO ][o.e.c.m.MetadataCreateDataStreamService] [node-1] adding data stream [ilm-history-5] with write index [.ds-ilm-history-5-2023.07.12-000001], backing indices [], and aliases []
+*  [2023-07-12T12:47:55,593][INFO ][o.e.c.r.a.AllocationService] [node-1] updating number_of_replicas to [1] for indices [.ds-ilm-history-5-2023.07.12-000001]
+*  [2023-07-12T12:47:55,734][INFO ][o.e.i.m.MapperService    ] [node-1] [.ds-ilm-history-5-2023.07.12-000001] reloading search analyzers
+*  [2023-07-12T12:47:55,736][INFO ][o.e.x.i.IndexLifecycleTransition] [node-1] moving index [.ds-ilm-history-5-2023.07.12-000001] from [null] to [{"phase":"new","action":"complete","name":"complete"}] in policy [ilm-history-ilm-policy]
+*  [2023-07-12T12:47:55,825][INFO ][o.e.x.i.IndexLifecycleTransition] [node-1] moving index [.ds-ilm-history-5-2023.07.12-000001] from [{"phase":"new","action":"complete","name":"complete"}] to [{"phase":"hot","action":"unfollow","name":"branch-check-unfollow-prerequisites"}] in policy [ilm-history-ilm-policy]
+*  [2023-07-12T12:47:55,944][INFO ][o.e.x.i.IndexLifecycleTransition] [node-1] moving index [.ds-ilm-history-5-2023.07.12-000001] from [{"phase":"hot","action":"unfollow","name":"branch-check-unfollow-prerequisites"}] to [{"phase":"hot","action":"rollover","name":"check-rollover-ready"}] in policy [ilm-history-ilm-policy]
+*  [2023-07-12T12:47:56,252][INFO ][o.e.c.r.a.AllocationService] [node-1] current.health="GREEN" message="Cluster health status changed from [YELLOW] to [GREEN] (reason: [shards started [[.ds-ilm-history-5-2023.07.12-000001][0]]])." previous.health="YELLOW" reason="shards started [[.ds-ilm-history-5-2023.07.12-000001][0]]"
+
+*  [2023-07-12T12:48:16,719][ =WARN= ][o.e.a.s.SearchResponse   ] [node-1] UUU Clusters that creates clusterInfo: uniqueId: ~c04877bd-5484-4842-bab2-4d0e76fea027~  ==start of query=
+*  [2023-07-12T12:48:16,726][ =WARN= ][o.e.a.s.TransportSearchAction] [node-1] =YYY= CCSActionListener ctor: start time: 1689180496726
+*  [2023-07-12T12:48:16,729][ =WARN= ][o.e.a.s.TransportSearchAction] [node-1] =YYY= CCSActionListener ctor: start time: 1689180496729
+*  [2023-07-12T12:48:16,730][ =WARN= ][o.e.a.s.TransportSearchAction] [node-1] =YYY= CCSActionListener ctor: start time: 1689180496730
+*  [2023-07-12T12:48:17,769][ =WARN= ][o.e.x.s.MutableSearchResponse] [node-1] UUU =YYY= MutableSearchResponse buildQueryFailures len: 3
+*  [2023-07-12T12:48:17,771][ =WARN= ][o.e.x.s.MutableSearchResponse] [node-1] =YYY= MutableSearchResponse buildResponse with failures. Clusters ID: ~c04877bd-5484-4842-bab2-4d0e76fea027~; Clusters: Clusters{total=3, successful=0, skipped=0}; subClusterMap: {}
+** [2023-07-12T12:48:17,771][ =WARN= ][o.e.x.s.MutableSearchResponse] [node-1] =YYY= buildResponse with failures ~stack trace~ java.lang.RuntimeException: =YYY= buildResponse with failures
+	at org.elasticsearch.xpack.search.MutableSearchResponse.buildResponse(MutableSearchResponse.java:199)
+	at org.elasticsearch.xpack.search.MutableSearchResponse.toAsyncSearchResponse(MutableSearchResponse.java:243)
+	at org.elasticsearch.xpack.search.AsyncSearchTask.getResponse(AsyncSearchTask.java:334)
+	at org.elasticsearch.xpack.search.AsyncSearchTask.getResponseWithHeaders(AsyncSearchTask.java:325)
+	at org.elasticsearch.xpack.search.AsyncSearchTask.lambda$internalAddCompletionListener$2(AsyncSearchTask.java:238)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.common.util.concurrent.ThreadContext$ContextPreservingRunnable.run(ThreadContext.java:916)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1144)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:642)
+	at java.base/java.lang.Thread.run(Thread.java:1623)
+
+*  [2023-07-12T12:48:17,807][INFO ][o.e.c.m.MetadataCreateIndexService] [node-1] [.async-search] creating index, cause [auto(bulk api)], templates [], shards [1]/[0]
+*  [2023-07-12T12:48:17,809][INFO ][o.e.c.r.a.AllocationService] [node-1] updating number_of_replicas to [1] for indices [.async-search]
+*  [2023-07-12T12:48:18,090][INFO ][o.e.i.m.MapperService    ] [node-1] [.async-search] reloading search analyzers
+*  [2023-07-12T12:48:18,426][ =WARN= ][o.e.a.s.SearchResponse   ] [node-1] =YYY= SearchResponse Clusters toXContent: ID: ~c04877bd-5484-4842-bab2-4d0e76fea027~  ==I think this is where the SearchResponse is getting written to .async-search index ??=
+
+
+*  [2023-07-12T12:48:33,262][ =WARN= ][o.e.x.s.MutableSearchResponse] [node-1] UUU =YYY= MutableSearchResponse updatePartialResponse
+*  [2023-07-12T12:48:33,262][ =WARN= ][o.e.a.s.SearchResponse   ] [node-1] UUU Clusters that creates clusterInfo: uniqueId: ~ccd15af9-9b06-41f5-a1a6-4b29d3eb97ce~   ==This is a different Clusters object than what MutableSearchResponse has=
+*  [2023-07-12T12:48:33,284][ =WARN= ][stderr                   ] [node-1] UUU innerOnResponse Clusters object from : Clusters{total=3, successful=0, skipped=0}
+*  [2023-07-12T12:48:33,287][ =WARN= ][stderr                   ] [node-1] UUU innerOnResponse Cluster obj I just populated: Cluster{clusterAlias='', completionStatus=success, failures=[], searchLatencyInSeconds=16}
+*  [2023-07-12T12:48:33,287][ =WARN= ][stderr                   ] [node-1] UUU size of remoteClusterInfo: {}1
+
+*  [2023-07-12T12:48:34,384][INFO ][o.e.t.ClusterConnectionManager] [node-1] transport connection to [{michaels-mbp.lan}{michaels-mbp.lan}{127.0.0.1}{127.0.0.1:9301}{cdfhilmrstw}{8.10.0}{7000099-8100099}] closed by remote  ==remote1 disconnect=
+*  [2023-07-12T12:48:34,387][ =WARN= ][o.e.a.s.TransportSearchAction] [node-1] =YYY= TSA onFailure: cluster: remote1 ,e: [michaels-mbp.lan][127.0.0.1:9301][indices:data/read/search] disconnected
+** [2023-07-12T12:48:34,388][ =WARN= ][o.e.a.s.TransportSearchAction] [node-1] =YYY= TSA onFailure ~stack trace~ java.lang.RuntimeException: =YYY= TSA onFailure       == CCSActionListener is immediately called with that disconnect error=
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.action.search.TransportSearchAction$CCSActionListener.onFailure(TransportSearchAction.java:1342)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.action.ActionListenerResponseHandler.handleException(ActionListenerResponseHandler.java:48)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.TransportService$UnregisterChildTransportResponseHandler.handleException(TransportService.java:1702)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.TransportService$ContextRestoreResponseHandler.handleException(TransportService.java:1419)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.TransportService$7.doRun(TransportService.java:1303)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.common.util.concurrent.ThreadContext$ContextPreservingAbstractRunnable.doRun(ThreadContext.java:983)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.common.util.concurrent.AbstractRunnable.run(AbstractRunnable.java:26)
+	at java.base/java.util.concurrent.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1144)
+	at java.base/java.util.concurrent.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:642)
+	at java.base/java.lang.Thread.run(Thread.java:1623)
+*  [2023-07-12T12:48:34,389][ =WARN= ][o.e.a.s.TransportSearchAction] [node-1] =YYY= TSA onFailure: cluster: Cluster{clusterAlias='remote1', completionStatus=failed, failures=[[michaels-mbp.lan][127.0.0.1:9301][indices:data/read/search] disconnected], searchLatencyInSeconds=-1} , remoteClusterInfo AFTER: {=Cluster{clusterAlias='', completionStatus=success, failures=[], searchLatencyInSeconds=16}, remote1=Cluster{clusterAlias='remote1', completionStatus=failed, failures=[[michaels-mbp.lan][127.0.0.1:9301][indices:data/read/search] disconnected], searchLatencyInSeconds=-1}}
+** [2023-07-12T12:48:34,393][ =WARN= ][o.e.t.SniffConnectionStrategy] [node-1] fetching nodes from external cluster [remote1] failed org.elasticsearch.transport.ConnectTransportException: [][127.0.0.1:9301] connect_exception
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.TcpTransport$ChannelsConnectedListener.onFailure(TcpTransport.java:1144)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.action.support.SubscribableListener$FailureResult.complete(SubscribableListener.java:285)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.action.support.SubscribableListener.tryComplete(SubscribableListener.java:197)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.action.support.SubscribableListener.setResult(SubscribableListener.java:222)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.action.support.SubscribableListener.onFailure(SubscribableListener.java:141)
+	at org.elasticsearch.transport.netty4@8.10.0-SNAPSHOT/org.elasticsearch.transport.netty4.Netty4TcpChannel.lambda$addListener$0(Netty4TcpChannel.java:62)
+	at io.netty.common@4.1.94.Final/io.netty.util.concurrent.DefaultPromise.notifyListener0(DefaultPromise.java:590)
+	at io.netty.common@4.1.94.Final/io.netty.util.concurrent.DefaultPromise.notifyListeners0(DefaultPromise.java:583)
+	at io.netty.common@4.1.94.Final/io.netty.util.concurrent.DefaultPromise.notifyListenersNow(DefaultPromise.java:559)
+	at io.netty.common@4.1.94.Final/io.netty.util.concurrent.DefaultPromise.notifyListeners(DefaultPromise.java:492)
+	at io.netty.common@4.1.94.Final/io.netty.util.concurrent.DefaultPromise.setValue0(DefaultPromise.java:636)
+	at io.netty.common@4.1.94.Final/io.netty.util.concurrent.DefaultPromise.setFailure0(DefaultPromise.java:629)
+	at io.netty.common@4.1.94.Final/io.netty.util.concurrent.DefaultPromise.tryFailure(DefaultPromise.java:118)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.nio.AbstractNioChannel$AbstractNioUnsafe.fulfillConnectPromise(AbstractNioChannel.java:321)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.nio.AbstractNioChannel$AbstractNioUnsafe.finishConnect(AbstractNioChannel.java:337)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.nio.NioEventLoop.processSelectedKey(NioEventLoop.java:776)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.nio.NioEventLoop.processSelectedKeysPlain(NioEventLoop.java:689)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.nio.NioEventLoop.processSelectedKeys(NioEventLoop.java:652)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.nio.NioEventLoop.run(NioEventLoop.java:562)
+	at io.netty.common@4.1.94.Final/io.netty.util.concurrent.SingleThreadEventExecutor$4.run(SingleThreadEventExecutor.java:997)
+	at io.netty.common@4.1.94.Final/io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74)
+	at java.base/java.lang.Thread.run(Thread.java:1623)
+Caused by: org.elasticsearch.common.util.concurrent.UncategorizedExecutionException: Failed execution
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.action.support.SubscribableListener.wrapAsExecutionException(SubscribableListener.java:178)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.common.util.concurrent.ListenableFuture.wrapException(ListenableFuture.java:38)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.common.util.concurrent.ListenableFuture.wrapException(ListenableFuture.java:27)
+	... 18 more
+Caused by: java.util.concurrent.ExecutionException: io.netty.channel.AbstractChannel$AnnotatedConnectException: Connection refused: /127.0.0.1:9301
+	... 21 more
+Caused by: io.netty.channel.AbstractChannel$AnnotatedConnectException: Connection refused: /127.0.0.1:9301
+Caused by: java.net.ConnectException: Connection refused
+	at java.base/sun.nio.ch.Net.pollConnect(Native Method)
+	at java.base/sun.nio.ch.Net.pollConnectNow(Net.java:673)
+	at java.base/sun.nio.ch.SocketChannelImpl.finishConnect(SocketChannelImpl.java:973)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.socket.nio.NioSocketChannel.doFinishConnect(NioSocketChannel.java:337)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.nio.AbstractNioChannel$AbstractNioUnsafe.finishConnect(AbstractNioChannel.java:334)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.nio.NioEventLoop.processSelectedKey(NioEventLoop.java:776)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.nio.NioEventLoop.processSelectedKeysPlain(NioEventLoop.java:689)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.nio.NioEventLoop.processSelectedKeys(NioEventLoop.java:652)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.nio.NioEventLoop.run(NioEventLoop.java:562)
+	at io.netty.common@4.1.94.Final/io.netty.util.concurrent.SingleThreadEventExecutor$4.run(SingleThreadEventExecutor.java:997)
+	at io.netty.common@4.1.94.Final/io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74)
+	at java.base/java.lang.Thread.run(Thread.java:1623)
+
+
+
+*  [2023-07-12T12:50:31,994][ =WARN= ][stderr                   ] [node-1] UUU innerOnResponse Clusters object from remote2: Clusters{total=0, successful=0, skipped=0}
+*  [2023-07-12T12:50:31,995][ =WARN= ][stderr                   ] [node-1] UUU innerOnResponse Cluster obj I just populated: Cluster{clusterAlias='remote2', completionStatus=success, failures=[], searchLatencyInSeconds=135}
+*  [2023-07-12T12:50:31,995][ =WARN= ][stderr                   ] [node-1] UUU size of remoteClusterInfo: {}3
+*  [2023-07-12T12:50:31,995][ =WARN= ][o.e.x.s.MutableSearchResponse] [node-1] UUU =YYY= MutableSearchResponse updateWithFailure: e: error while executing search
+** [2023-07-12T12:50:31,995][ =WARN= ][o.e.x.s.MutableSearchResponse] [node-1] UUU =YYY= MutableSearchResponse updateWithFailure ~stack trace~: org.elasticsearch.ElasticsearchStatusException: error while executing search
+	at org.elasticsearch.xpack.search.AsyncSearchTask$Listener.onFailure(AsyncSearchTask.java:461)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.action.search.TransportSearchAction$CCSActionListener.maybeFinish(TransportSearchAction.java:1385)   ==NEED TO PASS IN THE NEW CLUSTERS OBJECT => can't because can only pass an Exception to onFailure!!=
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.action.search.TransportSearchAction$CCSActionListener.onResponse(TransportSearchAction.java:1333)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.action.ActionListenerResponseHandler.handleResponse(ActionListenerResponseHandler.java:43)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.TransportService$UnregisterChildTransportResponseHandler.handleResponse(TransportService.java:1693)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.TransportService$ContextRestoreResponseHandler.handleResponse(TransportService.java:1409)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.InboundHandler.doHandleResponse(InboundHandler.java:419)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.InboundHandler.handleResponse(InboundHandler.java:368)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.InboundHandler.messageReceived(InboundHandler.java:142)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.InboundHandler.inboundMessage(InboundHandler.java:95)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.TcpTransport.inboundMessage(TcpTransport.java:821)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.InboundPipeline.forwardFragments(InboundPipeline.java:150)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.InboundPipeline.doHandleBytes(InboundPipeline.java:121)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.InboundPipeline.handleBytes(InboundPipeline.java:86)
+	at org.elasticsearch.transport.netty4@8.10.0-SNAPSHOT/org.elasticsearch.transport.netty4.Netty4MessageInboundHandler.channelRead(Netty4MessageInboundHandler.java:63)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
+	at io.netty.codec@4.1.94.Final/io.netty.handler.codec.MessageToMessageDecoder.channelRead(MessageToMessageDecoder.java:103)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.DefaultChannelPipeline$HeadContext.channelRead(DefaultChannelPipeline.java:1410)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:440)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.DefaultChannelPipeline.fireChannelRead(DefaultChannelPipeline.java:919)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.nio.AbstractNioByteChannel$NioByteUnsafe.read(AbstractNioByteChannel.java:166)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.nio.NioEventLoop.processSelectedKey(NioEventLoop.java:788)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.nio.NioEventLoop.processSelectedKeysPlain(NioEventLoop.java:689)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.nio.NioEventLoop.processSelectedKeys(NioEventLoop.java:652)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.nio.NioEventLoop.run(NioEventLoop.java:562)
+	at io.netty.common@4.1.94.Final/io.netty.util.concurrent.SingleThreadEventExecutor$4.run(SingleThreadEventExecutor.java:997)
+	at io.netty.common@4.1.94.Final/io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74)
+	at java.base/java.lang.Thread.run(Thread.java:1623)
+Caused by: org.elasticsearch.transport.RemoteTransportException: [error while communicating with remote cluster [remote1]]
+Caused by: org.elasticsearch.transport.NodeDisconnectedException: [michaels-mbp.lan][127.0.0.1:9301][indices:data/read/search] disconnected
+
+*  [2023-07-12T12:50:31,996][ =WARN= ][o.e.x.s.MutableSearchResponse] [node-1] UUU =YYY= MutableSearchResponse buildQueryFailures len: 3
+*  [2023-07-12T12:50:31,996][ =WARN= ][o.e.x.s.MutableSearchResponse] [node-1] =YYY= MutableSearchResponse buildResponse with failures. Clusters ID: ccd15af9-9b06-41f5-a1a6-4b29d3eb97ce; Clusters: Clusters{total=3, successful=1, skipped=0}; subClusterMap: {}
+***** NOTE this is a different Clusters object than what MutableSearchResponse started with (~c04877bd-5484-4842-bab2-4d0e76fea027~) -> this one was passed in via the local cluster search when called updatePartialResponse to MutableSR (I think)
+** [2023-07-12T12:50:31,996][ =WARN= ][o.e.x.s.MutableSearchResponse] [node-1] =YYY= buildResponse with failures ~stack trace~ java.lang.RuntimeException: =YYY= buildResponse with failures
+	at org.elasticsearch.xpack.search.MutableSearchResponse.buildResponse(MutableSearchResponse.java:199)
+	at org.elasticsearch.xpack.search.MutableSearchResponse.toAsyncSearchResponse(MutableSearchResponse.java:243)
+	at org.elasticsearch.xpack.search.AsyncSearchTask.getResponse(AsyncSearchTask.java:334)
+	at org.elasticsearch.xpack.search.AsyncSearchTask.getResponse(AsyncSearchTask.java:317)
+	at org.elasticsearch.xpack.search.AsyncSearchTask.executeCompletionListeners(AsyncSearchTask.java:306)
+	at org.elasticsearch.xpack.search.AsyncSearchTask$Listener.onFailure(AsyncSearchTask.java:463)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.action.search.TransportSearchAction$CCSActionListener.maybeFinish(TransportSearchAction.java:1385)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.action.search.TransportSearchAction$CCSActionListener.onResponse(TransportSearchAction.java:1333)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.action.ActionListenerResponseHandler.handleResponse(ActionListenerResponseHandler.java:43)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.TransportService$UnregisterChildTransportResponseHandler.handleResponse(TransportService.java:1693)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.TransportService$ContextRestoreResponseHandler.handleResponse(TransportService.java:1409)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.InboundHandler.doHandleResponse(InboundHandler.java:419)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.InboundHandler.handleResponse(InboundHandler.java:368)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.InboundHandler.messageReceived(InboundHandler.java:142)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.InboundHandler.inboundMessage(InboundHandler.java:95)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.TcpTransport.inboundMessage(TcpTransport.java:821)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.InboundPipeline.forwardFragments(InboundPipeline.java:150)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.InboundPipeline.doHandleBytes(InboundPipeline.java:121)
+	at org.elasticsearch.server@8.10.0-SNAPSHOT/org.elasticsearch.transport.InboundPipeline.handleBytes(InboundPipeline.java:86)
+	at org.elasticsearch.transport.netty4@8.10.0-SNAPSHOT/org.elasticsearch.transport.netty4.Netty4MessageInboundHandler.channelRead(Netty4MessageInboundHandler.java:63)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
+	at io.netty.codec@4.1.94.Final/io.netty.handler.codec.MessageToMessageDecoder.channelRead(MessageToMessageDecoder.java:103)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.DefaultChannelPipeline$HeadContext.channelRead(DefaultChannelPipeline.java:1410)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:440)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.DefaultChannelPipeline.fireChannelRead(DefaultChannelPipeline.java:919)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.nio.AbstractNioByteChannel$NioByteUnsafe.read(AbstractNioByteChannel.java:166)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.nio.NioEventLoop.processSelectedKey(NioEventLoop.java:788)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.nio.NioEventLoop.processSelectedKeysPlain(NioEventLoop.java:689)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.nio.NioEventLoop.processSelectedKeys(NioEventLoop.java:652)
+	at io.netty.transport@4.1.94.Final/io.netty.channel.nio.NioEventLoop.run(NioEventLoop.java:562)
+	at io.netty.common@4.1.94.Final/io.netty.util.concurrent.SingleThreadEventExecutor$4.run(SingleThreadEventExecutor.java:997)
+	at io.netty.common@4.1.94.Final/io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74)
+	at java.base/java.lang.Thread.run(Thread.java:1623)
+
+*  [2023-07-12T12:51:40,141][ =WARN= ][o.e.a.s.SearchResponse   ] [node-1] =YYY= SearchResponse Clusters toXContent: ID: 02d394ca-71cd-4fc1-a1c3-cef96f579f75

@@ -8,6 +8,8 @@
 
 package org.elasticsearch.index.query.functionscore;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.search.MatchAllDocsQuery;
 import org.apache.lucene.search.Query;
 import org.elasticsearch.TransportVersion;
@@ -38,12 +40,14 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.concurrent.atomic.AtomicLong;
 
 /**
  * A query that uses a filters with a script associated with them to compute the
  * score.
  */
 public class FunctionScoreQueryBuilder extends AbstractQueryBuilder<FunctionScoreQueryBuilder> {
+    private static final Logger logger = LogManager.getLogger(FunctionScoreQueryBuilder.class);
     public static final String NAME = "function_score";
 
     // For better readability of error message
@@ -72,6 +76,8 @@ public class FunctionScoreQueryBuilder extends AbstractQueryBuilder<FunctionScor
     private Float minScore = null;
 
     private final FilterFunctionBuilder[] filterFunctionBuilders;
+
+    public static final AtomicLong startTime = new AtomicLong(0);
 
     /**
      * Creates a function_score query without functions
@@ -293,6 +299,7 @@ public class FunctionScoreQueryBuilder extends AbstractQueryBuilder<FunctionScor
 
     @Override
     protected Query doToQuery(SearchExecutionContext context) throws IOException {
+        logger.warn("QQQ FunctionScoreQueryBuilder doToQuery DEBUG 1");
         ScoreFunction[] filterFunctions = new ScoreFunction[filterFunctionBuilders.length];
         int i = 0;
         for (FilterFunctionBuilder filterFunctionBuilder : filterFunctionBuilders) {
@@ -313,10 +320,13 @@ public class FunctionScoreQueryBuilder extends AbstractQueryBuilder<FunctionScor
         CombineFunction boostMode = this.boostMode == null ? DEFAULT_BOOST_MODE : this.boostMode;
         // handle cases where only one score function and no filter was provided. In this case we create a FunctionScoreQuery.
         if (filterFunctions.length == 0) {
+            logger.warn("QQQ FunctionScoreQueryBuilder doToQuery DEBUG 2");
             return new FunctionScoreQuery(query, minScore, maxBoost);
         } else if (filterFunctions.length == 1 && filterFunctions[0] instanceof FunctionScoreQuery.FilterScoreFunction == false) {
+            logger.warn("QQQ FunctionScoreQueryBuilder doToQuery DEBUG 3");
             return new FunctionScoreQuery(query, filterFunctions[0], boostMode, minScore, maxBoost);
         }
+        logger.warn("QQQ FunctionScoreQueryBuilder doToQuery DEBUG 4");
         // in all other cases we create a FunctionScoreQuery with filters
         return new FunctionScoreQuery(query, scoreMode, filterFunctions, boostMode, minScore, maxBoost);
     }
@@ -404,6 +414,10 @@ public class FunctionScoreQueryBuilder extends AbstractQueryBuilder<FunctionScor
 
     @Override
     protected QueryBuilder doRewrite(QueryRewriteContext queryRewriteContext) throws IOException {
+        logger.warn("QQQ FunctionScoreQueryBuilder doRewrite");
+        if (startTime.get() == 0) {
+            startTime.set(System.currentTimeMillis());
+        }
         QueryBuilder queryBuilder = this.query.rewrite(queryRewriteContext);
         if (queryBuilder instanceof MatchNoneQueryBuilder) {
             return queryBuilder;
@@ -580,6 +594,7 @@ public class FunctionScoreQueryBuilder extends AbstractQueryBuilder<FunctionScor
         XContentParser parser,
         List<FunctionScoreQueryBuilder.FilterFunctionBuilder> filterFunctionBuilders
     ) throws IOException {
+        logger.warn("QQQ FunctionScoreQueryBuilder parseFiltersAndFunctions");
         String currentFieldName = null;
         XContentParser.Token token;
         while ((token = parser.nextToken()) != XContentParser.Token.END_ARRAY) {

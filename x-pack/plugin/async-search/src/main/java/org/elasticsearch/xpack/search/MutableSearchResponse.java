@@ -101,6 +101,7 @@ class MutableSearchResponse {
         int reducePhase,
         boolean isFinalLocalReduce
     ) {
+        logger.warn("UUU YYY MutableSearchResponse updatePartialResponse");
         failIfFrozen();
         if (reducePhase < this.reducePhase) {
             // should never happen since partial response are updated under a lock
@@ -138,6 +139,12 @@ class MutableSearchResponse {
         assert shardsInResponseMatchExpected(response, ccsMinimizeRoundtrips)
             : getShardsInResponseMismatchInfo(response, ccsMinimizeRoundtrips);
 
+        logger.warn(
+            "UUU MutableSearchResponse final response: cluster uniqueId: {}; clusterInfo: {}",
+            response.getClusters().uniqueId,
+            response.getClusters().getClusterInfo()
+        );
+
         this.responseHeaders = threadContext.getResponseHeaders();
         this.finalResponse = response;
         this.isPartial = false;
@@ -149,6 +156,12 @@ class MutableSearchResponse {
      * received from previous updates
      */
     synchronized void updateWithFailure(ElasticsearchException exc) {
+        logger.warn("UUU YYY MutableSearchResponse updateWithFailure: e: {}", exc.getMessage());
+        try {
+            throw new RuntimeException("f");
+        } catch (RuntimeException e) {
+            logger.warn("UUU YYY MutableSearchResponse updateWithFailure stacktrace: ", exc);
+        }
         failIfFrozen();
         // copy the response headers from the current context
         this.responseHeaders = threadContext.getResponseHeaders();
@@ -163,6 +176,7 @@ class MutableSearchResponse {
      * Adds a shard failure concurrently (non-blocking).
      */
     void addQueryFailure(int shardIndex, ShardSearchFailure shardSearchFailure) {
+        logger.warn("UUU YYY MutableSearchResponse addQueryFailure: f: {}", shardSearchFailure);
         synchronized (this) {
             failIfFrozen();
         }
@@ -180,6 +194,23 @@ class MutableSearchResponse {
             reducePhase
         );
         long tookInMillis = TimeValue.timeValueNanos(System.nanoTime() - taskStartTimeNanos).getMillis();
+        ShardSearchFailure[] shardSearchFailures = buildQueryFailures();
+        if (shardSearchFailures != ShardSearchFailure.EMPTY_ARRAY) {
+            logger.warn(
+                "YYY MutableSearchResponse buildResponse with failures. Clusters ID: {}; Clusters: {}; subClusterMap: {}",
+                clusters.uniqueId,
+                clusters,
+                clusters.getClusterInfo()
+            );
+            for (ShardSearchFailure shardSearchFailure : shardSearchFailures) {
+                logger.warn("YYY MutableSearchResponse buildResponse with failures; failure={}", shardSearchFailure);
+            }
+            try {
+                throw new RuntimeException("YYY buildResponse with failures");
+            } catch (RuntimeException e) {
+                logger.warn(e.getMessage() + " stack trace ", e);
+            }
+        }
         return new SearchResponse(
             internal,
             null,
@@ -187,7 +218,7 @@ class MutableSearchResponse {
             successfulShards,
             skippedShards,
             tookInMillis,
-            buildQueryFailures(),
+            shardSearchFailures,
             clusters
         );
     }
@@ -326,6 +357,10 @@ class MutableSearchResponse {
             if (shardSearchFailure != null) {
                 failures.add(shardSearchFailure);
             }
+        }
+        logger.warn("UUU YYY MutableSearchResponse buildQueryFailures len: {}", queryFailures.length());
+        for (ShardSearchFailure shardSearchFailure : queryFailures.asList()) {
+            logger.warn("UUU YYY MutableSearchResponse LOOP shardSearchFailure: {}", shardSearchFailure);
         }
         return failures.toArray(ShardSearchFailure[]::new);
     }
