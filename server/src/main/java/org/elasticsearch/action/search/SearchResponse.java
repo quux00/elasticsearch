@@ -8,6 +8,8 @@
 
 package org.elasticsearch.action.search;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.search.TotalHits;
 import org.elasticsearch.TransportVersion;
 import org.elasticsearch.action.ActionResponse;
@@ -39,10 +41,15 @@ import org.elasticsearch.xcontent.XContentParser.Token;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
 import static org.elasticsearch.action.search.ShardSearchFailure.readShardSearchFailure;
@@ -52,7 +59,7 @@ import static org.elasticsearch.common.xcontent.XContentParserUtils.ensureExpect
  * A response of a search request.
  */
 public class SearchResponse extends ActionResponse implements ChunkedToXContentObject {
-
+    private static final Logger logger = LogManager.getLogger(SearchResponse.class);
     private static final ParseField SCROLL_ID = new ParseField("_scroll_id");
     private static final ParseField POINT_IN_TIME_ID = new ParseField("pit_id");
     private static final ParseField TOOK = new ParseField("took");
@@ -464,6 +471,106 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
     }
 
     /**
+     * Marks the status of a Cluster search involved in a Cross-Cluster search.
+     */
+    // TODO: how do I make this Writeable? Or maybe I don't need to - it is only needed on the primary coordinator?
+    // TODO: or does it need to be writable to be written to .async-search?
+    public enum CompletionStatus /*implements Writeable*/ {
+        SUCCESS,  // all shards completed search
+        PARTIAL,  // only some shards completed the search
+        SKIPPED,  // entire cluster was skipped
+        FAILED;   // search was failed due to this cluster
+
+        @Override
+        public String toString() {
+            return this.name().toLowerCase();
+        }
+
+//        @Override
+//        public void writeTo(StreamOutput out) throws IOException {
+//
+//        }
+    }
+
+    // TODO: does this need to be Writeable? (Only need to fill this in on the coord? What about writing to .async-search?)
+    public static class Cluster implements ToXContentFragment, Writeable {
+
+        private final String clusterAlias;
+        private CompletionStatus status;
+        private Set<String> failures;
+        private int searchLatencyInSeconds;  // TODO: not sure this belongs here
+
+        public Cluster(String clusterAlias) {
+            this.clusterAlias = clusterAlias;
+            this.failures = new HashSet<>();
+            this.searchLatencyInSeconds = -1;
+        }
+
+        public Cluster(StreamInput in) throws IOException {
+            this.clusterAlias = in.readString();
+        }
+
+        @Override
+        public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
+            builder.startObject();
+//            builder.field(TOTAL_FIELD.getPreferredName(), total);
+//            builder.field(SUCCESSFUL_FIELD.getPreferredName(), successful);
+//            builder.field(SKIPPED_FIELD.getPreferredName(), skipped);
+            builder.endObject();
+
+            return builder;
+        }
+
+        @Override
+        public void writeTo(StreamOutput out) throws IOException {
+
+        }
+
+        public String getClusterAlias() {
+            return clusterAlias;
+        }
+
+        public CompletionStatus getStatus() {
+            return status;
+        }
+
+        public void setStatus(CompletionStatus status) {
+            this.status = status;
+        }
+
+        public Set<String> getFailures() {
+            return failures;
+        }
+
+        public void setFailures(Set<String> failures) {
+            this.failures.addAll(failures);
+        }
+
+        public void addFailure(Throwable t) {
+            // TODO: get root cause?
+            this.failures.add(t.getMessage());
+        }
+
+        public int getSearchLatencyInSeconds() {
+            return searchLatencyInSeconds;
+        }
+
+        public void setSearchLatencyInSeconds(int searchLatencyInSeconds) {
+            this.searchLatencyInSeconds = searchLatencyInSeconds;
+        }
+
+        @Override
+        public String toString() {
+            return "Cluster{" +
+                "clusterAlias='" + clusterAlias + '\'' +
+                ", completionStatus=" + status +
+                ", failures=" + failures +
+                ", searchLatencyInSeconds=" + searchLatencyInSeconds +
+                '}';
+        }
+    }
+
+    /**
      * Holds info about the clusters that the search was executed on: how many in total, how many of them were successful
      * and how many of them were skipped.
      */
@@ -475,6 +582,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         static final ParseField SUCCESSFUL_FIELD = new ParseField("successful");
         static final ParseField SKIPPED_FIELD = new ParseField("skipped");
         static final ParseField TOTAL_FIELD = new ParseField("total");
+        // TODO: do we need a failed field?
 
         private final int total;
         private final int successful;
@@ -485,6 +593,11 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         // to subclass it.
         private final transient int remoteClusters;
         private final transient boolean ccsMinimizeRoundtrips;
+
+        // key to map is clusterAlias on the primary querying cluster of a CCS minimize_roundtrips=true query
+        private Map<String, Cluster> clusterInfo;
+
+        public UUID uniqueId; // FIXME - remove - for testing only
 
         /**
          * A Clusters object meant for use with CCS holding additional information about
@@ -509,6 +622,21 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             this.skipped = skipped;
             this.remoteClusters = remoteClusters;
             this.ccsMinimizeRoundtrips = ccsMinimizeRoundtrips;
+            this.clusterInfo = new ConcurrentHashMap<>();
+            this.uniqueId = UUID.randomUUID();
+            logger.warn("UUU Clusters that creates clusterInfo: uniqueId: {}", uniqueId.toString());
+        }
+
+        public void addCluster(Cluster c) {
+            clusterInfo.put(c.getClusterAlias(), c);
+        }
+
+        public Cluster getCluster(String clusterAlias) {
+            return clusterInfo.get(clusterAlias);
+        }
+
+        public Map<String, Cluster> getClusterInfo() {
+            return clusterInfo;
         }
 
         /**
@@ -533,6 +661,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             this.skipped = skipped;
             this.remoteClusters = -1;  // means "unknown" and not needed for this usage
             this.ccsMinimizeRoundtrips = false;
+            this.uniqueId = UUID.randomUUID();
         }
 
         public Clusters(StreamInput in) throws IOException {
@@ -550,11 +679,30 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         @Override
         public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
             if (total > 0) {
+                try {
+                    throw new RuntimeException("e");
+                } catch (RuntimeException e) {
+                    logger.warn("UUU: Clusters.toXContent called from: ", e);
+                }
                 builder.startObject(_CLUSTERS_FIELD.getPreferredName());
                 builder.field(TOTAL_FIELD.getPreferredName(), total);
                 builder.field(SUCCESSFUL_FIELD.getPreferredName(), successful);
                 builder.field(SKIPPED_FIELD.getPreferredName(), skipped);
+                if (clusterInfo != null) {
+                    Map<String, String> clusterInfoMap = new HashMap<>();
+                    logger.warn("UUU XXXyz: Clusters.toXContent num Cluster objs: {}", clusterInfo.size());
+                    for (Cluster cluster : clusterInfo.values()) {
+                        logger.warn("UUU XXXyz: Clusters.toXContent Cluster obj: {}", cluster);
+                        String clusterAlias = cluster.getClusterAlias();
+                        if (clusterAlias.equals("")) {
+                            clusterAlias = "(local)";
+                        }
+                        clusterInfoMap.put(clusterAlias, cluster.getStatus().toString());
+                    }
+                    builder.field("details", clusterInfoMap);
+                }
                 builder.endObject();
+
             }
             return builder;
         }
