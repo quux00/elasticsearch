@@ -138,6 +138,9 @@ class MutableSearchResponse {
         assert shardsInResponseMatchExpected(response, ccsMinimizeRoundtrips)
             : getShardsInResponseMismatchInfo(response, ccsMinimizeRoundtrips);
 
+        logger.warn("UUU MutableSearchResponse final response: cluster uniqueId: {}; clusterInfo: {}",
+            response.getClusters().uniqueId, response.getClusters().getClusterInfo());
+
         this.responseHeaders = threadContext.getResponseHeaders();
         this.finalResponse = response;
         this.isPartial = false;

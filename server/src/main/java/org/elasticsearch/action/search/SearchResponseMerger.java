@@ -8,6 +8,8 @@
 
 package org.elasticsearch.action.search;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.search.FieldDoc;
 import org.apache.lucene.search.ScoreDoc;
 import org.apache.lucene.search.SortField;
@@ -65,6 +67,7 @@ import static org.elasticsearch.action.search.SearchPhaseController.mergeTopDocs
 // from the remote clusters in the fetch phase. This would be identical to the removed QueryAndFetch strategy except that only the remote
 // cluster response would have the fetch results.
 final class SearchResponseMerger {
+    private static final Logger logger = LogManager.getLogger(SearchResponseMerger.class);
     final int from;
     final int size;
     final int trackTotalHitsUpTo;
@@ -105,6 +108,7 @@ final class SearchResponseMerger {
      * so that all responses are merged into a single one.
      */
     SearchResponse getMergedResponse(Clusters clusters) {
+        logger.warn("UUU XXX SearchResponseMerger getMergedResponse DEBUG 1: clusters: {}", clusters.uniqueId);
         // if the search is only across remote clusters, none of them are available, and all of them have skip_unavailable set to true,
         // we end up calling merge without anything to merge, we just return an empty search response
         if (searchResponses.size() == 0) {

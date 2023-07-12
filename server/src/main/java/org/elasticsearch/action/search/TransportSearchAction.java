@@ -8,6 +8,9 @@
 
 package org.elasticsearch.action.search;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
+
 import org.elasticsearch.TransportVersion;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionListenerResponseHandler;
@@ -103,7 +106,7 @@ import static org.elasticsearch.threadpool.ThreadPool.Names.SYSTEM_CRITICAL_READ
 import static org.elasticsearch.threadpool.ThreadPool.Names.SYSTEM_READ;
 
 public class TransportSearchAction extends HandledTransportAction<SearchRequest, SearchResponse> {
-
+    private static final Logger logger = LogManager.getLogger(TransportSearchAction.class);
     private static final DeprecationLogger DEPRECATION_LOGGER = DeprecationLogger.getLogger(TransportSearchAction.class);
     public static final String FROZEN_INDICES_DEPRECATION_MESSAGE = "Searching frozen indices [{}] is deprecated."
         + " Consider cold or frozen tiers in place of frozen indices. The frozen feature will be removed in a feature release.";
@@ -529,7 +532,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                 aggReduceContextBuilder
             );
             AtomicInteger skippedClusters = new AtomicInteger(0);
-            final AtomicReference<Exception> exceptions = new AtomicReference<>();
+            final AtomicReference<Exception> exceptions = new AtomicReference<>(); /// MP: TODO needs to be a List?
+            final Map<String, SearchResponse.Cluster> remoteClusterInfo = new ConcurrentHashMap<>();
             int totalClusters = remoteIndices.size() + (localIndices == null ? 0 : 1);
             final CountDown countDown = new CountDown(totalClusters);
             for (Map.Entry<String, OriginalIndices> entry : remoteIndices.entrySet()) {
@@ -552,6 +556,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     exceptions,
                     searchResponseMerger,
                     totalClusters,
+                    remoteClusterInfo,
                     listener
                 );
                 Client remoteClusterClient = remoteClusterService.getRemoteClusterClient(threadPool, clusterAlias);
@@ -566,6 +571,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     exceptions,
                     searchResponseMerger,
                     totalClusters,
+                    remoteClusterInfo,
                     listener
                 );
                 SearchRequest ccsLocalSearchRequest = SearchRequest.subSearchRequest(
@@ -632,6 +638,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     responsesCountDown,
                     skippedClusters,
                     exceptions,
+                    null,
                     listener
                 ) {
                     @Override
@@ -695,6 +702,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         AtomicReference<Exception> exceptions,
         SearchResponseMerger searchResponseMerger,
         int totalClusters,
+        Map<String, SearchResponse.Cluster> remoteClusterInfo,
         ActionListener<SearchResponse> originalListener
     ) {
         return new CCSActionListener<SearchResponse, SearchResponse>(
@@ -703,20 +711,52 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             countDown,
             skippedClusters,
             exceptions,
+            remoteClusterInfo,
             originalListener
         ) {
             @Override
             void innerOnResponse(SearchResponse searchResponse) {
+                if (searchResponse.getTotalShards() > searchResponse.getSuccessfulShards()) {
+                    if (searchResponse.getSuccessfulShards() == 0) {
+                        clusterInfo.setStatus(SearchResponse.CompletionStatus.FAILED);
+                    } else {
+                        clusterInfo.setStatus(SearchResponse.CompletionStatus.PARTIAL);
+                    }
+                    ShardSearchFailure[] shardFailures = searchResponse.getShardFailures();
+                    if (shardFailures != null) {
+                        for (ShardSearchFailure shardFailure : shardFailures) {
+                            clusterInfo.addFailure(shardFailure.getCause());
+                        }
+                    }
+
+                } else {
+                    clusterInfo.setStatus(SearchResponse.CompletionStatus.SUCCESS);
+                }
+                SearchResponse.Clusters clusters = searchResponse.getClusters();
+                // I imagine these will always be Cluster.EMPTY, but logging for now to find out
+                System.err.println("UUU innerOnResponse Clusters object from " + clusterInfo.getClusterAlias() + ": " + clusters);
+                System.err.println("UUU innerOnResponse Cluster obj I just populated: " + clusterInfo);;
+
+                remoteClusterInfo.put(clusterAlias, clusterInfo);
+                System.err.println("UUU size of remoteClusterInfo: {}" + remoteClusterInfo.size());
                 searchResponseMerger.add(searchResponse);
             }
 
             @Override
             SearchResponse createFinalResponse() {
+                logger.warn("UUU XXX TSA createFinalResponse");
                 SearchResponse.Clusters clusters = new SearchResponse.Clusters(
                     totalClusters,
                     searchResponseMerger.numResponses(),
-                    skippedClusters.get()
+                    skippedClusters.get(),
+                    remoteClusterInfo.size(),
+                    true // TODO: this needs to be passed in?
                 );
+                for (SearchResponse.Cluster c : remoteClusterInfo.values()) {
+                    System.err.println("UUU adding Cluster to remoteClusterInfo for final Clusters obj: {}" + c);
+                    clusters.addCluster(c);
+                }
+                System.err.println("UUU createFinalResponse - Clusters ID: {}" + clusters.uniqueId);
                 return searchResponseMerger.getMergedResponse(clusters);
             }
         };
@@ -1251,7 +1291,9 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         private final CountDown countDown;
         private final AtomicInteger skippedClusters;
         private final AtomicReference<Exception> exceptions;
+        private final Map<String, SearchResponse.Cluster> remoteClusterInfo;
         private final ActionListener<FinalResponse> originalListener;
+        protected final SearchResponse.Cluster clusterInfo;
 
         CCSActionListener(
             String clusterAlias,
@@ -1259,6 +1301,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             CountDown countDown,
             AtomicInteger skippedClusters,
             AtomicReference<Exception> exceptions,
+            Map<String, SearchResponse.Cluster> remoteClusterInfo,
             ActionListener<FinalResponse> originalListener
         ) {
             this.clusterAlias = clusterAlias;
@@ -1266,6 +1309,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             this.countDown = countDown;
             this.skippedClusters = skippedClusters;
             this.exceptions = exceptions;
+            this.remoteClusterInfo = remoteClusterInfo;
+            this.clusterInfo = new SearchResponse.Cluster(clusterAlias);
             this.originalListener = originalListener;
         }
 
@@ -1281,7 +1326,9 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         public final void onFailure(Exception e) {
             if (skipUnavailable) {
                 skippedClusters.incrementAndGet();
+                clusterInfo.setStatus(SearchResponse.CompletionStatus.SKIPPED);
             } else {
+                clusterInfo.setStatus(SearchResponse.CompletionStatus.FAILED);
                 Exception exception = e;
                 if (RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY.equals(clusterAlias) == false) {
                     exception = wrapRemoteClusterFailure(clusterAlias, e);
@@ -1292,6 +1339,10 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                         return current;
                     });
                 }
+            }
+            clusterInfo.addFailure(e);
+            if (remoteClusterInfo != null) {
+                remoteClusterInfo.put(clusterAlias, clusterInfo);
             }
             maybeFinish();
         }
