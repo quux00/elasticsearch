@@ -41,7 +41,7 @@ import org.elasticsearch.xcontent.XContentParser.Token;
 
 import java.io.IOException;
 import java.util.ArrayList;
-import java.util.HashMap;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
@@ -51,6 +51,7 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import static org.elasticsearch.action.search.ShardSearchFailure.readShardSearchFailure;
 import static org.elasticsearch.common.xcontent.XContentParserUtils.ensureExpectedToken;
@@ -494,36 +495,86 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
 
     // TODO: does this need to be Writeable? (Only need to fill this in on the coord? What about writing to .async-search?)
     public static class Cluster implements ToXContentFragment, Writeable {
-
         private final String clusterAlias;
         private CompletionStatus status;
         private Set<String> failures;
         private int searchLatencyInSeconds;  // TODO: not sure this belongs here
+        private int percentShardsSuccessful;
 
         public Cluster(String clusterAlias) {
             this.clusterAlias = clusterAlias;
             this.failures = new HashSet<>();
             this.searchLatencyInSeconds = -1;
+            this.percentShardsSuccessful = -1;
         }
 
         public Cluster(StreamInput in) throws IOException {
             this.clusterAlias = in.readString();
+            String completionStatus = in.readString();
+            this.status = CompletionStatus.valueOf(completionStatus.toUpperCase());
+            List<String> errors = in.readOptionalStringList();
+            if (errors == null) {
+                this.failures = new HashSet<>();
+            } else {
+                this.failures = errors.stream().collect(Collectors.toSet());
+            }
         }
 
         @Override
         public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
-            builder.startObject();
-//            builder.field(TOTAL_FIELD.getPreferredName(), total);
-//            builder.field(SUCCESSFUL_FIELD.getPreferredName(), successful);
-//            builder.field(SKIPPED_FIELD.getPreferredName(), skipped);
+            String name = clusterAlias;
+            if (clusterAlias.equals("")) {
+                name = "(local)";
+            }
+            builder.startObject(name);
+            {
+                builder.field("completion_status", status.toString());
+                if (failures != null && failures.isEmpty() == false) {
+                    builder.startArray("errors");
+                    for (String failure : failures) {
+                        builder.value(failure);
+                    }
+                    builder.endArray();
+                }
+            }
             builder.endObject();
-
             return builder;
         }
 
+        /*
+        builder.startObject(clusterAlias);
+        {
+            builder.field("connected", modeInfo.isConnected());
+            builder.field("mode", modeInfo.modeName());
+            modeInfo.toXContent(builder, params);
+            builder.field("initial_connect_timeout", initialConnectionTimeout);
+            builder.field("skip_unavailable", skipUnavailable);
+            if (hasClusterCredentials) {
+                builder.field("cluster_credentials", "::es_redacted::");
+            }
+        }
+        builder.endObject();
+         */
+
+        /*
+        builder.field("since", sinceTime);
+        if (restUsage != null) {
+            builder.field("rest_actions");
+            builder.map(restUsage);
+        }
+        if (aggregationUsage != null) {
+            builder.field("aggregations");
+            builder.map(aggregationUsage);
+        }
+        return builder;
+
+         */
+
         @Override
         public void writeTo(StreamOutput out) throws IOException {
-
+            out.writeString(clusterAlias);
+            out.writeString(status.toString());
+            out.writeOptionalStringCollection(failures);
         }
 
         public String getClusterAlias() {
@@ -557,6 +608,14 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
 
         public void setSearchLatencyInSeconds(int searchLatencyInSeconds) {
             this.searchLatencyInSeconds = searchLatencyInSeconds;
+        }
+
+        public int getPercentShardsSuccessful() {
+            return percentShardsSuccessful;
+        }
+
+        public void setPercentShardsSuccessful(int percentShardsSuccessful) {
+            this.percentShardsSuccessful = percentShardsSuccessful;
         }
 
         @Override
@@ -661,12 +720,14 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             this.skipped = skipped;
             this.remoteClusters = -1;  // means "unknown" and not needed for this usage
             this.ccsMinimizeRoundtrips = false;
-            this.uniqueId = UUID.randomUUID();
+            this.clusterInfo = Collections.emptyMap();  // will never be used if created from this constructor
+            this.uniqueId = UUID.randomUUID(); // FIXME - remove
         }
 
         public Clusters(StreamInput in) throws IOException {
             // when coming across the wire, we don't have context to know if this Cluster is in a final state, so set finalState=false
             this(in.readVInt(), in.readVInt(), in.readVInt(), false);
+            this.clusterInfo = in.readMapValues(Cluster::new, Cluster::getClusterAlias);
         }
 
         @Override
@@ -674,32 +735,25 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             out.writeVInt(total);
             out.writeVInt(successful);
             out.writeVInt(skipped);
+            if (out.getTransportVersion().onOrAfter(TransportVersion.V_8_500_032)) {
+                out.writeMapValues(clusterInfo);
+            }
         }
 
         @Override
         public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
             if (total > 0) {
-                try {
-                    throw new RuntimeException("e");
-                } catch (RuntimeException e) {
-                    logger.warn("UUU: Clusters.toXContent called from: ", e);
-                }
                 builder.startObject(_CLUSTERS_FIELD.getPreferredName());
                 builder.field(TOTAL_FIELD.getPreferredName(), total);
                 builder.field(SUCCESSFUL_FIELD.getPreferredName(), successful);
                 builder.field(SKIPPED_FIELD.getPreferredName(), skipped);
-                if (clusterInfo != null) {
-                    Map<String, String> clusterInfoMap = new HashMap<>();
+                if (clusterInfo.size() > 0) {
                     logger.warn("UUU XXXyz: Clusters.toXContent num Cluster objs: {}", clusterInfo.size());
+                    builder.startObject("details");
                     for (Cluster cluster : clusterInfo.values()) {
-                        logger.warn("UUU XXXyz: Clusters.toXContent Cluster obj: {}", cluster);
-                        String clusterAlias = cluster.getClusterAlias();
-                        if (clusterAlias.equals("")) {
-                            clusterAlias = "(local)";
-                        }
-                        clusterInfoMap.put(clusterAlias, cluster.getStatus().toString());
+                        cluster.toXContent(builder, params);
                     }
-                    builder.field("details", clusterInfoMap);
+                    builder.endObject();
                 }
                 builder.endObject();
 
