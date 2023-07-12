@@ -76,6 +76,8 @@ import org.elasticsearch.transport.Transport;
 import org.elasticsearch.transport.TransportRequestOptions;
 import org.elasticsearch.transport.TransportService;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -716,28 +718,36 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         ) {
             @Override
             void innerOnResponse(SearchResponse searchResponse) {
-                if (searchResponse.getTotalShards() > searchResponse.getSuccessfulShards()) {
-                    if (searchResponse.getSuccessfulShards() == 0) {
-                        clusterInfo.setStatus(SearchResponse.CompletionStatus.FAILED);
+                int total = searchResponse.getTotalShards();
+                int success = searchResponse.getSuccessfulShards();
+                float percentSuccessful = ((float) success / (float) total) * 100;
+                cluster.setPercentShardsSuccessful(percentSuccessful);
+                Instant now = Instant.now();
+                Instant start = Instant.ofEpochMilli(startTime);
+                cluster.setSearchLatencyInSeconds((int) Duration.between(start, now).getSeconds());
+
+                if (total > success) {
+                    if (success == 0) {
+                        cluster.setStatus(SearchResponse.CompletionStatus.FAILED);
                     } else {
-                        clusterInfo.setStatus(SearchResponse.CompletionStatus.PARTIAL);
+                        cluster.setStatus(SearchResponse.CompletionStatus.PARTIAL);
                     }
                     ShardSearchFailure[] shardFailures = searchResponse.getShardFailures();
                     if (shardFailures != null) {
                         for (ShardSearchFailure shardFailure : shardFailures) {
-                            clusterInfo.addFailure(shardFailure.getCause());
+                            cluster.addFailure(shardFailure.getCause());
                         }
                     }
 
                 } else {
-                    clusterInfo.setStatus(SearchResponse.CompletionStatus.SUCCESS);
+                    cluster.setStatus(SearchResponse.CompletionStatus.SUCCESS);
                 }
                 SearchResponse.Clusters clusters = searchResponse.getClusters();
                 // I imagine these will always be Cluster.EMPTY, but logging for now to find out
-                System.err.println("UUU innerOnResponse Clusters object from " + clusterInfo.getClusterAlias() + ": " + clusters);
-                System.err.println("UUU innerOnResponse Cluster obj I just populated: " + clusterInfo);;
+                System.err.println("UUU innerOnResponse Clusters object from " + cluster.getClusterAlias() + ": " + clusters);
+                System.err.println("UUU innerOnResponse Cluster obj I just populated: " + cluster);;
 
-                remoteClusterInfo.put(clusterAlias, clusterInfo);
+                remoteClusterInfo.put(clusterAlias, cluster);
                 System.err.println("UUU size of remoteClusterInfo: {}" + remoteClusterInfo.size());
                 searchResponseMerger.add(searchResponse);
             }
@@ -1293,7 +1303,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         private final AtomicReference<Exception> exceptions;
         private final Map<String, SearchResponse.Cluster> remoteClusterInfo;
         private final ActionListener<FinalResponse> originalListener;
-        protected final SearchResponse.Cluster clusterInfo;
+        protected final SearchResponse.Cluster cluster;
+        protected final long startTime;
 
         CCSActionListener(
             String clusterAlias,
@@ -1310,8 +1321,10 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             this.skippedClusters = skippedClusters;
             this.exceptions = exceptions;
             this.remoteClusterInfo = remoteClusterInfo;
-            this.clusterInfo = new SearchResponse.Cluster(clusterAlias);
+            this.cluster = new SearchResponse.Cluster(clusterAlias);
             this.originalListener = originalListener;
+            this.startTime = System.currentTimeMillis();
+            logger.warn("YYY CCSActionListener ctor: start time: " + startTime);
         }
 
         @Override
@@ -1324,11 +1337,20 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
 
         @Override
         public final void onFailure(Exception e) {
+            logger.warn("YYY TSA onFailure: cluster: {} ,e: {}", clusterAlias, e.getMessage());
+            try {
+                throw new RuntimeException("YYY TSA onFailure");
+            } catch (RuntimeException ex) {
+                logger.warn(ex.getMessage() + " stack trace ", ex);
+            }
+            cluster.addFailure(e);
+            cluster.setPercentShardsSuccessful(0); /// MP TODO: is this right?
             if (skipUnavailable) {
                 skippedClusters.incrementAndGet();
-                clusterInfo.setStatus(SearchResponse.CompletionStatus.SKIPPED);
+                cluster.setStatus(SearchResponse.CompletionStatus.SKIPPED);
             } else {
-                clusterInfo.setStatus(SearchResponse.CompletionStatus.FAILED);
+                cluster.setPercentShardsSuccessful(0);
+                cluster.setStatus(SearchResponse.CompletionStatus.FAILED);
                 Exception exception = e;
                 if (RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY.equals(clusterAlias) == false) {
                     exception = wrapRemoteClusterFailure(clusterAlias, e);
@@ -1340,10 +1362,10 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     });
                 }
             }
-            clusterInfo.addFailure(e);
             if (remoteClusterInfo != null) {
-                remoteClusterInfo.put(clusterAlias, clusterInfo);
+                remoteClusterInfo.put(clusterAlias, cluster);
             }
+            logger.warn("YYY TSA onFailure: cluster: {} , remoteClusterInfo AFTER: {}", cluster, remoteClusterInfo);
             maybeFinish();
         }
 
@@ -1360,6 +1382,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     }
                     originalListener.onResponse(response);
                 } else {
+                    // NOTE: for AsyncSearch CCS: originalListener is org.elasticsearch.xpack.search.AsyncSearchTask$Listener
                     originalListener.onFailure(exceptions.get());
                 }
             }

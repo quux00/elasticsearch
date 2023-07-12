@@ -499,7 +499,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         private CompletionStatus status;
         private Set<String> failures;
         private int searchLatencyInSeconds;  // TODO: not sure this belongs here
-        private int percentShardsSuccessful;
+        private float percentShardsSuccessful;
 
         public Cluster(String clusterAlias) {
             this.clusterAlias = clusterAlias;
@@ -512,6 +512,8 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             this.clusterAlias = in.readString();
             String completionStatus = in.readString();
             this.status = CompletionStatus.valueOf(completionStatus.toUpperCase());
+            this.percentShardsSuccessful = in.readFloat();
+            this.searchLatencyInSeconds = in.readVInt();
             List<String> errors = in.readOptionalStringList();
             if (errors == null) {
                 this.failures = new HashSet<>();
@@ -529,6 +531,9 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             builder.startObject(name);
             {
                 builder.field("completion_status", status.toString());
+                String percentSuccessful = String.format("%.2f", percentShardsSuccessful < 0 ? 0.0f : percentShardsSuccessful);
+                builder.field("percent_shards_successful", percentSuccessful);
+                builder.field("completion_time", searchLatencyInSeconds + "s");
                 if (failures != null && failures.isEmpty() == false) {
                     builder.startArray("errors");
                     for (String failure : failures) {
@@ -574,6 +579,8 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         public void writeTo(StreamOutput out) throws IOException {
             out.writeString(clusterAlias);
             out.writeString(status.toString());
+            out.writeFloat(percentShardsSuccessful);
+            out.writeVInt(searchLatencyInSeconds);   // MP: TODO: might be better to use optionalVInt with boxed type?
             out.writeOptionalStringCollection(failures);
         }
 
@@ -610,11 +617,11 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             this.searchLatencyInSeconds = searchLatencyInSeconds;
         }
 
-        public int getPercentShardsSuccessful() {
+        public float getPercentShardsSuccessful() {
             return percentShardsSuccessful;
         }
 
-        public void setPercentShardsSuccessful(int percentShardsSuccessful) {
+        public void setPercentShardsSuccessful(float percentShardsSuccessful) {
             this.percentShardsSuccessful = percentShardsSuccessful;
         }
 
@@ -742,6 +749,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
 
         @Override
         public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
+            logger.warn("YYY SearchResponse Clusters toXContent: ID: {}", uniqueId);
             if (total > 0) {
                 builder.startObject(_CLUSTERS_FIELD.getPreferredName());
                 builder.field(TOTAL_FIELD.getPreferredName(), total);
