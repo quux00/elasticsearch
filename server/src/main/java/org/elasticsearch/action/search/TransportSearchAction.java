@@ -1343,14 +1343,22 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
 
         @Override
         public final void onFailure(Exception e) {
-            logger.warn("YYY TSA onFailure: cluster: {} ,e: {}", clusterAlias, e.getMessage());
+            logger.warn("YYY TSA onFailure: cluster: {} ,e: {}; stacktrace: ", clusterAlias, e.getMessage(), e);
 //            try {
 //                throw new RuntimeException("YYY TSA onFailure");
 //            } catch (RuntimeException ex) {
 //                logger.warn(ex.getMessage() + " stack trace ", ex);
 //            }
             /// MP: TODO: problem here is that this is called for the disconnect route, so we can't know how many shards we are missing
-            cluster.addFailure(e);
+            if (e.getCause() != null) {
+                if (e.getCause().getCause() != null) {
+                    cluster.addFailure(e.getCause().getCause());
+                } else {
+                    cluster.addFailure(e.getCause());
+                }
+            } else {
+                cluster.addFailure(e);
+            }
             if (skipUnavailable) {
                 skippedClusters.incrementAndGet();
                 cluster.setStatus(SearchResponse.CompletionStatus.SKIPPED);
