@@ -498,28 +498,48 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         private final String clusterAlias;
         private CompletionStatus status;
         private Set<String> failures;
-        private int searchLatencyInSeconds;  // TODO: not sure this belongs here
-        private float percentShardsSuccessful;
+        // TODO: I think these should all be boxed, so can do writeOptionalInt in transport layer
+        private Integer totalShards;  // TODO: use these to update the _shards fields (otherwise skipped clusters aren't counted)
+        private Integer successfulShards;
+        private Integer skippedShards;
+        private Integer failedShards;
+        private Long searchLatencyMillis;  // TODO: not sure this belongs here
+        // private float percentShardsSuccessful;  // TODO: this goes away and gets calculated at XContent time (if we keep it at all)
 
         public Cluster(String clusterAlias) {
             this.clusterAlias = clusterAlias;
             this.failures = new HashSet<>();
-            this.searchLatencyInSeconds = -1;
-            this.percentShardsSuccessful = -1;
         }
 
         public Cluster(StreamInput in) throws IOException {
             this.clusterAlias = in.readString();
-            String completionStatus = in.readString();
-            this.status = CompletionStatus.valueOf(completionStatus.toUpperCase());
-            this.percentShardsSuccessful = in.readFloat();
-            this.searchLatencyInSeconds = in.readVInt();
+            String completionStatus = in.readOptionalString();
+            if (completionStatus != null) {
+                this.status = CompletionStatus.valueOf(completionStatus.toUpperCase());
+            }
+            this.totalShards = in.readOptionalVInt();
+            this.successfulShards = in.readOptionalVInt();
+            this.skippedShards = in.readOptionalVInt();
+            this.failedShards = in.readOptionalVInt();
+            this.searchLatencyMillis = in.readOptionalVLong();
             List<String> errors = in.readOptionalStringList();
             if (errors == null) {
                 this.failures = new HashSet<>();
             } else {
                 this.failures = errors.stream().collect(Collectors.toSet());
             }
+        }
+
+        @Override
+        public void writeTo(StreamOutput out) throws IOException {
+            out.writeString(clusterAlias);
+            out.writeOptionalString(status == null ? null : status.toString());
+            out.writeOptionalVInt(totalShards);
+            out.writeOptionalVInt(successfulShards);
+            out.writeOptionalVInt(skippedShards);
+            out.writeOptionalVInt(failedShards);
+            out.writeOptionalVLong(searchLatencyMillis);
+            out.writeOptionalStringCollection(failures);
         }
 
         @Override
@@ -531,9 +551,27 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             builder.startObject(name);
             {
                 builder.field("completion_status", status.toString());
-                String percentSuccessful = String.format("%.2f", percentShardsSuccessful < 0 ? 0.0f : percentShardsSuccessful);
-                builder.field("percent_shards_successful", percentSuccessful);
-                builder.field("completion_time", searchLatencyInSeconds + "s");
+                if (totalShards != null) {
+                    builder.field("total_shards", totalShards);
+                }
+                if (successfulShards != null) {
+                    builder.field("successful_shards", successfulShards);
+                }
+                if (skippedShards != null) {
+                    builder.field("skipped_shards", skippedShards);
+                }
+                if (failedShards != null) {
+                    builder.field("failed_shards", failedShards);
+                }
+                if (totalShards != null && successfulShards != null) {
+                    String percentSuccessful = String.format("%.2f", (successfulShards.floatValue() / totalShards.floatValue()) * 100);
+                    builder.field("percent_shards_successful", percentSuccessful);
+                }
+                if (searchLatencyMillis != null) {
+//                    double seconds = searchLatencyMillis.doubleValue() / 1_000_000.0;
+//                    String latencySeconds = String.format("%.2f", seconds);
+                    builder.field("completion_time", searchLatencyMillis.doubleValue());
+                }
                 if (failures != null && failures.isEmpty() == false) {
                     builder.startArray("errors");
                     for (String failure : failures) {
@@ -544,44 +582,6 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             }
             builder.endObject();
             return builder;
-        }
-
-        /*
-        builder.startObject(clusterAlias);
-        {
-            builder.field("connected", modeInfo.isConnected());
-            builder.field("mode", modeInfo.modeName());
-            modeInfo.toXContent(builder, params);
-            builder.field("initial_connect_timeout", initialConnectionTimeout);
-            builder.field("skip_unavailable", skipUnavailable);
-            if (hasClusterCredentials) {
-                builder.field("cluster_credentials", "::es_redacted::");
-            }
-        }
-        builder.endObject();
-         */
-
-        /*
-        builder.field("since", sinceTime);
-        if (restUsage != null) {
-            builder.field("rest_actions");
-            builder.map(restUsage);
-        }
-        if (aggregationUsage != null) {
-            builder.field("aggregations");
-            builder.map(aggregationUsage);
-        }
-        return builder;
-
-         */
-
-        @Override
-        public void writeTo(StreamOutput out) throws IOException {
-            out.writeString(clusterAlias);
-            out.writeString(status.toString());
-            out.writeFloat(percentShardsSuccessful);
-            out.writeVInt(searchLatencyInSeconds);   // MP: TODO: might be better to use optionalVInt with boxed type?
-            out.writeOptionalStringCollection(failures);
         }
 
         public String getClusterAlias() {
@@ -609,29 +609,57 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             this.failures.add(t.getMessage());
         }
 
-        public int getSearchLatencyInSeconds() {
-            return searchLatencyInSeconds;
+        public Long getSearchLatencyMillis() {
+            return searchLatencyMillis;
         }
 
-        public void setSearchLatencyInSeconds(int searchLatencyInSeconds) {
-            this.searchLatencyInSeconds = searchLatencyInSeconds;
+        public void setSearchLatencyMillis(Long searchLatencyMillis) {
+            this.searchLatencyMillis = searchLatencyMillis;
         }
 
-        public float getPercentShardsSuccessful() {
-            return percentShardsSuccessful;
+        public int getTotalShards() {
+            return totalShards;
         }
 
-        public void setPercentShardsSuccessful(float percentShardsSuccessful) {
-            this.percentShardsSuccessful = percentShardsSuccessful;
+        public void setTotalShards(int totalShards) {
+            this.totalShards = totalShards;
+        }
+
+        public int getSuccessfulShards() {
+            return successfulShards;
+        }
+
+        public void setSuccessfulShards(int successfulShards) {
+            this.successfulShards = successfulShards;
+        }
+
+        public int getSkippedShards() {
+            return skippedShards;
+        }
+
+        public void setSkippedShards(int skippedShards) {
+            this.skippedShards = skippedShards;
+        }
+
+        public int getFailedShards() {
+            return failedShards;
+        }
+
+        public void setFailedShards(int failedShards) {
+            this.failedShards = failedShards;
         }
 
         @Override
         public String toString() {
             return "Cluster{" +
                 "clusterAlias='" + clusterAlias + '\'' +
-                ", completionStatus=" + status +
+                ", status=" + status +
                 ", failures=" + failures +
-                ", searchLatencyInSeconds=" + searchLatencyInSeconds +
+                ", totalShards=" + totalShards +
+                ", successfulShards=" + successfulShards +
+                ", skippedShards=" + skippedShards +
+                ", failedShards=" + failedShards +
+                ", searchLatencyMillis=" + searchLatencyMillis +
                 '}';
         }
     }

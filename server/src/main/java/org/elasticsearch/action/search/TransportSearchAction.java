@@ -10,7 +10,6 @@ package org.elasticsearch.action.search;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
-
 import org.elasticsearch.TransportVersion;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionListenerResponseHandler;
@@ -306,6 +305,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                 searchContext = null;
                 remoteClusterIndices = remoteClusterService.groupIndices(rewritten.indicesOptions(), rewritten.indices());
             }
+
             OriginalIndices localIndices = remoteClusterIndices.remove(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY);
             final ClusterState clusterState = clusterService.state();
             if (remoteClusterIndices.isEmpty()) {
@@ -459,7 +459,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             || source.collapse().getInnerHits().isEmpty();
     }
 
-    static void ccsRemoteReduce(
+    static void ccsRemoteReduce(  // MP TODO: can we pass the common Clusters object into here?
         TaskId parentTaskId,
         SearchRequest searchRequest,
         OriginalIndices localIndices,
@@ -720,11 +720,15 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             void innerOnResponse(SearchResponse searchResponse) {
                 int total = searchResponse.getTotalShards();
                 int success = searchResponse.getSuccessfulShards();
-                float percentSuccessful = ((float) success / (float) total) * 100;
-                cluster.setPercentShardsSuccessful(percentSuccessful);
+                cluster.setTotalShards(total);
+                cluster.setSuccessfulShards(success);
+                cluster.setSkippedShards(searchResponse.getSkippedShards());
+                cluster.setFailedShards(searchResponse.getFailedShards());
+
+                /// MP: TODO: probably need to use the
                 Instant now = Instant.now();
                 Instant start = Instant.ofEpochMilli(startTime);
-                cluster.setSearchLatencyInSeconds((int) Duration.between(start, now).getSeconds());
+                cluster.setSearchLatencyMillis(Duration.between(start, now).toMillis());
 
                 if (total > success) {
                     if (success == 0) {
@@ -732,13 +736,15 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     } else {
                         cluster.setStatus(SearchResponse.CompletionStatus.PARTIAL);
                     }
+                    // MP TODO: does a fully skipped cluster with skip_ynavailable=true come through here when disconnected?
+                    // MP TODO: A: no, it calls onFailure
                     ShardSearchFailure[] shardFailures = searchResponse.getShardFailures();
                     if (shardFailures != null) {
                         for (ShardSearchFailure shardFailure : shardFailures) {
                             cluster.addFailure(shardFailure.getCause());
+                            logger.warn("UUU YYY innerOnResponse - failure: ", shardFailure);
                         }
                     }
-
                 } else {
                     cluster.setStatus(SearchResponse.CompletionStatus.SUCCESS);
                 }
@@ -1338,18 +1344,17 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         @Override
         public final void onFailure(Exception e) {
             logger.warn("YYY TSA onFailure: cluster: {} ,e: {}", clusterAlias, e.getMessage());
-            try {
-                throw new RuntimeException("YYY TSA onFailure");
-            } catch (RuntimeException ex) {
-                logger.warn(ex.getMessage() + " stack trace ", ex);
-            }
+//            try {
+//                throw new RuntimeException("YYY TSA onFailure");
+//            } catch (RuntimeException ex) {
+//                logger.warn(ex.getMessage() + " stack trace ", ex);
+//            }
+            /// MP: TODO: problem here is that this is called for the disconnect route, so we can't know how many shards we are missing
             cluster.addFailure(e);
-            cluster.setPercentShardsSuccessful(0); /// MP TODO: is this right?
             if (skipUnavailable) {
                 skippedClusters.incrementAndGet();
                 cluster.setStatus(SearchResponse.CompletionStatus.SKIPPED);
             } else {
-                cluster.setPercentShardsSuccessful(0);
                 cluster.setStatus(SearchResponse.CompletionStatus.FAILED);
                 Exception exception = e;
                 if (RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY.equals(clusterAlias) == false) {
