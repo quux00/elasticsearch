@@ -32,7 +32,6 @@ import org.elasticsearch.index.query.functionscore.FunctionScoreQueryBuilder;
 import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
-import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
@@ -415,7 +414,7 @@ public class FunctionScoreQuery extends Query {
             this.maxBoost = maxBoost;
             this.needsScores = needsScores;
             this.startTimeMillis = System.currentTimeMillis();
-            this.numSecondsTimeout = ThreadLocalRandom.current().nextInt(5, 45);;
+            this.numSecondsTimeout = ThreadLocalRandom.current().nextInt(5, 45);
         }
 
         @Override

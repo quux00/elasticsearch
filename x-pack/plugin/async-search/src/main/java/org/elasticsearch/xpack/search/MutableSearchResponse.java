@@ -139,8 +139,11 @@ class MutableSearchResponse {
         assert shardsInResponseMatchExpected(response, ccsMinimizeRoundtrips)
             : getShardsInResponseMismatchInfo(response, ccsMinimizeRoundtrips);
 
-        logger.warn("UUU MutableSearchResponse final response: cluster uniqueId: {}; clusterInfo: {}",
-            response.getClusters().uniqueId, response.getClusters().getClusterInfo());
+        logger.warn(
+            "UUU MutableSearchResponse final response: cluster uniqueId: {}; clusterInfo: {}",
+            response.getClusters().uniqueId,
+            response.getClusters().getClusterInfo()
+        );
 
         this.responseHeaders = threadContext.getResponseHeaders();
         this.finalResponse = response;
@@ -193,8 +196,12 @@ class MutableSearchResponse {
         long tookInMillis = TimeValue.timeValueNanos(System.nanoTime() - taskStartTimeNanos).getMillis();
         ShardSearchFailure[] shardSearchFailures = buildQueryFailures();
         if (shardSearchFailures != ShardSearchFailure.EMPTY_ARRAY) {
-            logger.warn("YYY MutableSearchResponse buildResponse with failures. Clusters ID: {}; Clusters: {}; subClusterMap: {}",
-                clusters.uniqueId, clusters, clusters.getClusterInfo());
+            logger.warn(
+                "YYY MutableSearchResponse buildResponse with failures. Clusters ID: {}; Clusters: {}; subClusterMap: {}",
+                clusters.uniqueId,
+                clusters,
+                clusters.getClusterInfo()
+            );
             for (ShardSearchFailure shardSearchFailure : shardSearchFailures) {
                 logger.warn("YYY MutableSearchResponse buildResponse with failures; failure={}", shardSearchFailure);
             }

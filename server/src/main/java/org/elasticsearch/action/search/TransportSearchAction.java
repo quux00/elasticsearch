@@ -526,12 +526,12 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     );
                     SearchResponse.Cluster cluster = clusters.getCluster(clusterAlias);
                     if (searchResponse.getFailedShards() == 0) {
-                        cluster.setStatus(SearchResponse.CompletionStatus.SUCCESS);
+                        cluster.setStatus(SearchResponse.Cluster.Status.SUCCESS);
                     } else {
                         if (searchResponse.getTotalShards() > searchResponse.getFailedShards()) {
-                            cluster.setStatus(SearchResponse.CompletionStatus.PARTIAL);
+                            cluster.setStatus(SearchResponse.Cluster.Status.PARTIAL);
                         } else {
-                            cluster.setStatus(SearchResponse.CompletionStatus.FAILED);
+                            cluster.setStatus(SearchResponse.Cluster.Status.FAILED);
                         }
                         for (ShardSearchFailure shardFailure : searchResponse.getShardFailures()) {
                             cluster.addFailure(shardFailure);
@@ -543,8 +543,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     cluster.setFailedShards(searchResponse.getFailedShards());
                     cluster.setSearchLatencyMillis(timeProvider.buildTookInMillis()); // is this right? or use took from response?
                     // TODO: - other possibly interesting things to add to the Cluster object
-//                    searchResponse.isTimedOut();
-//                    searchResponse.isTerminatedEarly();
+                    // searchResponse.isTimedOut();
+                    // searchResponse.isTerminatedEarly();
 
                     listener.onResponse(
                         new SearchResponse(
@@ -564,14 +564,14 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                 @Override
                 public void onFailure(Exception e) {
                     SearchResponse.Cluster cluster = clusters.getCluster(clusterAlias);
-                    cluster.addFailure(e);
+                    cluster.addFailure(new ShardSearchFailure(e));
 
                     if (skipUnavailable) {
-                        cluster.setStatus(SearchResponse.CompletionStatus.SKIPPED);
+                        cluster.setStatus(SearchResponse.Cluster.Status.SKIPPED);
                         cluster.setSearchLatencyMillis(timeProvider.buildTookInMillis()); // TODO: is this right?
                         listener.onResponse(SearchResponse.empty(timeProvider::buildTookInMillis, clusters));
                     } else {
-                        cluster.setStatus(SearchResponse.CompletionStatus.FAILED);
+                        cluster.setStatus(SearchResponse.Cluster.Status.FAILED);
                         listener.onFailure(wrapRemoteClusterFailure(clusterAlias, e));
                     }
                 }
@@ -783,21 +783,21 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
 
                 if (total > success) {
                     if (success == 0) {
-                        cluster.setStatus(SearchResponse.CompletionStatus.FAILED);
+                        cluster.setStatus(SearchResponse.Cluster.Status.FAILED);
                     } else {
-                        cluster.setStatus(SearchResponse.CompletionStatus.PARTIAL);
+                        cluster.setStatus(SearchResponse.Cluster.Status.PARTIAL);
                     }
                     // MP TODO: does a fully skipped cluster with skip_ynavailable=true come through here when disconnected?
                     // MP TODO: A: no, it calls onFailure
                     ShardSearchFailure[] shardFailures = searchResponse.getShardFailures();
                     if (shardFailures != null) {
                         for (ShardSearchFailure shardFailure : shardFailures) {
-                            cluster.addFailure(shardFailure.getCause());
+                            cluster.addFailure(shardFailure);
                             logger.warn("UUU YYY innerOnResponse - failure: ", shardFailure);
                         }
                     }
                 } else {
-                    cluster.setStatus(SearchResponse.CompletionStatus.SUCCESS);
+                    cluster.setStatus(SearchResponse.Cluster.Status.SUCCESS);
                 }
                 SearchResponse.Clusters clusters = searchResponse.getClusters();
                 // I imagine these will always be Cluster.EMPTY, but logging for now to find out
@@ -809,17 +809,17 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             @Override
             SearchResponse createFinalResponse() {
                 logger.warn("UUU XXX TSA createFinalResponse");
-//                SearchResponse.Clusters clusters = new SearchResponse.Clusters(
-//                    totalClusters,
-//                    searchResponseMerger.numResponses(),
-//                    skippedClusters.get(),
-//                    remoteClusterInfo.size(),
-//                    true // TODO: this needs to be passed in?
-//                );
-//                for (SearchResponse.Cluster c : remoteClusterInfo.values()) {
-//                    System.err.println("UUU adding Cluster to remoteClusterInfo for final Clusters obj: {}" + c);
-//                    clusters.addCluster(c);
-//                }
+                // SearchResponse.Clusters clusters = new SearchResponse.Clusters(
+                // totalClusters,
+                // searchResponseMerger.numResponses(),
+                // skippedClusters.get(),
+                // remoteClusterInfo.size(),
+                // true // TODO: this needs to be passed in?
+                // );
+                // for (SearchResponse.Cluster c : remoteClusterInfo.values()) {
+                // System.err.println("UUU adding Cluster to remoteClusterInfo for final Clusters obj: {}" + c);
+                // clusters.addCluster(c);
+                // }
                 System.err.println("UUU createFinalResponse - Clusters ID: {}" + clusters.uniqueId);
                 return searchResponseMerger.getMergedResponse(clusters);
             }
@@ -1391,20 +1391,12 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         public final void onFailure(Exception e) {
             logger.warn("YYY TSA onFailure: cluster: {} ,e: {}; stacktrace: ", clusterAlias, e.getMessage(), e);
             /// MP: TODO: problem here is that this is called for the disconnect route, so we can't know how many shards we are missing
-            if (e.getCause() != null) {
-                if (e.getCause().getCause() != null) {
-                    cluster.addFailure(e.getCause().getCause());
-                } else {
-                    cluster.addFailure(e.getCause());
-                }
-            } else {
-                cluster.addFailure(e);
-            }
+            cluster.addFailure(new ShardSearchFailure(e));
             if (skipUnavailable) {
                 skippedClusters.incrementAndGet();
-                cluster.setStatus(SearchResponse.CompletionStatus.SKIPPED);
+                cluster.setStatus(SearchResponse.Cluster.Status.SKIPPED);
             } else {
-                cluster.setStatus(SearchResponse.CompletionStatus.FAILED);
+                cluster.setStatus(SearchResponse.Cluster.Status.FAILED);
                 Exception exception = e;
                 if (RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY.equals(clusterAlias) == false) {
                     exception = wrapRemoteClusterFailure(clusterAlias, e);

@@ -42,7 +42,6 @@ import org.elasticsearch.xcontent.XContentParser.Token;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
-import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
@@ -51,7 +50,6 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
-import java.util.stream.Collectors;
 
 import static org.elasticsearch.action.search.ShardSearchFailure.readShardSearchFailure;
 import static org.elasticsearch.common.xcontent.XContentParserUtils.ensureExpectedToken;
@@ -471,66 +469,37 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         return Strings.toString(this);
     }
 
-    /**
-     * Marks the status of a Cluster search involved in a Cross-Cluster search.
-     */
-    // TODO: how do I make this Writeable? Or maybe I don't need to - it is only needed on the primary coordinator?
-    // TODO: or does it need to be writable to be written to .async-search?
-    public enum CompletionStatus /*implements Writeable*/ {
-        RUNNING,  // still running
-        SUCCESS,  // all shards completed search
-        PARTIAL,  // only some shards completed the search
-        SKIPPED,  // entire cluster was skipped
-        FAILED;   // search was failed due to this cluster
-
-        @Override
-        public String toString() {
-            return this.name().toLowerCase();
-        }
-
-//        @Override
-//        public void writeTo(StreamOutput out) throws IOException {
-//
-//        }
-    }
-
     // TODO: does this need to be Writeable? (Only need to fill this in on the coord? What about writing to .async-search?)
     public static class Cluster implements ToXContentFragment, Writeable {
         private final String clusterAlias;
-        private CompletionStatus status;
-        private Set<String> failures;
+        private Status status;
+        private List<ShardSearchFailure> failures;
         // TODO: I think these should all be boxed, so can do writeOptionalInt in transport layer
         private Integer totalShards;  // TODO: use these to update the _shards fields (otherwise skipped clusters aren't counted)
         private Integer successfulShards;
         private Integer skippedShards;
         private Integer failedShards;
         private List<String> indexes; // TODO: need this? do we need to track shards per index? Can we even do that?
-        private Long searchLatencyMillis;  // TODO: not sure this belongs here
-        // private float percentShardsSuccessful;  // TODO: this goes away and gets calculated at XContent time (if we keep it at all)
+        private Long searchLatencyMillis;
 
         public Cluster(String clusterAlias) {
             this.clusterAlias = clusterAlias;
-            this.failures = new HashSet<>();
-            this.status = CompletionStatus.RUNNING;
+            this.failures = new ArrayList<>();
+            this.status = Status.RUNNING;
         }
 
         public Cluster(StreamInput in) throws IOException {
             this.clusterAlias = in.readString();
             String completionStatus = in.readOptionalString();
             if (completionStatus != null) {
-                this.status = CompletionStatus.valueOf(completionStatus.toUpperCase());
+                this.status = Status.valueOf(completionStatus.toUpperCase());
             }
             this.totalShards = in.readOptionalVInt();
             this.successfulShards = in.readOptionalVInt();
             this.skippedShards = in.readOptionalVInt();
             this.failedShards = in.readOptionalVInt();
             this.searchLatencyMillis = in.readOptionalVLong();
-            List<String> errors = in.readOptionalStringList();
-            if (errors == null) {
-                this.failures = new HashSet<>();
-            } else {
-                this.failures = errors.stream().collect(Collectors.toSet());
-            }
+            this.failures = in.readList(ShardSearchFailure::readShardSearchFailure);
         }
 
         @Override
@@ -542,7 +511,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             out.writeOptionalVInt(skippedShards);
             out.writeOptionalVInt(failedShards);
             out.writeOptionalVLong(searchLatencyMillis);
-            out.writeOptionalStringCollection(failures);
+            out.writeList(failures);
         }
 
         @Override
@@ -571,14 +540,12 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
                     builder.field("percent_shards_successful", percentSuccessful);
                 }
                 if (searchLatencyMillis != null) {
-//                    double seconds = searchLatencyMillis.doubleValue() / 1_000_000.0;
-//                    String latencySeconds = String.format("%.2f", seconds);
-                    builder.field("completion_time", searchLatencyMillis.doubleValue());
+                    builder.field("search_duration", searchLatencyMillis.doubleValue());
                 }
                 if (failures != null && failures.isEmpty() == false) {
                     builder.startArray("errors");
-                    for (String failure : failures) {
-                        builder.value(failure);
+                    for (ShardSearchFailure failure : failures) {
+                        failure.toXContent(builder, params);
                     }
                     builder.endArray();
                 }
@@ -591,26 +558,24 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             return clusterAlias;
         }
 
-        public CompletionStatus getStatus() {
+        public Status getStatus() {
             return status;
         }
 
-        public void setStatus(CompletionStatus status) {
+        public void setStatus(Status status) {
             this.status = status;
         }
 
-        public Set<String> getFailures() {
+        public List<ShardSearchFailure> getFailures() {
             return failures;
         }
 
-        public void setFailures(Set<String> failures) {
+        public void addFailures(List<ShardSearchFailure> failures) {
             this.failures.addAll(failures);
         }
 
-        public void addFailure(Throwable t) {
-            // TODO: get root cause?
-            // TODO: this could be a ShardSearchFailure which has more info so check that and parse it
-            this.failures.add(t.getMessage());
+        public void addFailure(ShardSearchFailure f) {
+            this.failures.add(f);
         }
 
         public Long getSearchLatencyMillis() {
@@ -655,16 +620,48 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
 
         @Override
         public String toString() {
-            return "Cluster{" +
-                "clusterAlias='" + clusterAlias + '\'' +
-                ", status=" + status +
-                ", failures=" + failures +
-                ", totalShards=" + totalShards +
-                ", successfulShards=" + successfulShards +
-                ", skippedShards=" + skippedShards +
-                ", failedShards=" + failedShards +
-                ", searchLatencyMillis=" + searchLatencyMillis +
-                '}';
+            return "Cluster{"
+                + "clusterAlias='"
+                + clusterAlias
+                + '\''
+                + ", status="
+                + status
+                + ", failures="
+                + failures
+                + ", totalShards="
+                + totalShards
+                + ", successfulShards="
+                + successfulShards
+                + ", skippedShards="
+                + skippedShards
+                + ", failedShards="
+                + failedShards
+                + ", searchLatencyMillis="
+                + searchLatencyMillis
+                + '}';
+        }
+
+        /**
+         * Marks the status of a Cluster search involved in a Cross-Cluster search.
+         */
+        // TODO: how do I make this Writeable? Or maybe I don't need to - it is only needed on the primary coordinator?
+        // TODO: or does it need to be writable to be written to .async-search?
+        public enum Status /*implements Writeable*/ {
+            RUNNING,  // still running
+            SUCCESS,  // all shards completed search
+            PARTIAL,  // only some shards completed the search
+            SKIPPED,  // entire cluster was skipped
+            FAILED;   // search was failed due to this cluster
+
+            @Override
+            public String toString() {
+                return this.name().toLowerCase();
+            }
+
+            // @Override
+            // public void writeTo(StreamOutput out) throws IOException {
+            //
+            // }
         }
     }
 
@@ -727,12 +724,12 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         }
 
         public Clusters(Set<String> clusterAliases, boolean ccsMinimizeRoundtrips) {
-//            assert total >= 0 && successful >= 0 && skipped >= 0 && remoteClustersCount >= 0
-//                : "total: " + total + " successful: " + successful + " skipped: " + skipped + " remote: " + remoteClustersCount;
-//            assert successful <= total : "total: " + total + " successful: " + successful + " skipped: " + skipped;
-//            assert remoteClustersCount <= total : "total: " + total + " remote: " + remoteClustersCount;
-//            assert ccsMinimizeRoundtrips == false || remoteClustersCount > 0
-//                : "ccsMinimizeRoundtrips is true but remoteClusters count is not a positive number: " + remoteClustersCount;
+            // assert total >= 0 && successful >= 0 && skipped >= 0 && remoteClustersCount >= 0
+            // : "total: " + total + " successful: " + successful + " skipped: " + skipped + " remote: " + remoteClustersCount;
+            // assert successful <= total : "total: " + total + " successful: " + successful + " skipped: " + skipped;
+            // assert remoteClustersCount <= total : "total: " + total + " remote: " + remoteClustersCount;
+            // assert ccsMinimizeRoundtrips == false || remoteClustersCount > 0
+            // : "ccsMinimizeRoundtrips is true but remoteClusters count is not a positive number: " + remoteClustersCount;
             this.total = clusterAliases.size();
             this.successful = 0;
             this.skipped = 0;
