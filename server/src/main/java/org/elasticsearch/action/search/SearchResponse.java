@@ -477,6 +477,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
     // TODO: how do I make this Writeable? Or maybe I don't need to - it is only needed on the primary coordinator?
     // TODO: or does it need to be writable to be written to .async-search?
     public enum CompletionStatus /*implements Writeable*/ {
+        RUNNING,  // still running
         SUCCESS,  // all shards completed search
         PARTIAL,  // only some shards completed the search
         SKIPPED,  // entire cluster was skipped
@@ -503,12 +504,14 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         private Integer successfulShards;
         private Integer skippedShards;
         private Integer failedShards;
+        private List<String> indexes; // TODO: need this? do we need to track shards per index? Can we even do that?
         private Long searchLatencyMillis;  // TODO: not sure this belongs here
         // private float percentShardsSuccessful;  // TODO: this goes away and gets calculated at XContent time (if we keep it at all)
 
         public Cluster(String clusterAlias) {
             this.clusterAlias = clusterAlias;
             this.failures = new HashSet<>();
+            this.status = CompletionStatus.RUNNING;
         }
 
         public Cluster(StreamInput in) throws IOException {
@@ -606,6 +609,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
 
         public void addFailure(Throwable t) {
             // TODO: get root cause?
+            // TODO: this could be a ShardSearchFailure which has more info so check that and parse it
             this.failures.add(t.getMessage());
         }
 
@@ -689,7 +693,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         private final transient boolean ccsMinimizeRoundtrips;
 
         // key to map is clusterAlias on the primary querying cluster of a CCS minimize_roundtrips=true query
-        private Map<String, Cluster> clusterInfo;
+        private final Map<String, Cluster> clusterInfo;
 
         public UUID uniqueId; // FIXME - remove - for testing only
 
@@ -702,6 +706,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
          * @param remoteClusters number of remote clusters in the search
          * @param ccsMinimizeRoundtrips specifies whether a CCS search is using minimizeRoundtrips feature
          */
+        @Deprecated  // use the one that passes in the Map<clusterAlias, OriginalIndices>
         public Clusters(int total, int successful, int skipped, int remoteClusters, boolean ccsMinimizeRoundtrips) {
             assert total >= 0 && successful >= 0 && skipped >= 0 && remoteClusters >= 0
                 : "total: " + total + " successful: " + successful + " skipped: " + skipped + " remote: " + remoteClusters;
@@ -719,6 +724,26 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             this.clusterInfo = new ConcurrentHashMap<>();
             this.uniqueId = UUID.randomUUID();
             logger.warn("UUU Clusters that creates clusterInfo: uniqueId: {}", uniqueId.toString());
+        }
+
+        public Clusters(Set<String> clusterAliases, boolean ccsMinimizeRoundtrips) {
+//            assert total >= 0 && successful >= 0 && skipped >= 0 && remoteClustersCount >= 0
+//                : "total: " + total + " successful: " + successful + " skipped: " + skipped + " remote: " + remoteClustersCount;
+//            assert successful <= total : "total: " + total + " successful: " + successful + " skipped: " + skipped;
+//            assert remoteClustersCount <= total : "total: " + total + " remote: " + remoteClustersCount;
+//            assert ccsMinimizeRoundtrips == false || remoteClustersCount > 0
+//                : "ccsMinimizeRoundtrips is true but remoteClusters count is not a positive number: " + remoteClustersCount;
+            this.total = clusterAliases.size();
+            this.successful = 0;
+            this.skipped = 0;
+            this.remoteClusters = clusterAliases.contains("") ? total - 1 : total;
+            this.ccsMinimizeRoundtrips = ccsMinimizeRoundtrips;
+            this.clusterInfo = new ConcurrentHashMap<>();
+            for (String clusterAlias : clusterAliases) {
+                clusterInfo.put(clusterAlias, new Cluster(clusterAlias));
+            }
+            this.uniqueId = UUID.randomUUID();
+            logger.warn("QQQ Clusters that creates clusterInfo: uniqueId: {}", uniqueId.toString());
         }
 
         public void addCluster(Cluster c) {
@@ -761,8 +786,13 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
 
         public Clusters(StreamInput in) throws IOException {
             // when coming across the wire, we don't have context to know if this Cluster is in a final state, so set finalState=false
-            this(in.readVInt(), in.readVInt(), in.readVInt(), false);
+            // TODO: do asserts
+            this.total = in.readVInt();
+            this.successful = in.readVInt();
+            this.skipped = in.readVInt();
             this.clusterInfo = in.readMapValues(Cluster::new, Cluster::getClusterAlias);
+            this.remoteClusters = -1;  // means "unknown" and not needed for this usage
+            this.ccsMinimizeRoundtrips = false;
         }
 
         @Override
@@ -781,10 +811,28 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             if (total > 0) {
                 builder.startObject(_CLUSTERS_FIELD.getPreferredName());
                 builder.field(TOTAL_FIELD.getPreferredName(), total);
-                builder.field(SUCCESSFUL_FIELD.getPreferredName(), successful);
-                builder.field(SKIPPED_FIELD.getPreferredName(), skipped);
-                if (clusterInfo.size() > 0) {
-                    logger.warn("UUU XXXyz: Clusters.toXContent num Cluster objs: {}", clusterInfo.size());
+                if (clusterInfo.size() == 0) {
+                    logger.warn("UUU XXX XContent: DEBUG 1");
+                    builder.field(SUCCESSFUL_FIELD.getPreferredName(), successful);
+                    builder.field(SKIPPED_FIELD.getPreferredName(), skipped);
+                } else {
+                    logger.warn("UUU XXX XContent: DEBUG 2");
+                    int successCount = 0;
+                    int skippedCount = 0;
+                    for (Cluster cluster : clusterInfo.values()) {
+                        switch (cluster.getStatus()) {
+                            case SUCCESS:
+                            case PARTIAL:
+                                successCount++;
+                                break;
+                            case SKIPPED:
+                            case FAILED:
+                                skippedCount++;
+                                break;
+                        }
+                    }
+                    builder.field(SUCCESSFUL_FIELD.getPreferredName(), successCount);
+                    builder.field(SKIPPED_FIELD.getPreferredName(), skippedCount);
                     builder.startObject("details");
                     for (Cluster cluster : clusterInfo.values()) {
                         cluster.toXContent(builder, params);

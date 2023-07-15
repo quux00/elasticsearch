@@ -528,6 +528,7 @@ public class TransportSearchActionTests extends ESTestCase {
                 searchRequest,
                 localIndices,
                 remoteIndicesByCluster,
+                SearchResponse.Clusters.EMPTY, // TODO: place holder only
                 timeProvider,
                 emptyReduceContextBuilder(),
                 remoteClusterService,
@@ -593,6 +594,7 @@ public class TransportSearchActionTests extends ESTestCase {
                     searchRequest,
                     localIndices,
                     remoteIndicesByCluster,
+                    SearchResponse.Clusters.EMPTY, // TODO: place holder only
                     timeProvider,
                     emptyReduceContextBuilder(),
                     remoteClusterService,
@@ -631,6 +633,7 @@ public class TransportSearchActionTests extends ESTestCase {
                     searchRequest,
                     localIndices,
                     remoteIndicesByCluster,
+                    SearchResponse.Clusters.EMPTY, // TODO: place holder only
                     timeProvider,
                     emptyReduceContextBuilder(),
                     remoteClusterService,
@@ -690,6 +693,7 @@ public class TransportSearchActionTests extends ESTestCase {
                     searchRequest,
                     localIndices,
                     remoteIndicesByCluster,
+                    SearchResponse.Clusters.EMPTY, // TODO: place holder only
                     timeProvider,
                     emptyReduceContextBuilder(),
                     remoteClusterService,
@@ -731,6 +735,7 @@ public class TransportSearchActionTests extends ESTestCase {
                     searchRequest,
                     localIndices,
                     remoteIndicesByCluster,
+                    SearchResponse.Clusters.EMPTY, // TODO: place holder only
                     timeProvider,
                     emptyReduceContextBuilder(),
                     remoteClusterService,
@@ -784,6 +789,7 @@ public class TransportSearchActionTests extends ESTestCase {
                     searchRequest,
                     localIndices,
                     remoteIndicesByCluster,
+                    SearchResponse.Clusters.EMPTY, // TODO: place holder only
                     timeProvider,
                     emptyReduceContextBuilder(),
                     remoteClusterService,
