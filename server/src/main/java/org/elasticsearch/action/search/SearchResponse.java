@@ -322,6 +322,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         return innerFromXContent(parser);
     }
 
+    /// MP: TODO what is this used for? Do I need to add a parser for the new clusters/details section?
     public static SearchResponse innerFromXContent(XContentParser parser) throws IOException {
         ensureExpectedToken(Token.FIELD_NAME, parser.currentToken(), parser);
         String currentFieldName = parser.currentName();
@@ -410,6 +411,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
                                 total = parser.intValue();
                             } else if (Clusters.SKIPPED_FIELD.match(currentFieldName, parser.getDeprecationHandler())) {
                                 skipped = parser.intValue();
+                                // TODO: need to add FAILED_FIELD and the clusterInfo map here??
                             } else {
                                 parser.skipChildren();
                             }
@@ -469,7 +471,14 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         return Strings.toString(this);
     }
 
-    // TODO: does this need to be Writeable? (Only need to fill this in on the coord? What about writing to .async-search?)
+    /**
+     * Represents the search metadata about a particular cluster involved in a cross-cluster search.
+     * The Cluster object can represent both the local cluster and a remote cluster.
+     * For the local cluster, clusterAlias should be specified as RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY.
+     * Its XContent is put into the "details" section the "_clusters" entry in the SearchResponse.
+     * This is not an immutable class, since it needs to be updated as the search progress
+     * (especially important for async CCS searches).
+     */
     public static class Cluster implements ToXContentFragment, Writeable {
         private final String clusterAlias;
         private Status status;
@@ -482,6 +491,22 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         private List<String> indexes; // TODO: need this? do we need to track shards per index? Can we even do that?
         private Long searchLatencyMillis;
 
+        /**
+         * Marks the status of a Cluster search involved in a Cross-Cluster search.
+         */
+        public enum Status /*implements Writeable*/ {
+            RUNNING,  // still running
+            SUCCESS,  // all shards completed search
+            PARTIAL,  // only some shards completed the search, partial results from cluster
+            SKIPPED,  // entire cluster was skipped
+            FAILED;   // search was failed due to errors on this cluster
+
+            @Override
+            public String toString() {
+                return this.name().toLowerCase();
+            }
+        }
+
         public Cluster(String clusterAlias) {
             this.clusterAlias = clusterAlias;
             this.failures = new ArrayList<>();
@@ -490,10 +515,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
 
         public Cluster(StreamInput in) throws IOException {
             this.clusterAlias = in.readString();
-            String completionStatus = in.readOptionalString();
-            if (completionStatus != null) {
-                this.status = Status.valueOf(completionStatus.toUpperCase());
-            }
+            this.status = Status.valueOf(in.readString().toUpperCase());
             this.totalShards = in.readOptionalVInt();
             this.successfulShards = in.readOptionalVInt();
             this.skippedShards = in.readOptionalVInt();
@@ -505,7 +527,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         @Override
         public void writeTo(StreamOutput out) throws IOException {
             out.writeString(clusterAlias);
-            out.writeOptionalString(status == null ? null : status.toString());
+            out.writeString(status.toString());
             out.writeOptionalVInt(totalShards);
             out.writeOptionalVInt(successfulShards);
             out.writeOptionalVInt(skippedShards);
@@ -522,7 +544,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             }
             builder.startObject(name);
             {
-                builder.field("completion_status", status.toString());
+                builder.field("status", status.toString());
                 if (totalShards != null) {
                     builder.field("total_shards", totalShards);
                 }
@@ -568,10 +590,6 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
 
         public List<ShardSearchFailure> getFailures() {
             return failures;
-        }
-
-        public void addFailures(List<ShardSearchFailure> failures) {
-            this.failures.addAll(failures);
         }
 
         public void addFailure(ShardSearchFailure f) {
@@ -640,34 +658,12 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
                 + searchLatencyMillis
                 + '}';
         }
-
-        /**
-         * Marks the status of a Cluster search involved in a Cross-Cluster search.
-         */
-        // TODO: how do I make this Writeable? Or maybe I don't need to - it is only needed on the primary coordinator?
-        // TODO: or does it need to be writable to be written to .async-search?
-        public enum Status /*implements Writeable*/ {
-            RUNNING,  // still running
-            SUCCESS,  // all shards completed search
-            PARTIAL,  // only some shards completed the search
-            SKIPPED,  // entire cluster was skipped
-            FAILED;   // search was failed due to this cluster
-
-            @Override
-            public String toString() {
-                return this.name().toLowerCase();
-            }
-
-            // @Override
-            // public void writeTo(StreamOutput out) throws IOException {
-            //
-            // }
-        }
     }
 
     /**
-     * Holds info about the clusters that the search was executed on: how many in total, how many of them were successful
-     * and how many of them were skipped.
+     * Holds info about the clusters that the search was executed on: how many in total, how many
+     * of them were successful, how many of them were skipped and details about the search metadata
+     * on each cluster in a map of SearchResponse.Cluster objects.
      */
     public static class Clusters implements ToXContentFragment, Writeable {
 
@@ -677,7 +673,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         static final ParseField SUCCESSFUL_FIELD = new ParseField("successful");
         static final ParseField SKIPPED_FIELD = new ParseField("skipped");
         static final ParseField TOTAL_FIELD = new ParseField("total");
-        // TODO: do we need a failed field?
+        static final ParseField FAILED_FIELD = new ParseField("failed");
 
         private final int total;
         private final int successful;
@@ -808,14 +804,16 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             if (total > 0) {
                 builder.startObject(_CLUSTERS_FIELD.getPreferredName());
                 builder.field(TOTAL_FIELD.getPreferredName(), total);
-                if (clusterInfo.size() == 0) {
+                if (clusterInfo.size() == 0) { // will only have content if it is doing a cross-cluster search
                     logger.warn("UUU XXX XContent: DEBUG 1");
                     builder.field(SUCCESSFUL_FIELD.getPreferredName(), successful);
                     builder.field(SKIPPED_FIELD.getPreferredName(), skipped);
+                    builder.field(FAILED_FIELD.getPreferredName(), 0);  /// MP: TODO probably not right, since local can fail?
                 } else {
                     logger.warn("UUU XXX XContent: DEBUG 2");
                     int successCount = 0;
                     int skippedCount = 0;
+                    int failedCount = 0;
                     for (Cluster cluster : clusterInfo.values()) {
                         switch (cluster.getStatus()) {
                             case SUCCESS:
@@ -823,13 +821,16 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
                                 successCount++;
                                 break;
                             case SKIPPED:
-                            case FAILED:
                                 skippedCount++;
+                                break;
+                            case FAILED:
+                                failedCount++;
                                 break;
                         }
                     }
                     builder.field(SUCCESSFUL_FIELD.getPreferredName(), successCount);
                     builder.field(SKIPPED_FIELD.getPreferredName(), skippedCount);
+                    builder.field(FAILED_FIELD.getPreferredName(), failedCount);
                     builder.startObject("details");
                     for (Cluster cluster : clusterInfo.values()) {
                         cluster.toXContent(builder, params);

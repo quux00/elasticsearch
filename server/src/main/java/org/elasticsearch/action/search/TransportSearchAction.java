@@ -506,7 +506,6 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                 timeProvider.absoluteStartMillis(),
                 true
             );
-            /// MP: TODO: need to test this pathway
             Client remoteClusterClient = remoteClusterService.getRemoteClusterClient(threadPool, clusterAlias);
             remoteClusterClient.search(ccsSearchRequest, new ActionListener<SearchResponse>() {
                 @Override
@@ -565,7 +564,6 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                 public void onFailure(Exception e) {
                     SearchResponse.Cluster cluster = clusters.getCluster(clusterAlias);
                     cluster.addFailure(new ShardSearchFailure(e));
-
                     if (skipUnavailable) {
                         cluster.setStatus(SearchResponse.Cluster.Status.SKIPPED);
                         cluster.setSearchLatencyMillis(timeProvider.buildTookInMillis()); // TODO: is this right?
@@ -577,15 +575,13 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                 }
             });
         } else {
-            /// MP TODO: should we pass in the Clusters object here?
             SearchResponseMerger searchResponseMerger = createSearchResponseMerger(
                 searchRequest.source(),
                 timeProvider,
                 aggReduceContextBuilder
             );
-            AtomicInteger skippedClusters = new AtomicInteger(0);
-            final AtomicReference<Exception> exceptions = new AtomicReference<>(); /// MP: TODO needs to be a List?
-            // final Map<String, SearchResponse.Cluster> remoteClusterInfo = new ConcurrentHashMap<>();
+            // AtomicInteger skippedClusters = new AtomicInteger(0);  /// MP: TODO: I no lnoger use this but does MRT=false need it?
+            final AtomicReference<Exception> exceptions = new AtomicReference<>(); /// MP: TODO do we still need this?
             int totalClusters = remoteIndices.size() + (localIndices == null ? 0 : 1);
             final CountDown countDown = new CountDown(totalClusters);
             for (Map.Entry<String, OriginalIndices> entry : remoteIndices.entrySet()) {
@@ -605,10 +601,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     clusterAlias,
                     skipUnavailable,
                     countDown,
-                    skippedClusters,  /// MP: TODO: may not need this - use the skipped count from Clusters obj?
                     exceptions,
                     searchResponseMerger,
-                    totalClusters,   /// MP: TODO: may not need this - use the Clusters object to get a count
                     clusters,
                     listener
                 );
@@ -620,10 +614,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY,
                     false,
                     countDown,
-                    skippedClusters,
                     exceptions,
                     searchResponseMerger,
-                    totalClusters,
                     clusters,
                     listener
                 );
@@ -689,7 +681,6 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     clusterAlias,
                     skipUnavailable,
                     responsesCountDown,
-                    skippedClusters,
                     exceptions,
                     null,
                     listener
@@ -751,10 +742,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         String clusterAlias,
         boolean skipUnavailable,
         CountDown countDown,
-        AtomicInteger skippedClusters,
         AtomicReference<Exception> exceptions,
         SearchResponseMerger searchResponseMerger,
-        int totalClusters,
         SearchResponse.Clusters clusters,
         ActionListener<SearchResponse> originalListener
     ) {
@@ -762,7 +751,6 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             clusterAlias,
             skipUnavailable,
             countDown,
-            skippedClusters,
             exceptions,
             clusters.getCluster(clusterAlias),
             originalListener
@@ -809,17 +797,6 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             @Override
             SearchResponse createFinalResponse() {
                 logger.warn("UUU XXX TSA createFinalResponse");
-                // SearchResponse.Clusters clusters = new SearchResponse.Clusters(
-                // totalClusters,
-                // searchResponseMerger.numResponses(),
-                // skippedClusters.get(),
-                // remoteClusterInfo.size(),
-                // true // TODO: this needs to be passed in?
-                // );
-                // for (SearchResponse.Cluster c : remoteClusterInfo.values()) {
-                // System.err.println("UUU adding Cluster to remoteClusterInfo for final Clusters obj: {}" + c);
-                // clusters.addCluster(c);
-                // }
                 System.err.println("UUU createFinalResponse - Clusters ID: {}" + clusters.uniqueId);
                 return searchResponseMerger.getMergedResponse(clusters);
             }
@@ -1353,7 +1330,6 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         private final String clusterAlias;
         private final boolean skipUnavailable;
         private final CountDown countDown;
-        private final AtomicInteger skippedClusters;
         private final AtomicReference<Exception> exceptions;
         protected final SearchResponse.Cluster cluster;
         private final ActionListener<FinalResponse> originalListener;
@@ -1363,7 +1339,6 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             String clusterAlias,
             boolean skipUnavailable,
             CountDown countDown,
-            AtomicInteger skippedClusters,
             AtomicReference<Exception> exceptions,
             SearchResponse.Cluster cluster,
             ActionListener<FinalResponse> originalListener
@@ -1371,7 +1346,6 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             this.clusterAlias = clusterAlias;
             this.skipUnavailable = skipUnavailable;
             this.countDown = countDown;
-            this.skippedClusters = skippedClusters;
             this.exceptions = exceptions;
             this.cluster = cluster;
             this.originalListener = originalListener;
@@ -1393,7 +1367,6 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             /// MP: TODO: problem here is that this is called for the disconnect route, so we can't know how many shards we are missing
             cluster.addFailure(new ShardSearchFailure(e));
             if (skipUnavailable) {
-                skippedClusters.incrementAndGet();
                 cluster.setStatus(SearchResponse.Cluster.Status.SKIPPED);
             } else {
                 cluster.setStatus(SearchResponse.Cluster.Status.FAILED);
