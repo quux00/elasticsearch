@@ -75,7 +75,10 @@ import org.elasticsearch.transport.RemoteTransportException;
 import org.elasticsearch.transport.Transport;
 import org.elasticsearch.transport.TransportRequestOptions;
 import org.elasticsearch.transport.TransportService;
+import org.elasticsearch.xcontent.ToXContent;
+import org.elasticsearch.xcontent.XContentFactory;
 
+import java.io.IOException;
 import java.time.Duration;
 import java.time.Instant;
 import java.util.ArrayList;
@@ -520,9 +523,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                         searchResponse.getNumReducePhases()
                     );
                     SearchResponse.Cluster cluster = clusters.getCluster(clusterAlias);
-                    // cluster.update(searchResponse); /// MP: TODO: implement this
                     if (searchResponse.getFailedShards() == 0) {
-                        cluster.setStatus(SearchResponse.Cluster.Status.SUCCESS);
+                        cluster.setStatus(SearchResponse.Cluster.Status.SUCCESSFUL);
                     } else {
                         if (searchResponse.getTotalShards() > searchResponse.getFailedShards()) {
                             cluster.setStatus(SearchResponse.Cluster.Status.PARTIAL);
@@ -530,7 +532,6 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                             cluster.setStatus(SearchResponse.Cluster.Status.FAILED);
                         }
                         for (ShardSearchFailure shardFailure : searchResponse.getShardFailures()) {
-                            logger.warn("XXX TSA onResponse shardFailure: {}", shardFailure);
                             cluster.addFailure(shardFailure);
                         }
                     }
@@ -560,12 +561,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     SearchResponse.Cluster cluster = clusters.getCluster(clusterAlias);
                     ShardSearchFailure f = new ShardSearchFailure(e);
                     cluster.addFailure(f);
-                    logger.info(
-                        "CCS remote cluster failure. Cluster [{}]. skip_unavailable: [{}]. Error: {}",
-                        clusterAlias,
-                        skipUnavailable,
-                        f
-                    );
+                    logCCSError(f, clusterAlias, skipUnavailable);
                     if (skipUnavailable) {
                         cluster.setStatus(SearchResponse.Cluster.Status.SKIPPED);
                         cluster.setSearchLatencyMillis(timeProvider.buildTookInMillis());
@@ -787,17 +783,14 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     } else {
                         cluster.setStatus(SearchResponse.Cluster.Status.PARTIAL);
                     }
-                    // MP TODO: does a fully skipped cluster with skip_ynavailable=true come through here when disconnected?
-                    // MP TODO: A: no, it calls onFailure
                     ShardSearchFailure[] shardFailures = searchResponse.getShardFailures();
                     if (shardFailures != null) {
                         for (ShardSearchFailure shardFailure : shardFailures) {
-                            logger.warn("XXX TSA innerOnResponse shardFailure: {}", shardFailure);
                             cluster.addFailure(shardFailure);
                         }
                     }
                 } else {
-                    cluster.setStatus(SearchResponse.Cluster.Status.SUCCESS);
+                    cluster.setStatus(SearchResponse.Cluster.Status.SUCCESSFUL);
                 }
                 searchResponseMerger.add(searchResponse);
             }
@@ -1351,7 +1344,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             CountDown countDown,
             AtomicInteger skippedClusters,
             AtomicReference<Exception> exceptions,
-            SearchResponse.Cluster cluster,
+            @Nullable SearchResponse.Cluster cluster, // null for ccs_minimize_roundtrips=false
             ActionListener<FinalResponse> originalListener
         ) {
             this.clusterAlias = clusterAlias;
@@ -1359,7 +1352,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             this.countDown = countDown;
             this.skippedClusters = skippedClusters;
             this.exceptions = exceptions;
-            this.cluster = cluster;  /// TODO: for now this will be null for MRT=false - fix later?
+            this.cluster = cluster;
             this.originalListener = originalListener;
             this.startTime = System.currentTimeMillis();
         }
@@ -1375,7 +1368,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         @Override
         public final void onFailure(Exception e) {
             ShardSearchFailure f = new ShardSearchFailure(e);
-            logger.info("CCS remote cluster failure. Cluster [{}]. skip_unavailable: [{}]. Error: {}", clusterAlias, skipUnavailable, f);
+            logCCSError(f, clusterAlias, skipUnavailable);
             if (skipUnavailable) {
                 if (cluster != null) {
                     cluster.setStatus(SearchResponse.Cluster.Status.SKIPPED);
@@ -1420,6 +1413,30 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         }
 
         abstract FinalResponse createFinalResponse();
+    }
+
+    /**
+     * In order to gather data on what types of CCS errors happen in the field, we will log
+     * them using the ShardSearchFailure XContent (JSON), which supplies information about underlying
+     * causes of shard failures.
+     * @param f ShardSearchFailure to log
+     * @param clusterAlias cluster on which the failure occurred
+     * @param skipUnavailable the skip_unavailable setting of the cluster with the search error
+     */
+    private static void logCCSError(ShardSearchFailure f, String clusterAlias, boolean skipUnavailable) {
+        String errorInfo;
+        try {
+            errorInfo = Strings.toString(f.toXContent(XContentFactory.jsonBuilder(), ToXContent.EMPTY_PARAMS));
+        } catch (IOException ex) {
+            // use the toString as a fallback if for some reason the XContent conversion to JSON fails
+            errorInfo = f.toString();
+        }
+        logger.info(
+            "CCS remote cluster failure. Cluster [{}]. skip_unavailable: [{}]. Error: {}",
+            clusterAlias,
+            skipUnavailable,
+            errorInfo
+        );
     }
 
     private static RemoteTransportException wrapRemoteClusterFailure(String clusterAlias, Exception e) {
