@@ -8,6 +8,7 @@
 
 package org.elasticsearch.action.search;
 
+import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.search.TopFieldDocs;
 import org.elasticsearch.action.ActionListener;
@@ -28,6 +29,7 @@ import java.util.function.BiFunction;
 import static org.elasticsearch.action.search.SearchPhaseController.getTopDocsSize;
 
 class SearchQueryThenFetchAsyncAction extends AbstractSearchAsyncAction<SearchPhaseResult> {
+    private static final Logger logger = LogManager.getLogger(SearchQueryThenFetchAsyncAction.class);
 
     private final SearchProgressListener progressListener;
 
@@ -50,7 +52,7 @@ class SearchQueryThenFetchAsyncAction extends AbstractSearchAsyncAction<SearchPh
         final TransportSearchAction.SearchTimeProvider timeProvider,
         ClusterState clusterState,
         SearchTask task,
-        SearchResponse.Clusters clusters
+        SearchResponse.Clusters clusters /// MP: TODO: looks like we are going to have modify the core Search classes with CCS knowledge
     ) {
         super(
             "query",
@@ -79,6 +81,7 @@ class SearchQueryThenFetchAsyncAction extends AbstractSearchAsyncAction<SearchPh
         addReleasable(resultConsumer);
 
         if (progressListener != SearchProgressListener.NOOP) {
+            /// MP TODO ** for AsyncSearchTask and MutableSearchResponse, this set the shared Clusters object, so that works here too
             notifyListShards(progressListener, clusters, request.source());
         }
     }
@@ -94,11 +97,46 @@ class SearchQueryThenFetchAsyncAction extends AbstractSearchAsyncAction<SearchPh
 
     @Override
     protected void onShardGroupFailure(int shardIndex, SearchShardTarget shardTarget, Exception exc) {
+        /*
+         XXX SQTFAA onShardGroupFailure: idx: 0; clusterAlias: remote1,
+             exc: [Michaels-MacBook-Pro.local][127.0.0.1:9301][indices:data/read/search[phase/query]] disconnected
+         */
+        /// MP TODO ** Hmm, this idx seems to be global across all clusters, NOT the index on the remote cluster
+        /*
+        XXX SQTFAA onShardGroupFailure: idx: 0; clusterAlias: remote1, exc: ... search[phase/query]] disconnected
+        XXX SQTFAA onShardGroupFailure: idx: 3; clusterAlias: remote1, exc: ... search[phase/query]] disconnected
+        XXX SQTFAA onShardGroupFailure: idx: 6; clusterAlias: remote1, exc: ... search[phase/query]] disconnected
+         */
+        logger.warn(
+            "XXX SQTFAA onShardGroupFailure: idx: {}; clusterAlias: {}, shardId: {} exc: {}",
+            shardIndex,
+            shardTarget.getClusterAlias(),
+            shardTarget.getShardId(),
+            exc.getMessage()
+        );
         progressListener.notifyQueryFailure(shardIndex, shardTarget, exc);
+
+        SearchResponse.Cluster cluster = clusters.getCluster(shardTarget.getClusterAlias());
+        if (cluster != null) {
+            cluster.addFailure(new ShardSearchFailure(exc, shardTarget));
+        }
     }
 
     @Override
     protected void onShardResult(SearchPhaseResult result, SearchShardIterator shardIt) {
+        /// MP TODO after the SearchShardsAction (and ClusterSearchShard) we should know how many shards there are per index, per cluster,
+        /// MP TODO right? If yes, we need to record that in Cluster object so it knows when it is done and can do that accounting
+        /// MP TODO for success vs. partial, etc.
+        /*
+         XXX SQTFAA onShardResult: QueryResult size: 3; clusterAlias: null, shardId: [blogs][1]
+         XXX SQTFAA onShardResult: QueryResult size: 3; clusterAlias: remote1, shardId: [blogs][0]
+         */
+        logger.warn(
+            "XXX SQTFAA onShardResult: QueryResult size: {}; clusterAlias: {}, shardId: {}",
+            result.queryResult().size(),
+            shardIt.getClusterAlias(),
+            shardIt.shardId()
+        );
         QuerySearchResult queryResult = result.queryResult();
         if (queryResult.isNull() == false
             // disable sort optims for scroll requests because they keep track of the last bottom doc locally (per shard)
@@ -117,6 +155,14 @@ class SearchQueryThenFetchAsyncAction extends AbstractSearchAsyncAction<SearchPh
             }
             bottomSortCollector.consumeTopDocs(topDocs, queryResult.sortValueFormats());
         }
+
+        /// MP: TODO: somehow we need to inspect the SearchPhaseResult and determine whether the query was successful?
+        /// MP: TODO: I guess it would be since if it failed onShardGroupFailure would be called?
+        SearchResponse.Cluster cluster = clusters.getCluster(shardIt.getClusterAlias());
+        if (cluster != null) {
+            cluster.markShardSuccessful(shardIt.shardId());
+        }
+
         super.onShardResult(result, shardIt);
     }
 

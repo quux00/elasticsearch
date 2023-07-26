@@ -79,6 +79,9 @@ final class CanMatchPreFilterSearchPhase extends SearchPhase {
     private final CanMatchSearchPhaseResults results;
     private final CoordinatorRewriteContextProvider coordinatorRewriteContextProvider;
 
+    /// MP TODO: going to have to add Clusters and clusterAlias? here since for CCS MRT=false I think this needs to handle
+    /// MP TODO: both local shards and remote shards that had a ClusterSearchShardsRequest done
+    /// MP TODO: this is needed in order to initialize the totalShards and skippedShards state in the Cluster object for each cluster
     CanMatchPreFilterSearchPhase(
         Logger logger,
         SearchTransportService searchTransportService,
@@ -145,6 +148,7 @@ final class CanMatchPreFilterSearchPhase extends SearchPhase {
     // tries to pre-filter shards based on information that's available to the coordinator
     // without having to reach out to the actual shards
     private void runCoordinatorRewritePhase() {
+        logger.warn("XXX CanMatchPreFilterSearchPhase.runCoordinatorRewritePhase");
         // TODO: the index filter (i.e, `_index:patten`) should be prefiltered on the coordinator
         assert assertSearchCoordinationThread();
         final List<SearchShardIterator> matchedShardLevelRequests = new ArrayList<>();
@@ -269,6 +273,7 @@ final class CanMatchPreFilterSearchPhase extends SearchPhase {
                     searchTransportService.sendCanMatch(getConnection(entry.getKey()), canMatchNodeRequest, task, new ActionListener<>() {
                         @Override
                         public void onResponse(CanMatchNodeResponse canMatchNodeResponse) {
+                            logger.warn("XXX CanMatch Round.doRun...onResponse: responses: {}", canMatchNodeResponse.getResponses());
                             assert canMatchNodeResponse.getResponses().size() == canMatchNodeRequest.getShardLevelRequests().size();
                             for (int i = 0; i < canMatchNodeResponse.getResponses().size(); i++) {
                                 CanMatchNodeResponse.ResponseOrFailure response = canMatchNodeResponse.getResponses().get(i);
@@ -286,6 +291,7 @@ final class CanMatchPreFilterSearchPhase extends SearchPhase {
 
                         @Override
                         public void onFailure(Exception e) {
+                            logger.warn("XXX YYY CanMatchPreFilterSearchPhase onFailure: {}", e.getMessage());
                             for (CanMatchNodeRequest.Shard shard : shardLevelRequests) {
                                 onOperationFailed(shard.getShardRequestIndex(), e);
                             }

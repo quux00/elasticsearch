@@ -8,6 +8,8 @@
 
 package org.elasticsearch.action.search;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.search.TotalHits;
 import org.elasticsearch.TransportVersion;
 import org.elasticsearch.action.ActionResponse;
@@ -20,6 +22,7 @@ import org.elasticsearch.common.xcontent.ChunkedToXContentHelper;
 import org.elasticsearch.common.xcontent.ChunkedToXContentObject;
 import org.elasticsearch.core.Nullable;
 import org.elasticsearch.core.TimeValue;
+import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.rest.action.RestActions;
 import org.elasticsearch.search.SearchHit;
@@ -41,11 +44,13 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collection;
 import java.util.Collections;
+import java.util.HashSet;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Supplier;
 
@@ -56,6 +61,7 @@ import static org.elasticsearch.common.xcontent.XContentParserUtils.ensureExpect
  * A response of a search request.
  */
 public class SearchResponse extends ActionResponse implements ChunkedToXContentObject {
+    private static final Logger logger = LogManager.getLogger(SearchResponse.class);
 
     private static final ParseField SCROLL_ID = new ParseField("_scroll_id");
     private static final ParseField POINT_IN_TIME_ID = new ParseField("pit_id");
@@ -531,6 +537,8 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             this.skipped = 0;    // calculated from clusterInfo map for minimize_roundtrips
             this.ccsMinimizeRoundtrips = ccsMinimizeRoundtrips;
             this.clusterInfo = new ConcurrentHashMap<>();
+            /// MP TODO: what is the clusterAlias for local cluster?
+            logger.warn("XXX Clusters(ctor) clusterAliases: {}", clusterAliases);
             for (String clusterAlias : clusterAliases) {
                 clusterInfo.put(clusterAlias, new Cluster(clusterAlias));
             }
@@ -647,6 +655,11 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
          * @return Cluster object associated with teh clusterAlias or null if not present
          */
         public Cluster getCluster(String clusterAlias) {
+            if (clusterAlias == null) {
+                logger.warn("XXX Clusters.getCluster with NULL: {}; clusterInfo keys:{}", clusterInfo.get(""), clusterInfo.keySet());
+                // return local cluster
+                return clusterInfo.get("");
+            }
             return clusterInfo.get(clusterAlias);
         }
 
@@ -712,6 +725,64 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         private Long took;  // search latency in millis for this cluster sub-search
 
         /**
+         * TODO: DOCUMENT ME
+         * @param searchShardsResponse
+         */
+        public void setStateFromSearchShardResponse(SearchShardsResponse searchShardsResponse) {
+            Collection<SearchShardsGroup> groups = searchShardsResponse.getGroups();
+            List<SearchShardsGroup> list = groups.stream().toList();  /// MP TODO: clean this up later
+            Set<String> indexNames = new HashSet<>();
+            /// MP TODO ** for now we are just assuming one index, but I think we'll need a mapping of index to number of shards per idx
+            int total = 0;
+            int skipped = 0;
+            int maxShardId = 0;
+            for (SearchShardsGroup searchShardsGroup : list) {
+                total++;
+                if (searchShardsGroup.skipped()) {
+                    skipped++;
+                }
+                logger.warn("XXX Cluster.setStateFromSearchShardResponse: shardId: {}", searchShardsGroup.shardId());
+                String indexName = searchShardsGroup.shardId().getIndexName();
+                int id = searchShardsGroup.shardId().id();
+                if (id > maxShardId) {
+                    maxShardId = id;
+                }
+                indexNames.add(indexName);
+            }
+
+            logger.warn(
+                "XXX Cluster.setStateFromSearchShardResponse indexNames: {}, totalShards: {}, skippedShards: {}, maxId: {}",
+                indexNames,
+                totalShards,
+                skippedShards,
+                maxShardId
+            );
+
+            totalShards = total;
+            skippedShards = skipped;
+            successfulShards = 0;
+            failedShards = 0;
+        }
+
+        /**
+         * TODO: DOCUMENT ME
+         * Only needed for MRT=false
+         * @param shardId
+         */
+        public void markShardSuccessful(ShardId shardId) {
+            /// MP: TODO: in future it could track by index
+            logger.warn("XXX Cluster.markShardSuccessful: {}", shardId);
+            if (successfulShards == null) {
+                successfulShards = 1;
+            } else {
+                successfulShards++;
+            }
+            if (totalShards != null && successfulShards + skippedShards == totalShards) {
+                status = Status.SUCCESSFUL;
+            }
+        }
+
+        /**
          * Marks the status of a Cluster search involved in a Cross-Cluster search.
          */
         public enum Status {
@@ -764,7 +835,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             }
             builder.startObject(name);
             {
-                builder.field("status", status.toString());
+                builder.field("status", getStatus().toString());
                 if (took != null) {
                     builder.field("took", took.doubleValue());
                 }
@@ -799,6 +870,21 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         }
 
         public Status getStatus() {
+            if (status == Status.RUNNING && totalShards != null && totalShards > 0) {
+                int skipped = skippedShards == null ? 0 : skippedShards;
+                int successful = successfulShards == null ? 0 : successfulShards;
+                int failed = failedShards == null ? 0 : failedShards;
+                if (skipped + successful + failed >= totalShards) {
+                    if (failed >= totalShards) {
+                        status = Status.FAILED;
+                    } else if (successful + skipped >= totalShards) {
+                        status = Status.SUCCESSFUL;
+                    } else {
+                        /// MP TODO: this needs to account for timed out shards
+                        status = Status.PARTIAL;
+                    }
+                }
+            }
             return status;
         }
 
@@ -812,6 +898,14 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
 
         public void addFailure(ShardSearchFailure f) {
             this.failures.add(f);
+            if (failedShards == null) {
+                failedShards = 1;
+            } else {
+                failedShards++;
+            }
+            if (totalShards != null && failedShards == totalShards) {
+                this.status = Status.FAILED;
+            }
         }
 
         public Long getTook() {

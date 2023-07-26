@@ -87,7 +87,7 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
     private final AtomicInteger successfulOps = new AtomicInteger();
     private final AtomicInteger skippedOps = new AtomicInteger();
     private final SearchTimeProvider timeProvider;
-    private final SearchResponse.Clusters clusters;
+    protected final SearchResponse.Clusters clusters;  /// MP TODO ** this is just passed into the (final?) SearchResponse in this class
 
     protected final GroupShardsIterator<SearchShardIterator> toSkipShardsIts;
     protected final GroupShardsIterator<SearchShardIterator> shardsIts;
@@ -679,6 +679,7 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
         String scrollId,
         String searchContextId
     ) {
+        logger.warn("XXX AbstractSearchAsyncAction.buildSearchResponse (clusters is passed to SearchResponse here)");
         int numSuccess = successfulOps.get();
         int numFailures = failures.length;
         assert numSuccess + numFailures == getNumShards()

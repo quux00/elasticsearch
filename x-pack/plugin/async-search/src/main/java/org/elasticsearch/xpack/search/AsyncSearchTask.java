@@ -6,6 +6,8 @@
  */
 package org.elasticsearch.xpack.search;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.search.TotalHits;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.ElasticsearchStatusException;
@@ -50,6 +52,7 @@ import static java.util.Collections.singletonList;
  * Task that tracks the progress of a currently running {@link SearchRequest}.
  */
 final class AsyncSearchTask extends SearchTask implements AsyncTask {
+    private static final Logger logger = LogManager.getLogger(AsyncSearchTask.class);
     private final AsyncExecutionId searchId;
     private final Client client;
     private final ThreadPool threadPool;
@@ -379,13 +382,15 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask {
 
         @Override
         protected void onQueryFailure(int shardIndex, SearchShardTarget shardTarget, Exception exc) {
+            logger.warn("XXX AsyncSearchTask onQueryFailure: idx: {}, clusterAlias: {}", shardIndex, shardTarget.getClusterAlias());
             // best effort to cancel expired tasks
             checkCancellation();
             searchResponse.get()
                 .addQueryFailure(
                     shardIndex,
                     // the nodeId is null if all replicas of this shard failed
-                    new ShardSearchFailure(exc, shardTarget.getNodeId() != null ? shardTarget : null)
+                    new ShardSearchFailure(exc, shardTarget.getNodeId() != null ? shardTarget : null),
+                    shardTarget.getClusterAlias()
                 );
         }
 

@@ -86,6 +86,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -325,13 +326,13 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                 );
             } else {
                 final TaskId parentTaskId = task.taskInfo(clusterService.localNode().getId(), false).taskId();
+                Set<String> clusterAliases = new HashSet<>(remoteClusterIndices.keySet());
+                SearchResponse.Clusters initClusters;
                 if (shouldMinimizeRoundtrips(rewritten)) {
                     final AggregationReduceContext.Builder aggregationReduceContextBuilder = rewritten.source() != null
                         && rewritten.source().aggregations() != null
                             ? searchService.aggReduceContextBuilder(task::isCancelled, rewritten.source().aggregations())
                             : null;
-                    Set<String> clusterAliases = new HashSet<>(remoteClusterIndices.keySet());
-                    SearchResponse.Clusters initClusters;
                     if (localIndices == null) {
                         initClusters = new SearchResponse.Clusters(clusterAliases, true);
                         // Notify the progress listener that a CCS with minimize_roundtrips is happening remote-only (no local shards)
@@ -364,6 +365,13 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     );
                 } else {
                     AtomicInteger skippedClusters = new AtomicInteger(0);
+
+                    if (localIndices == null) {
+                        initClusters = new SearchResponse.Clusters(clusterAliases, false);
+                    } else {
+                        clusterAliases.add("");
+                        initClusters = new SearchResponse.Clusters(clusterAliases, false);
+                    }
                     // TODO: pass parentTaskId
                     collectSearchShards(
                         rewritten.indicesOptions(),
@@ -374,7 +382,9 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                         searchContext,
                         skippedClusters,
                         remoteClusterIndices,
+                        initClusters,  /// MP: TODO: is this useful for SearchShardsAction ?
                         transportService,
+                        /// MP: TODO ** after the SearchShardsAction, this is what happens next - the real SearchAction
                         delegate.delegateFailureAndWrap((finalDelegate, searchShardsResponses) -> {
                             final BiFunction<String, String, DiscoveryNode> clusterNodeLookup = getRemoteClusterNodeLookup(
                                 searchShardsResponses
@@ -389,6 +399,13 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                                     rewritten.pointInTimeBuilder().getKeepAlive(),
                                     remoteClusterIndices
                                 );
+                                /// MP --- START
+                                // List<SearchShardIterator> list = remoteShardIterators.stream().toList();
+                                // if (list != null && list.size() > 0) {
+                                // String clusterAlias = list.get(0).getClusterAlias();
+                                // }
+                                /// MP TODO ** Yay! the SearchShardIterators do know their clusterAlias - so this is still feasible
+                                /// MP --- END
                             } else {
                                 remoteAliasFilters = new HashMap<>();
                                 for (SearchShardsResponse searchShardsResponse : searchShardsResponses.values()) {
@@ -400,9 +417,9 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                                     remoteAliasFilters
                                 );
                             }
-                            int localClusters = localIndices == null ? 0 : 1;
-                            int totalClusters = remoteClusterIndices.size() + localClusters;
-                            int successfulClusters = searchShardsResponses.size() + localClusters;
+                            // int localClusters = localIndices == null ? 0 : 1;
+                            // int totalClusters = remoteClusterIndices.size() + localClusters; /// MP TODO ** already accounted for
+                            // int successfulClusters = searchShardsResponses.size() + localClusters; /// MP TODO ** calculated at end
                             executeSearch(
                                 task,
                                 timeProvider,
@@ -412,7 +429,11 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                                 clusterNodeLookup,
                                 clusterState,
                                 remoteAliasFilters,
-                                new SearchResponse.Clusters(totalClusters, successfulClusters, skippedClusters.get()),
+                                /// MP TODO we need to account for the skippedCluster count before we get here, since it's no longer
+                                /// MP TODO passed into the Clusters obj
+                                /// MP TODO ** ^^^^^^ I think we already have ???
+                                // new SearchResponse.Clusters(totalClusters, successfulClusters, skippedClusters.get()),
+                                initClusters, /// MP TODO ** the big change!!
                                 searchContext,
                                 searchPhaseProvider.apply(finalDelegate)
                             );
@@ -669,16 +690,22 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         SearchContextId searchContext,
         AtomicInteger skippedClusters,
         Map<String, OriginalIndices> remoteIndicesByCluster,
+        SearchResponse.Clusters clusters,
         TransportService transportService,
         ActionListener<Map<String, SearchShardsResponse>> listener
     ) {
         RemoteClusterService remoteClusterService = transportService.getRemoteClusterService();
         final CountDown responsesCountDown = new CountDown(remoteIndicesByCluster.size());
+        logger.warn("VVV MRT=false responsesCountDown size = " + remoteIndicesByCluster.size());
+        logger.warn("VVV MRT=false remoteIndicesByCluster = " + remoteIndicesByCluster);
         final Map<String, SearchShardsResponse> searchShardsResponses = new ConcurrentHashMap<>();
         final AtomicReference<Exception> exceptions = new AtomicReference<>();
+        /// MP loop over each REMOTE cluster
         for (Map.Entry<String, OriginalIndices> entry : remoteIndicesByCluster.entrySet()) {
             final String clusterAlias = entry.getKey();
             boolean skipUnavailable = remoteClusterService.isSkipUnavailable(clusterAlias);
+            /// MP: TODO this is a listener to the can-match SearchShardsResponses ONLY, not full SearchResponse,
+            /// MP: TODO so I'm not sure this provides any useful info to the SearchResponse.Cluster object ...
             TransportSearchAction.CCSActionListener<SearchShardsResponse, Map<String, SearchShardsResponse>> singleListener =
                 new TransportSearchAction.CCSActionListener<>(
                     clusterAlias,
@@ -686,25 +713,30 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     responsesCountDown,
                     skippedClusters,
                     exceptions,
-                    null,
+                    clusters.getCluster(clusterAlias),
                     listener
                 ) {
                     @Override
                     void innerOnResponse(SearchShardsResponse searchShardsResponse) {
                         searchShardsResponses.put(clusterAlias, searchShardsResponse);
+                        logger.warn("XXX TSA innerOnResponse - sending searchShardsResponse for clusterAlias {}", clusterAlias);
+                        cluster.setStateFromSearchShardResponse(searchShardsResponse);
                     }
 
                     @Override
                     Map<String, SearchShardsResponse> createFinalResponse() {
+                        logger.warn("XXX TSA createFinalResponse");
                         return searchShardsResponses;
                     }
                 };
+            /// MP: next we try to connect to each remote cluster, passing in the above "singleListener" to SearchShards can-matches
             remoteClusterService.maybeEnsureConnectedAndGetConnection(
                 clusterAlias,
                 skipUnavailable == false,
                 ActionListener.wrap(connection -> {
                     final String[] indices = entry.getValue().indices();
                     // TODO: support point-in-time
+                    /// MP: this does the SearchShards can-match search as well as getting a listing of index shards to search
                     if (searchContext == null && connection.getTransportVersion().onOrAfter(TransportVersion.V_8_500_010)) {
                         SearchShardsRequest searchShardsRequest = new SearchShardsRequest(
                             indices,
@@ -947,6 +979,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         return indices;
     }
 
+    /// MP TODO ** this is NOT done per shard - all shards (including remote) are passed in
     private void executeSearch(
         SearchTask task,
         SearchTimeProvider timeProvider,
@@ -998,7 +1031,17 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                 indicesAndAliases,
                 concreteLocalIndices
             );
+            /// MP --- start
+            List<SearchShardIterator> list = localShardIterators.stream().toList();
+            if (list != null) {
+                for (SearchShardIterator searchShardIterator : list) {
+                    logger.warn("XXX TSA local shard prefiltered: {}, skip: {}, shardId: {}",
+                        searchShardIterator.prefiltered(), searchShardIterator.skip(), searchShardIterator.shardId());
+                }
+            }
         }
+
+        /// MP TODO ** here remote and local shards are all merged into one collection
         final GroupShardsIterator<SearchShardIterator> shardIterators = mergeShardsIterators(localShardIterators, remoteShardIterators);
 
         failIfOverShardCountLimit(clusterService, shardIterators.size());
@@ -1034,7 +1077,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             task,
             searchRequest,
             asyncSearchExecutor,
-            shardIterators,
+            shardIterators,       /// MP: TODO ** shardIterators passed in (still over all shards, not per shard yet)
             timeProvider,
             connectionLookup,
             clusterState,
@@ -1042,7 +1085,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             concreteIndexBoosts,
             preFilterSearchShards,
             threadPool,
-            clusters
+            clusters             /// MP: TODO ** clusters passed in bcs not per shard yet
         ).start();
     }
 
@@ -1138,6 +1181,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         );
     }
 
+    /// MP: TODO: this is where the MRT=false goes for SearchAction (after SearchShardsAction)
     private class AsyncSearchActionProvider implements SearchPhaseProvider {
         private final ActionListener<SearchResponse> listener;
 
@@ -1161,6 +1205,25 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             SearchResponse.Clusters clusters
         ) {
             if (preFilter) {
+                /// MP --- START
+                for (SearchShardIterator next : shardIterators) {
+                    /*
+    XXX TSA preFilter/CanMatch BEFORE: SSIter: prefiltered: false; skip: false; shardId: [blogs][0]; clusterAlias: null; indices: [blogs]
+    XXX TSA preFilter/CanMatch BEFORE: SSIter: prefiltered: true ; skip: false; shardId: [blogs][0]; clusterAlias: remote1; indices: [blogs]
+    XXX TSA preFilter/CanMatch BEFORE: SSIter: prefiltered: true ; skip: false; shardId: [blogs][0]; clusterAlias: remote2; indices: [blogs]
+    XXX TSA preFilter/CanMatch BEFORE: SSIter: prefiltered: false; skip: false; shardId: [blogs][1]; clusterAlias: null; indices: [blogs]
+    XXX TSA preFilter/CanMatch BEFORE: SSIter: prefiltered: true ; skip: false; shardId: [blogs][1]; clusterAlias: remote1; indices: [blogs]
+    XXX TSA preFilter/CanMatch BEFORE: SSIter: prefiltered: true ; skip: false; shardId: [blogs][1]; clusterAlias: remote2; indices: [blogs]
+    XXX TSA preFilter/CanMatch BEFORE: SSIter: prefiltered: false; skip: false; shardId: [blogs][2]; clusterAlias: null; indices: [blogs]
+    XXX TSA preFilter/CanMatch BEFORE: SSIter: prefiltered: true ; skip: false; shardId: [blogs][2]; clusterAlias: remote1; indices: [blogs]
+    XXX TSA preFilter/CanMatch BEFORE: SSIter: prefiltered: true ; skip: false; shardId: [blogs][2]; clusterAlias: remote2; indices: [blogs]
+                     */
+                    logger.warn("XXX TSA preFilter/CanMatch BEFORE: SSIter: prefiltered: {}; skip: {}; shardId: {}; "  +
+                            "clusterAlias: {}; indices: {}",
+                        next.prefiltered(), next.skip(), next.shardId(), next.getClusterAlias(),
+                        Arrays.stream(next.getOriginalIndices().indices()).collect(Collectors.toList()));
+                }
+                /// MP --- END
                 return new CanMatchPreFilterSearchPhase(
                     logger,
                     searchTransportService,
@@ -1174,7 +1237,46 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     task,
                     true,
                     searchService.getCoordinatorRewriteContextProvider(timeProvider::absoluteStartMillis),
-                    listener.delegateFailureAndWrap((l, iters) -> {
+                    listener.delegateFailureAndWrap((lx, iters) -> {
+                        /// MP --- START
+                        int maxId = 0;
+                        int total = 0;
+                        int skipped = 0;  /// MP TODO: assumes all are from the same cluster - needs to be extended to handle any cluster
+                        SearchResponse.Cluster cluster = null;
+                        Iterator<SearchShardIterator> iterator = iters.iterator();
+                        while (iterator.hasNext()) {
+                            SearchShardIterator next = iterator.next();
+                            logger.warn("XXX TSA preFilter/CanMatch Listener: SSIter: prefiltered: {}; skip: {}; shardId: {}; "  +
+                                "clusterAlias: {}; indices: {}",
+                                next.prefiltered(), next.skip(), next.shardId(), next.getClusterAlias(),
+                                Arrays.stream(next.getOriginalIndices().indices()).collect(Collectors.toList()));
+                            /// MP TODO: why are the local shards still prefiltered=false, didn't they just go through CanMatch?
+                            if (next.prefiltered() == false) {
+                                total++;
+                                if (next.skip()) {
+                                    skipped++;
+                                }
+                                if (next.shardId().id() > maxId) {
+                                    maxId = next.shardId().id();
+                                }
+                                cluster = clusters.getCluster(next.getClusterAlias());
+                            }
+                        }
+                        /*
+ XXX TSA preFilter/CanMatch Listener: SSIter: prefiltered: true;  skip: false; shardId: [blogs][0]; clusterAlias: remote1; indices: [blogs]
+ XXX TSA preFilter/CanMatch Listener: SSIter: prefiltered: true;  skip: false; shardId: [blogs][0]; clusterAlias: remote2; indices: [blogs]
+ XXX TSA preFilter/CanMatch Listener: SSIter: prefiltered: false; skip: false; shardId: [blogs][1]; clusterAlias: null; indices: [blogs]
+ XXX TSA preFilter/CanMatch Listener: SSIter: prefiltered: true;  skip: false; shardId: [blogs][1]; clusterAlias: remote1; indices: [blogs]
+ XXX TSA preFilter/CanMatch Listener: SSIter: prefiltered: true;  skip: false; shardId: [blogs][1]; clusterAlias: remote2; indices: [blogs]
+ XXX TSA preFilter/CanMatch Listener: SSIter: prefiltered: false; skip: false; shardId: [blogs][2]; clusterAlias: null; indices: [blogs]
+ XXX TSA preFilter/CanMatch Listener: SSIter: prefiltered: true;  skip: false; shardId: [blogs][2]; clusterAlias: remote1; indices: [blogs]
+ XXX TSA preFilter/CanMatch Listener: SSIter: prefiltered: true;  skip: false; shardId: [blogs][2]; clusterAlias: remote2; indices: [blogs]
+ XXX TSA preFilter/CanMatch: MaxId: 2, total: 3
+                         */
+                        logger.warn("XXX TSA preFilter/CanMatch: MaxId: {}, total: {}", maxId, total);
+                        cluster.setTotalShards(total);
+                        cluster.setSkippedShards(skipped);
+                        /// MP --- END
                         SearchPhase action = newSearchPhase(
                             task,
                             searchRequest,
@@ -1329,7 +1431,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         private final String clusterAlias;
         private final boolean skipUnavailable;
         private final CountDown countDown;
-        private final AtomicInteger skippedClusters;
+        private final AtomicInteger skippedClusters; /// MP: TODO I think we can remove this once MRT=false uses Cluster objects
         private final AtomicReference<Exception> exceptions;
         protected final SearchResponse.Cluster cluster;
         private final ActionListener<FinalResponse> originalListener;
@@ -1344,7 +1446,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             CountDown countDown,
             AtomicInteger skippedClusters,
             AtomicReference<Exception> exceptions,
-            @Nullable SearchResponse.Cluster cluster, // null for ccs_minimize_roundtrips=false
+            SearchResponse.Cluster cluster,
             ActionListener<FinalResponse> originalListener
         ) {
             this.clusterAlias = clusterAlias;
@@ -1365,20 +1467,26 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
 
         abstract void innerOnResponse(Response response);
 
+        /// MP: TODO: will this ever get called when MRT=false? In that case we are doing SearchShardsAction, not SearchAction
         @Override
         public final void onFailure(Exception e) {
+            logger.warn("XXX TSA onFailure: " + e.getMessage());
             ShardSearchFailure f = new ShardSearchFailure(e);
             logCCSError(f, clusterAlias, skipUnavailable);
             if (skipUnavailable) {
-                if (cluster != null) {
+                logger.warn("XXX TSA onFailure skipUnavailable=true");
+                if (cluster != null) {  /// MP: TODO: can we remove this null check and the one below?
                     cluster.setStatus(SearchResponse.Cluster.Status.SKIPPED);
                     cluster.addFailure(f);
+                    logger.warn("XXX TSA onFailure skipUnavailable=true, adding failure to cluster");
                 }
                 skippedClusters.incrementAndGet();
             } else {
+                logger.warn("XXX TSA onFailure skipUnavailable=false");
                 if (cluster != null) {
                     cluster.setStatus(SearchResponse.Cluster.Status.FAILED);
                     cluster.addFailure(f);
+                    logger.warn("XXX TSA onFailure skipUnavailable=false, adding failure to cluster");
                 }
                 Exception exception = e;
                 if (RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY.equals(clusterAlias) == false) {

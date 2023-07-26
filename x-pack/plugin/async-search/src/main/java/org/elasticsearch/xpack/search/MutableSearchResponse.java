@@ -6,6 +6,8 @@
  */
 package org.elasticsearch.xpack.search;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.search.TotalHits;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.ExceptionsHelper;
@@ -36,6 +38,7 @@ import static org.elasticsearch.xpack.core.async.AsyncTaskIndexService.restoreRe
  * run concurrently to 1 and ensures that we pause the search progress when an {@link AsyncSearchResponse} is built.
  */
 class MutableSearchResponse {
+    private static final Logger logger = LogManager.getLogger(MutableSearchResponse.class);
     private static final TotalHits EMPTY_TOTAL_HITS = new TotalHits(0L, TotalHits.Relation.GREATER_THAN_OR_EQUAL_TO);
     private final int totalShards;
     private final int skippedShards;
@@ -148,10 +151,12 @@ class MutableSearchResponse {
     /**
      * Adds a shard failure concurrently (non-blocking).
      */
-    void addQueryFailure(int shardIndex, ShardSearchFailure shardSearchFailure) {
+    void addQueryFailure(int shardIndex, ShardSearchFailure shardSearchFailure, String clusterAlias) {
         synchronized (this) {
             failIfFrozen();
         }
+        /// MP: TODO this handles it for async search but how will it work for sync search CCS? Add clusterAlias to ShardSearchFailure ??
+        logger.warn("XXX MutableSearchResponse addQueryFailure: would now act upon ShardSearchFailure against " + clusterAlias);
         queryFailures.set(shardIndex, shardSearchFailure);
     }
 
