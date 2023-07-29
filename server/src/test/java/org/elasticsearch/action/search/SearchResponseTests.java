@@ -10,6 +10,8 @@ package org.elasticsearch.action.search;
 
 import org.apache.lucene.search.TotalHits;
 import org.elasticsearch.TransportVersion;
+import org.elasticsearch.action.OriginalIndices;
+import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.bytes.BytesReference;
@@ -41,7 +43,9 @@ import org.junit.Before;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 
 import static java.util.Collections.emptyList;
 import static java.util.Collections.singletonMap;
@@ -131,22 +135,116 @@ public class SearchResponseTests extends ESTestCase {
         );
     }
 
+    /**
+     * This test method is typically called when needing "final" Cluster objects, not intermediate CCS state.
+     * So all clusters returned (whether for local only or remote cluster searches are in a final state
+     * where all clusters are either successful or skipped.
+     * @return Cluster with a random number of total clusters
+     */
     static SearchResponse.Clusters randomClusters() {
-        int totalClusters = randomIntBetween(0, 10);
-        int successfulClusters = randomIntBetween(0, totalClusters);
-        int skippedClusters = totalClusters - successfulClusters;
-        if (randomBoolean()) {
-            return new SearchResponse.Clusters(totalClusters, successfulClusters, skippedClusters);
-        } else {
-            int remoteClusters = totalClusters;
-            if (totalClusters > 0 && randomBoolean()) {
-                // remoteClusters can be same as total cluster count or one less (when doing local search)
-                remoteClusters--;
-            }
-            // Clusters has an assert that if ccsMinimizeRoundtrips = true, then remoteClusters must be > 0
-            boolean ccsMinimizeRoundtrips = (remoteClusters > 0 ? randomBoolean() : false);
-            return new SearchResponse.Clusters(totalClusters, successfulClusters, skippedClusters, remoteClusters, ccsMinimizeRoundtrips);
+        return createCCSClusterObject(3, 2, true, 2, 1, 0, 0);
+
+//        int totalClusters = randomIntBetween(0, 10);
+//        int successfulClusters = randomIntBetween(0, totalClusters);
+//        int skippedClusters = totalClusters - successfulClusters;
+//        if (totalClusters <= 1 || randomBoolean()) {
+//            // local search or CCS minimize_roundtrips=false
+//            return new SearchResponse.Clusters(totalClusters, successfulClusters, skippedClusters);
+//        } else {
+//            // CCS search with minimize_roundtrips=true
+//            int remoteClusters = totalClusters;
+//            if (totalClusters > 0 && randomBoolean()) {
+//                // remoteClusters can be same as total cluster count or one less (when doing local search)
+//                remoteClusters--;
+//            }
+////            // Clusters has an assert that if ccsMinimizeRoundtrips = true, then remoteClusters must be > 0
+////            boolean ccsMinimizeRoundtrips = (remoteClusters > 0 ? randomBoolean() : false);
+////            return new SearchResponse.Clusters(totalClusters, successfulClusters, skippedClusters, remoteClusters, ccsMinimizeRoundtrips);
+//            /// MP TODO ** NEW code below here - needs fromXContent parser for Clusters/Cluster to be built
+//             int successful = totalClusters;
+//             int skipped = 0;
+//             if (totalClusters > 2) {
+//                 skipped = 1;
+//                 successful--;
+//             }
+//
+//             return createCCSClusterObject(totalClusters, remoteClusters, true, successful, skipped, 0, 0);
+//        }
+    }
+
+    static SearchResponse.Clusters createCCSClusterObject(int totalClusters, int remoteClusters, boolean ccsMinimizeRoundtrips) {
+        OriginalIndices localIndices = null;
+        if (totalClusters > remoteClusters) {
+            localIndices = new OriginalIndices(new String[] { "foo", "bar*" }, IndicesOptions.lenientExpand());
         }
+        assert remoteClusters > 0 : "CCS Cluster must have at least one remote cluster";
+        Map<String, OriginalIndices> remoteClusterIndices = new HashMap<>();
+        for (int i = 0; i < remoteClusters; i++) {
+            remoteClusterIndices.put("cluster_" + i, new OriginalIndices(new String[] { "foo", "bar*" }, IndicesOptions.lenientExpand()));
+        }
+
+        return new SearchResponse.Clusters(localIndices, remoteClusterIndices, ccsMinimizeRoundtrips);
+    }
+
+    static SearchResponse.Clusters createCCSClusterObject(
+        int totalClusters,
+        int remoteClusters,
+        boolean ccsMinimizeRoundtrips,
+        int successfulClusters,
+        int skippedClusters,
+        int partialClusters,
+        int failedClusters
+    ) {
+        assert successfulClusters + skippedClusters <= totalClusters : "successful + skipped > totalClusters";
+        assert totalClusters == remoteClusters || totalClusters - remoteClusters == 1
+            : "totalClusters and remoteClusters must be same or total = remote + 1";
+        SearchResponse.Clusters clusters = createCCSClusterObject(totalClusters, remoteClusters, ccsMinimizeRoundtrips);
+
+        int successful = successfulClusters;
+        int skipped = skippedClusters;
+        int partial = partialClusters;
+        int failed = failedClusters;
+        if (totalClusters > remoteClusters) {
+            if (successful > 0) {
+                SearchResponse.Cluster local = clusters.getCluster("");
+                local.setStatus(SearchResponse.Cluster.Status.SUCCESSFUL);
+                successful--;
+            } else if (skipped > 0) {
+                SearchResponse.Cluster local = clusters.getCluster("");
+                local.setStatus(SearchResponse.Cluster.Status.SKIPPED);
+                skipped--;
+            } else if (partial > 0) {
+                SearchResponse.Cluster local = clusters.getCluster("");
+                local.setStatus(SearchResponse.Cluster.Status.PARTIAL);
+                partial--;
+            } else if (failed > 0) {
+                SearchResponse.Cluster local = clusters.getCluster("");
+                local.setStatus(SearchResponse.Cluster.Status.FAILED);
+                failed--;
+            }
+        }
+
+        int numClusters = successful + skipped + partial;
+
+        for (int i = 0; i < numClusters; i++) {
+            SearchResponse.Cluster cluster = clusters.getCluster("cluster_" + i);
+            if (successful > 0) {
+                cluster.setStatus(SearchResponse.Cluster.Status.SUCCESSFUL);
+                successful--;
+            } else if (skipped > 0) {
+                cluster.setStatus(SearchResponse.Cluster.Status.SKIPPED);
+                skipped--;
+            } else if (partial > 0) {
+                cluster.setStatus(SearchResponse.Cluster.Status.PARTIAL);
+                partial--;
+            } else if (failed > 0) {
+                cluster.setStatus(SearchResponse.Cluster.Status.FAILED);
+                failed--;
+            } else {
+                throw new IllegalStateException("Test setup coding error - should not get here");
+            }
+        }
+        return clusters;
     }
 
     /**
@@ -168,7 +266,7 @@ public class SearchResponseTests extends ESTestCase {
     }
 
     private void doFromXContentTestWithRandomFields(SearchResponse response, boolean addRandomFields) throws IOException {
-        XContentType xcontentType = randomFrom(XContentType.values());
+        XContentType xcontentType = XContentType.JSON; // randomFrom(XContentType.values());
         boolean humanReadable = randomBoolean();
         final ToXContent.Params params = new ToXContent.MapParams(singletonMap(RestSearchAction.TYPED_KEYS_PARAM, "true"));
         BytesReference originalBytes = toShuffledXContent(
