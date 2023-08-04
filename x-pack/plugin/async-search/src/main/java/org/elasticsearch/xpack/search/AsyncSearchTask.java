@@ -13,6 +13,7 @@ import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.cluster.node.tasks.cancel.CancelTasksRequest;
 import org.elasticsearch.action.admin.cluster.node.tasks.cancel.CancelTasksResponse;
+import org.elasticsearch.action.search.FatalCCSException;
 import org.elasticsearch.action.search.SearchProgressActionListener;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
@@ -21,6 +22,7 @@ import org.elasticsearch.action.search.SearchShard;
 import org.elasticsearch.action.search.SearchTask;
 import org.elasticsearch.action.search.ShardSearchFailure;
 import org.elasticsearch.client.internal.Client;
+import org.elasticsearch.core.Strings;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.search.SearchShardTarget;
 import org.elasticsearch.search.aggregations.AggregationReduceContext;
@@ -29,6 +31,8 @@ import org.elasticsearch.tasks.TaskId;
 import org.elasticsearch.tasks.TaskManager;
 import org.elasticsearch.threadpool.Scheduler.Cancellable;
 import org.elasticsearch.threadpool.ThreadPool;
+import org.elasticsearch.transport.RemoteClusterAware;
+import org.elasticsearch.transport.RemoteTransportException;
 import org.elasticsearch.xpack.core.async.AsyncExecutionId;
 import org.elasticsearch.xpack.core.async.AsyncTask;
 import org.elasticsearch.xpack.core.search.action.AsyncSearchResponse;
@@ -457,8 +461,36 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask {
         public void onFailure(Exception exc) {
             // if the failure occurred before calling onListShards
             searchResponse.compareAndSet(null, new MutableSearchResponse(-1, -1, null, threadPool.getThreadContext()));
-            searchResponse.get()
-                .updateWithFailure(new ElasticsearchStatusException("error while executing search", ExceptionsHelper.status(exc), exc));
+            Throwable throwable = exc;
+
+            boolean failImmediately = false;
+            String clusterAlias = null;
+
+            if (throwable instanceof FatalCCSException ccsException) {
+                failImmediately = true;
+                throwable = ccsException.getCause();  // guaranteed to be non-null by FatalCCSException constructor
+                clusterAlias = ccsException.getClusterAlias();
+                if (clusterAlias.equals(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY)) {
+                    clusterAlias = "(local)";
+                }
+            }
+            if (clusterAlias == null && throwable instanceof RemoteTransportException remoteException) {
+                clusterAlias = remoteException.getClusterAlias();
+            }
+            ElasticsearchStatusException statusExc = new ElasticsearchStatusException(
+                Strings.format(
+                    "error while executing search%s",
+                    clusterAlias == null ? "" : Strings.format("on cluster [%s]", clusterAlias)
+                ),
+                ExceptionsHelper.status(throwable),
+                throwable.getCause()
+            );
+
+            searchResponse.get().updateWithFailure(statusExc, failImmediately);
+            if (failImmediately) {
+                System.err.println(">>> AsyncSearchTask calling cancelTask");
+                cancelTask(() -> {}, "fatal error has occurred in a cross-cluster search - cancelling the search");
+            }
             executeInitListeners();
             executeCompletionListeners();
         }

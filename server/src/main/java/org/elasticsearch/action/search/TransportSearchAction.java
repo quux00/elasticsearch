@@ -46,7 +46,6 @@ import org.elasticsearch.common.settings.Setting;
 import org.elasticsearch.common.settings.Setting.Property;
 import org.elasticsearch.common.util.Maps;
 import org.elasticsearch.common.util.concurrent.CountDown;
-import org.elasticsearch.common.util.concurrent.EsExecutors;
 import org.elasticsearch.core.Nullable;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.Index;
@@ -479,7 +478,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         BiConsumer<SearchRequest, ActionListener<SearchResponse>> localSearchConsumer
     ) {
         // TODO pick a more appropriate executor for this work - see https://github.com/elastic/elasticsearch/issues/97997
-        final var remoteClientResponseExecutor = EsExecutors.DIRECT_EXECUTOR_SERVICE;
+        // final var remoteClientResponseExecutor = EsExecutors.DIRECT_EXECUTOR_SERVICE;
+        final var remoteClientResponseExecutor = threadPool.executor(ThreadPool.Names.SEARCH_COORDINATION);
         if (localIndices == null && remoteIndices.size() == 1) {
             // if we are searching against a single remote cluster, we simply forward the original search request to such cluster
             // and we directly perform final reduction in the remote cluster
@@ -544,7 +544,12 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     if (skipUnavailable) {
                         listener.onResponse(SearchResponse.empty(timeProvider::buildTookInMillis, clusters));
                     } else {
-                        listener.onFailure(wrapRemoteClusterFailure(clusterAlias, e));
+                        System.err.printf(
+                            "TSA DEBUG 1 onFailure. wrapRemoteClusterFailure for cluster '%s'; skipUnavailable=%s",
+                            clusterAlias,
+                            skipUnavailable
+                        );
+                        listener.onFailure(wrapRemoteClusterFailure(clusterAlias, e, skipUnavailable));
                     }
                 }
             });
@@ -774,21 +779,24 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         } else {
             status = SearchResponse.Cluster.Status.FAILED;
         }
-        boolean swapped;
+        boolean retry;
         do {
+            retry = false;
             SearchResponse.Cluster orig = clusterRef.get();
-            String clusterAlias = orig.getClusterAlias();
-            List<ShardSearchFailure> failures;
-            if (orig.getFailures() != null) {
-                failures = new ArrayList<>(orig.getFailures());
-            } else {
-                failures = new ArrayList<>(1);
+            if (orig.getStatus() == SearchResponse.Cluster.Status.RUNNING) {
+                String clusterAlias = orig.getClusterAlias();
+                List<ShardSearchFailure> failures;
+                if (orig.getFailures() != null) {
+                    failures = new ArrayList<>(orig.getFailures());
+                } else {
+                    failures = new ArrayList<>(1);
+                }
+                failures.add(failure);
+                String indexExpression = orig.getIndexExpression();
+                SearchResponse.Cluster updated = new SearchResponse.Cluster(clusterAlias, indexExpression, status, failures);
+                retry = clusterRef.compareAndSet(orig, updated) == false;
             }
-            failures.add(failure);
-            String indexExpression = orig.getIndexExpression();
-            SearchResponse.Cluster updated = new SearchResponse.Cluster(clusterAlias, indexExpression, status, failures);
-            swapped = clusterRef.compareAndSet(orig, updated);
-        } while (swapped == false);
+        } while (retry);
     }
 
     /**
@@ -826,23 +834,26 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             status = SearchResponse.Cluster.Status.SUCCESSFUL;
         }
 
-        boolean swapped;
+        boolean retry;
         do {
+            retry = false;
             SearchResponse.Cluster orig = clusterRef.get();
-            SearchResponse.Cluster updated = new SearchResponse.Cluster(
-                orig.getClusterAlias(),
-                orig.getIndexExpression(),
-                status,
-                searchResponse.getTotalShards(),
-                searchResponse.getSuccessfulShards(),
-                searchResponse.getSkippedShards(),
-                searchResponse.getFailedShards(),
-                Arrays.asList(searchResponse.getShardFailures()),
-                searchResponse.getTook(),
-                searchResponse.isTimedOut()
-            );
-            swapped = clusterRef.compareAndSet(orig, updated);
-        } while (swapped == false);
+            if (orig.getStatus() == SearchResponse.Cluster.Status.RUNNING) {
+                SearchResponse.Cluster updated = new SearchResponse.Cluster(
+                    orig.getClusterAlias(),
+                    orig.getIndexExpression(),
+                    status,
+                    searchResponse.getTotalShards(),
+                    searchResponse.getSuccessfulShards(),
+                    searchResponse.getSkippedShards(),
+                    searchResponse.getFailedShards(),
+                    Arrays.asList(searchResponse.getShardFailures()),
+                    searchResponse.getTook(),
+                    searchResponse.isTimedOut()
+                );
+                retry = clusterRef.compareAndSet(orig, updated) == false;
+            }
+        } while (retry);
     }
 
     void executeLocalSearch(
@@ -1403,7 +1414,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         @Override
         public final void onResponse(Response response) {
             innerOnResponse(response);
-            maybeFinish();
+            maybeFinish(false);
         }
 
         abstract void innerOnResponse(Response response);
@@ -1423,7 +1434,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                 }
                 Exception exception = e;
                 if (RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY.equals(clusterAlias) == false) {
-                    exception = wrapRemoteClusterFailure(clusterAlias, e);
+                    System.err.printf("TSA DEBUG 1 onFailure clusterAlias: '%s'; skipUnavailable: %s\n", clusterAlias, skipUnavailable);
+                    exception = wrapRemoteClusterFailure(clusterAlias, e, skipUnavailable);
                 }
                 if (exceptions.compareAndSet(null, exception) == false) {
                     exceptions.accumulateAndGet(exception, (previous, current) -> {
@@ -1432,13 +1444,26 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     });
                 }
             }
-            maybeFinish();
+            // the local cluster is treated like skipUnavailable=false, but the flag is not set that way on CCSActionListener
+            /// MP TODO: maybe the flag should be set that way when passed into CCSActionListener??
+            boolean failImmediately = (skipUnavailable == false) || clusterAlias.equals(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY); // FIXME
+                                                                                                                                     // -
+                                                                                                                                     // remove
+            System.err.printf(
+                "TSA onFailure for cluster '%s'; skipUnavailable == %s; failImmediately: %s\n",
+                clusterAlias,
+                skipUnavailable,
+                failImmediately
+            );
+
+            maybeFinish(failImmediately);
         }
 
-        private void maybeFinish() {
-            if (countDown.countDown()) {
+        private void maybeFinish(boolean failImmediately) {
+            if (countDown.countDown() || failImmediately) {
                 Exception exception = exceptions.get();
                 if (exception == null) {
+                    assert failImmediately == false : "if failImmediately==true, an Exception should be set";
                     FinalResponse response;
                     try {
                         response = createFinalResponse();
@@ -1448,7 +1473,10 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     }
                     originalListener.onResponse(response);
                 } else {
-                    originalListener.onFailure(exceptions.get());
+                    if (failImmediately) {
+                        exception = new FatalCCSException(clusterAlias, exception);
+                    }
+                    originalListener.onFailure(exception);
                 }
             }
         }
@@ -1480,8 +1508,13 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         );
     }
 
-    private static RemoteTransportException wrapRemoteClusterFailure(String clusterAlias, Exception e) {
-        return new RemoteTransportException("error while communicating with remote cluster [" + clusterAlias + "]", e);
+    private static RemoteTransportException wrapRemoteClusterFailure(String clusterAlias, Exception e, boolean skipUnavailable) {
+        return new RemoteTransportException(
+            "error while communicating with remote cluster [" + clusterAlias + "]",
+            e,
+            clusterAlias,
+            skipUnavailable
+        );
     }
 
     static Map<String, OriginalIndices> getIndicesFromSearchContexts(SearchContextId searchContext, IndicesOptions indicesOptions) {
