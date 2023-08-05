@@ -17,7 +17,9 @@ and backend updates is coming from and how serious it is.
 grs ':qa:multi-cluster-search:v8.10.0#multi-cluster' --tests "org.elasticsearch.search.CCSDuelIT"
 grs ':server:internalClusterTest' --tests "org.elasticsearch.search.ccs.CrossClusterSearchIT" -Dtests.iters=3
 grs ':x-pack:plugin:async-search:internalClusterTest' --tests "org.elasticsearch.xpack.search.CrossClusterAsyncSearchIT" -Dtests.iters=3
-grs -p server test --tests org.elasticsearch.action.search.TransportSearchActionTests -Dtests.iters=6
-grs -p x-pack/plugin/async-search test -Dtests.iters=6
+grs -p x-pack/plugin/async-search internalClusterTest
+grs -p server test --tests org.elasticsearch.action.search.TransportSearchActionTests -Dtests.iters=9
+grs -p x-pack/plugin/async-search test -Dtests.iters=8
+grs -p server test
 gr ':docs:yamlRestTest' --tests "org.elasticsearch.smoketest.DocsClientYamlTestSuiteIT.test {yaml=reference/search/search-your-data/search-across-clusters/*}" -Dtests.iters=10
 
