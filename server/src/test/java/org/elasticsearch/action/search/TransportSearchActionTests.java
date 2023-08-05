@@ -873,6 +873,7 @@ public class TransportSearchActionTests extends ESTestCase {
                     null,
                     skippedClusters,
                     remoteIndicesByCluster,
+                    null, /// MP FIXME
                     service,
                     new LatchedActionListener<>(ActionTestUtils.assertNoFailureListener(response::set), latch)
                 );
@@ -901,6 +902,7 @@ public class TransportSearchActionTests extends ESTestCase {
                     null,
                     skippedClusters,
                     remoteIndicesByCluster,
+                    null, /// MP FIXME
                     service,
                     new LatchedActionListener<>(ActionListener.wrap(r -> fail("no response expected"), failure::set), latch)
                 );
@@ -948,6 +950,7 @@ public class TransportSearchActionTests extends ESTestCase {
                     null,
                     skippedClusters,
                     remoteIndicesByCluster,
+                    null, /// MP FIXME
                     service,
                     new LatchedActionListener<>(ActionListener.wrap(r -> fail("no response expected"), failure::set), latch)
                 );
@@ -977,6 +980,7 @@ public class TransportSearchActionTests extends ESTestCase {
                     null,
                     skippedClusters,
                     remoteIndicesByCluster,
+                    null, /// MP FIXME
                     service,
                     new LatchedActionListener<>(ActionTestUtils.assertNoFailureListener(response::set), latch)
                 );
@@ -1022,6 +1026,7 @@ public class TransportSearchActionTests extends ESTestCase {
                     null,
                     skippedClusters,
                     remoteIndicesByCluster,
+                    null, /// MP FIXME
                     service,
                     new LatchedActionListener<>(ActionTestUtils.assertNoFailureListener(response::set), latch)
                 );

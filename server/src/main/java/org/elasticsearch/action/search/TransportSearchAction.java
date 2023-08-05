@@ -355,6 +355,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     );
                 } else {
                     AtomicInteger skippedClusters = new AtomicInteger(0);
+                    SearchResponse.Clusters ccsClusters = new SearchResponse.Clusters(localIndices, remoteClusterIndices, false);
                     // TODO: pass parentTaskId
                     collectSearchShards(
                         rewritten.indicesOptions(),
@@ -365,7 +366,9 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                         searchContext,
                         skippedClusters,
                         remoteClusterIndices,
+                        ccsClusters,
                         transportService,
+                        /// MP: TODO ** after the SearchShardsAction, this is what happens next - the real SearchAction
                         delegate.delegateFailureAndWrap((finalDelegate, searchShardsResponses) -> {
                             final BiFunction<String, String, DiscoveryNode> clusterNodeLookup = getRemoteClusterNodeLookup(
                                 searchShardsResponses
@@ -403,7 +406,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                                 clusterNodeLookup,
                                 clusterState,
                                 remoteAliasFilters,
-                                new SearchResponse.Clusters(totalClusters, successfulClusters, skippedClusters.get()),
+                                new SearchResponse.Clusters(totalClusters, successfulClusters, skippedClusters.get()), //MP TODO: replace with ccsClusters
                                 searchContext,
                                 searchPhaseProvider.apply(finalDelegate)
                             );
@@ -641,6 +644,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         SearchContextId searchContext,
         AtomicInteger skippedClusters,
         Map<String, OriginalIndices> remoteIndicesByCluster,
+        SearchResponse.Clusters clusters,
         TransportService transportService,
         ActionListener<Map<String, SearchShardsResponse>> listener
     ) {
@@ -648,6 +652,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         final CountDown responsesCountDown = new CountDown(remoteIndicesByCluster.size());
         final Map<String, SearchShardsResponse> searchShardsResponses = new ConcurrentHashMap<>();
         final AtomicReference<Exception> exceptions = new AtomicReference<>();
+        /// MP TODO ** loop over each REMOTE cluster
         for (Map.Entry<String, OriginalIndices> entry : remoteIndicesByCluster.entrySet()) {
             final String clusterAlias = entry.getKey();
             boolean skipUnavailable = remoteClusterService.isSkipUnavailable(clusterAlias);
@@ -658,7 +663,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     responsesCountDown,
                     skippedClusters,
                     exceptions,
-                    null,
+                    null,  /// MP TODO: change to ... clusters.getCluster(clusterAlias),
                     listener
                 ) {
                     @Override
@@ -668,6 +673,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
 
                     @Override
                     Map<String, SearchShardsResponse> createFinalResponse() {
+                        logger.warn("XXX TSA collectSearchShards MRT=false createFinalResponse");
                         return searchShardsResponses;
                     }
                 };
@@ -677,6 +683,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                 ActionListener.wrap(connection -> {
                     final String[] indices = entry.getValue().indices();
                     // TODO: support point-in-time
+                    /// MP TODO ** this does the SearchShards can-match search as well as getting a listing of index shards to search
                     if (searchContext == null && connection.getTransportVersion().onOrAfter(TransportVersion.V_8_500_010)) {
                         SearchShardsRequest searchShardsRequest = new SearchShardsRequest(
                             indices,
@@ -1037,7 +1044,17 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                 indicesAndAliases,
                 concreteLocalIndices
             );
+            /// MP --- start
+            List<SearchShardIterator> list = localShardIterators.stream().toList();
+            if (list != null) {
+                for (SearchShardIterator searchShardIterator : list) {
+                    logger.warn("XXX TSA local shard prefiltered: {}, skip: {}, shardId: {}",
+                        searchShardIterator.prefiltered(), searchShardIterator.skip(), searchShardIterator.shardId());
+                }
+            }
+            /// MP --- end
         }
+        /// MP TODO ** here remote and local shards are all merged into one collection
         final GroupShardsIterator<SearchShardIterator> shardIterators = mergeShardsIterators(localShardIterators, remoteShardIterators);
 
         failIfOverShardCountLimit(clusterService, shardIterators.size());
@@ -1381,9 +1398,9 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             String clusterAlias,
             boolean skipUnavailable,
             CountDown countDown,
-            AtomicInteger skippedClusters,
+            AtomicInteger skippedClusters,   /// MP: TODO I think we can remove this once MRT=false uses Cluster objects
             AtomicReference<Exception> exceptions,
-            @Nullable AtomicReference<SearchResponse.Cluster> cluster, // null for ccs_minimize_roundtrips=false
+            @Nullable AtomicReference<SearchResponse.Cluster> cluster, /// MP TODO: remove @Nullable
             ActionListener<FinalResponse> originalListener
         ) {
             this.clusterAlias = clusterAlias;

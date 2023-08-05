@@ -177,6 +177,7 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
 
         {
             AsyncSearchResponse finishedResponse = getAsyncSearch(response.getId());
+            assertFalse(finishedResponse.isRunning());
 
             SearchResponse.Clusters clusters = finishedResponse.getSearchResponse().getClusters();
             assertFalse("search cluster results should NOT be marked as partial", clusters.hasPartialResults());
@@ -282,6 +283,7 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
 
         {
             AsyncSearchResponse finishedResponse = getAsyncSearch(response.getId());
+            assertFalse(finishedResponse.isRunning());
 
             SearchResponse.Clusters clusters = finishedResponse.getSearchResponse().getClusters();
             assertThat(clusters.getTotal(), equalTo(2));
@@ -402,6 +404,7 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
 
         {
             AsyncSearchResponse finishedResponse = getAsyncSearch(response.getId());
+            assertFalse(finishedResponse.isRunning());
 
             SearchResponse.Clusters clusters = finishedResponse.getSearchResponse().getClusters();
             assertThat(clusters.getTotal(), equalTo(2));
@@ -515,6 +518,7 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
 
         {
             AsyncSearchResponse finishedResponse = getAsyncSearch(response.getId());
+            assertFalse(finishedResponse.isRunning());
 
             SearchResponse.Clusters clusters = finishedResponse.getSearchResponse().getClusters();
             assertThat(clusters.getTotal(), equalTo(2));
@@ -610,6 +614,7 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
 
         {
             AsyncSearchResponse finishedResponse = getAsyncSearch(response.getId());
+            assertFalse(finishedResponse.isRunning());
 
             SearchResponse.Clusters clusters = finishedResponse.getSearchResponse().getClusters();
             assertFalse("search cluster results should NOT be marked as partial", clusters.hasPartialResults());
@@ -683,6 +688,7 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
 
         {
             AsyncSearchResponse finishedResponse = getAsyncSearch(response.getId());
+            assertFalse(finishedResponse.isRunning());
 
             SearchResponse.Clusters clusters = finishedResponse.getSearchResponse().getClusters();
             assertThat(clusters.getTotal(), equalTo(1));
@@ -756,6 +762,7 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
 
         {
             AsyncSearchResponse finishedResponse = getAsyncSearch(response.getId());
+            assertFalse(finishedResponse.isRunning());
 
             SearchResponse.Clusters clusters = finishedResponse.getSearchResponse().getClusters();
             assertThat(clusters.getTotal(), equalTo(1));
