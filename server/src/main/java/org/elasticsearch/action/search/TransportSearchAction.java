@@ -77,6 +77,8 @@ import org.elasticsearch.transport.TransportRequestOptions;
 import org.elasticsearch.transport.TransportResponseHandler;
 import org.elasticsearch.transport.TransportService;
 
+import java.time.Duration;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collection;
@@ -408,7 +410,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                                 clusterState,
                                 remoteAliasFilters,
                                 ccsClusters,
-                                // new SearchResponse.Clusters(totalClusters, successfulClusters, skippedClusters.get()), //MP TODO: replace with ccsClusters
+                                // new SearchResponse.Clusters(totalClusters, successfulClusters, skippedClusters.get()), //MP TODO: replace
+                                // with ccsClusters
                                 searchContext,
                                 searchPhaseProvider.apply(finalDelegate)
                             );
@@ -676,28 +679,57 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                         searchShardsResponses.put(clusterAlias, searchShardsResponse);
                         /// MP TODO: we need to update the Cluster object with the specific SearchShardResponse info
                         /// MP TODO ** this is just called during the initial SearchShards can-match, right?
-                        /// MP TODO ** so this will have all
-                        /// MP -- start
-//                        SearchResponse.Cluster curr = clusterRef.get(); // MP TODO is null for right now
+                        SearchResponse.Cluster.Status status = SearchResponse.Cluster.Status.RUNNING;
                         Collection<SearchShardsGroup> groups = searchShardsResponse.getGroups();
-                        int total = 0;
                         int skipped = 0;
-                        for (SearchShardsGroup group : groups) {
-                            logger.warn("XXX innerOnResponse shardId: {}//{} :: prefiltered: {} :: skipped: {}",
-                                clusterAlias, group.shardId(), group.preFiltered(), group.skipped());
-                            total++;
-                            if (group.skipped()) {
-                                skipped++;
+                        TimeValue took = null;
+                        if (groups.size() > 0) {
+                            for (SearchShardsGroup group : groups) {
+                                logger.warn(
+                                    "XXX innerOnResponse shardId: {}//{} :: prefiltered: {} :: skipped: {}",
+                                    clusterAlias,
+                                    group.shardId(),
+                                    group.preFiltered(),
+                                    group.skipped()
+                                );
+                                if (group.skipped()) {
+                                    skipped++;
+                                }
+                            }
+                            if (skipped == groups.size()) {
+                                took = new TimeValue(Duration.between(Instant.ofEpochMilli(startTime), Instant.now()).toMillis());
+                                status = SearchResponse.Cluster.Status.SUCCESSFUL;
                             }
                         }
-                        SearchResponse.Cluster.Status status = SearchResponse.Cluster.Status.RUNNING;
-                        if (skipped == total) {
-                            status = SearchResponse.Cluster.Status.SUCCESSFUL;
-                        }
-                        /// TODO: now you would create a new Cluster object setting total and skipped - do asserts that
-                        ///       curr total, successful, skipped and failed should be 0 and status should be RUNNING !!
-                        logger.warn("XXX innerOnResponse for {}; total: {}, skipped: {}, status: {}", clusterAlias, total, skipped, status);
-                        /// MP -- end
+                        logger.warn(
+                            "XXX innerOnResponse for {}; total: {}, skipped: {}, status: {}",
+                            clusterAlias,
+                            groups.size(),
+                            skipped,
+                            status
+                        );
+
+                        boolean swapped;
+                        do {
+                            SearchResponse.Cluster curr = clusterRef.get();
+                            assert curr.getTotalShards() == null && curr.getSkippedShards() == null : "total and skipped shards are set";
+                            assert curr.getStatus() == SearchResponse.Cluster.Status.RUNNING
+                                : "should have RUNNING status after can-match but has " + curr.getStatus();
+                            SearchResponse.Cluster updated = new SearchResponse.Cluster(
+                                curr.getClusterAlias(),
+                                curr.getIndexExpression(),
+                                status,
+                                groups.size(),
+                                skipped,
+                                skipped,
+                                0,
+                                Collections.emptyList(),
+                                took,
+                                false
+                            );
+                            swapped = clusterRef.compareAndSet(curr, updated);
+                            logger.warn("XXX innerOnResponse swapped: {} ;;;; new cluster: {}", updated);
+                        } while (swapped == false);
                     }
 
                     @Override
@@ -1082,8 +1114,12 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             List<SearchShardIterator> list = localShardIterators.stream().toList();
             if (list != null) {
                 for (SearchShardIterator searchShardIterator : list) {
-                    logger.warn("XXX TSA.executeSearch local shard prefiltered: {}, skip: {}, shardId: {}",
-                        searchShardIterator.prefiltered(), searchShardIterator.skip(), searchShardIterator.shardId());
+                    logger.warn(
+                        "XXX TSA.executeSearch local shard prefiltered: {}, skip: {}, shardId: {}",
+                        searchShardIterator.prefiltered(),
+                        searchShardIterator.skip(),
+                        searchShardIterator.shardId()
+                    );
                 }
             }
             /// MP --- end
@@ -1434,7 +1470,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             CountDown countDown,
             AtomicInteger skippedClusters,   /// MP: TODO I think we can remove this once MRT=false uses Cluster objects
             AtomicReference<Exception> exceptions,
-            @Nullable AtomicReference<SearchResponse.Cluster> clusterRef, /// MP TODO: remove @Nullable
+            AtomicReference<SearchResponse.Cluster> clusterRef,
             ActionListener<FinalResponse> originalListener
         ) {
             this.clusterAlias = clusterAlias;
@@ -1456,20 +1492,17 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
 
         abstract void innerOnResponse(Response response);
 
-        /// MP TODO: can this only ever be called once per cluster? What about MRT=false? Can multiple shards call it?
+        // for minimize_roundtrips=false, this is only called during the SearchShardsAction can-match
+        /// MP TODO: need to test against "older" clusters using ClusterSearchShardsAction - need to jimmy the code to test that with 8.10
         @Override
         public final void onFailure(Exception e) {
             ShardSearchFailure f = new ShardSearchFailure(e);
             logger.warn("XXX TSA onFailure for clusterAlias {}: e: {}; f: {}", clusterAlias, e, f);
             if (skipUnavailable) {
-                if (clusterRef != null) {
-                    ccsClusterInfoUpdate(f, clusterRef, skipUnavailable);
-                }
+                ccsClusterInfoUpdate(f, clusterRef, skipUnavailable);
                 skippedClusters.incrementAndGet();  /// MP: TODO ** this is the only place that skippedClusters is incremented
             } else {
-                if (clusterRef != null) {
-                    ccsClusterInfoUpdate(f, clusterRef, skipUnavailable);
-                }
+                ccsClusterInfoUpdate(f, clusterRef, skipUnavailable);
                 Exception exception = e;
                 if (RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY.equals(clusterAlias) == false) {
                     exception = wrapRemoteClusterFailure(clusterAlias, e);

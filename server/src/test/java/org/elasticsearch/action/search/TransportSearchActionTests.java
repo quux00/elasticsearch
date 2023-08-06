@@ -864,6 +864,7 @@ public class TransportSearchActionTests extends ESTestCase {
                 final CountDownLatch latch = new CountDownLatch(1);
                 AtomicReference<Map<String, SearchShardsResponse>> response = new AtomicReference<>();
                 AtomicInteger skippedClusters = new AtomicInteger();
+                SearchResponse.Clusters ccsClusters = new SearchResponse.Clusters(null, remoteIndicesByCluster, false);
                 TransportSearchAction.collectSearchShards(
                     IndicesOptions.lenientExpandOpen(),
                     null,
@@ -873,12 +874,15 @@ public class TransportSearchActionTests extends ESTestCase {
                     null,
                     skippedClusters,
                     remoteIndicesByCluster,
-                    null, /// MP FIXME
+                    ccsClusters,
                     service,
                     new LatchedActionListener<>(ActionTestUtils.assertNoFailureListener(response::set), latch)
                 );
                 awaitLatch(latch, 5, TimeUnit.SECONDS);
                 assertEquals(0, skippedClusters.get());
+                assertEquals(0, ccsClusters.getSkipped());
+                assertEquals(numClusters, ccsClusters.getTotal());
+                assertEquals(0, ccsClusters.getSuccessful());
                 assertNotNull(response.get());
                 Map<String, SearchShardsResponse> map = response.get();
                 assertEquals(numClusters, map.size());
@@ -887,12 +891,17 @@ public class TransportSearchActionTests extends ESTestCase {
                     assertTrue(map.containsKey(clusterAlias));
                     SearchShardsResponse shardsResponse = map.get(clusterAlias);
                     assertThat(shardsResponse.getNodes(), hasSize(1));
+
+                    SearchResponse.Cluster cluster = ccsClusters.getCluster(clusterAlias).get();
+                    assertEquals(0, cluster.getSkippedShards().intValue());
+                    assertEquals(SearchResponse.Cluster.Status.RUNNING, cluster.getStatus());
                 }
             }
             {
                 final CountDownLatch latch = new CountDownLatch(1);
                 AtomicReference<Exception> failure = new AtomicReference<>();
                 AtomicInteger skippedClusters = new AtomicInteger(0);
+                SearchResponse.Clusters ccsClusters = new SearchResponse.Clusters(null, remoteIndicesByCluster, false);
                 TransportSearchAction.collectSearchShards(
                     IndicesOptions.lenientExpandOpen(),
                     "index_not_found",
@@ -902,16 +911,25 @@ public class TransportSearchActionTests extends ESTestCase {
                     null,
                     skippedClusters,
                     remoteIndicesByCluster,
-                    null, /// MP FIXME
+                    ccsClusters,
                     service,
                     new LatchedActionListener<>(ActionListener.wrap(r -> fail("no response expected"), failure::set), latch)
                 );
                 awaitLatch(latch, 5, TimeUnit.SECONDS);
-                assertEquals(0, skippedClusters.get());
+                assertEquals(0, skippedClusters.get());  /// MP TODO: skipped=0 because are all skip_unavailable=false
+                assertEquals(numClusters, ccsClusters.getSkipped());  /// MP: TODO: should really be getFailed() !
+                assertEquals(numClusters, ccsClusters.getTotal());
+                assertEquals(0, ccsClusters.getSuccessful());
                 assertNotNull(failure.get());
                 assertThat(failure.get(), instanceOf(RemoteTransportException.class));
                 RemoteTransportException remoteTransportException = (RemoteTransportException) failure.get();
                 assertEquals(RestStatus.NOT_FOUND, remoteTransportException.status());
+                for (int i = 0; i < numClusters; i++) {
+                    String clusterAlias = "remote" + i;
+                    SearchResponse.Cluster cluster = ccsClusters.getCluster(clusterAlias).get();
+                    assertEquals(SearchResponse.Cluster.Status.FAILED, cluster.getStatus());
+                    assertEquals(1, cluster.getFailures().size());
+                }
             }
 
             int numDisconnectedClusters = randomIntBetween(1, numClusters);
@@ -941,6 +959,7 @@ public class TransportSearchActionTests extends ESTestCase {
                 final CountDownLatch latch = new CountDownLatch(1);
                 AtomicInteger skippedClusters = new AtomicInteger(0);
                 AtomicReference<Exception> failure = new AtomicReference<>();
+                SearchResponse.Clusters ccsClusters = new SearchResponse.Clusters(null, remoteIndicesByCluster, false);
                 TransportSearchAction.collectSearchShards(
                     IndicesOptions.lenientExpandOpen(),
                     null,
@@ -950,16 +969,34 @@ public class TransportSearchActionTests extends ESTestCase {
                     null,
                     skippedClusters,
                     remoteIndicesByCluster,
-                    null, /// MP FIXME
+                    ccsClusters,
                     service,
                     new LatchedActionListener<>(ActionListener.wrap(r -> fail("no response expected"), failure::set), latch)
                 );
                 awaitLatch(latch, 5, TimeUnit.SECONDS);
                 assertEquals(0, skippedClusters.get());
+                assertEquals(numClusters, ccsClusters.getTotal());
+                assertEquals(0, ccsClusters.getSuccessful());
+                assertEquals(numDisconnectedClusters, ccsClusters.getSkipped());
+
                 assertNotNull(failure.get());
                 assertThat(failure.get(), instanceOf(RemoteTransportException.class));
                 assertThat(failure.get().getMessage(), containsString("error while communicating with remote cluster ["));
                 assertThat(failure.get().getCause(), instanceOf(NodeDisconnectedException.class));
+
+                int failedStatusCount = 0;
+                for (int i = 0; i < numClusters; i++) {
+                    String clusterAlias = "remote" + i;
+                    SearchResponse.Cluster cluster = ccsClusters.getCluster(clusterAlias).get();
+                    if (cluster.getStatus() == SearchResponse.Cluster.Status.FAILED) {
+                        failedStatusCount++;
+                        assertEquals(1, cluster.getFailures().size());
+                    } else {
+                        assertEquals(SearchResponse.Cluster.Status.RUNNING, cluster.getStatus());
+                        assertEquals(0, cluster.getFailures().size());
+                    }
+                }
+                assertEquals(numDisconnectedClusters, failedStatusCount);
             }
 
             // setting skip_unavailable to true for all the disconnected clusters will make the request succeed again
@@ -971,6 +1008,7 @@ public class TransportSearchActionTests extends ESTestCase {
                 final CountDownLatch latch = new CountDownLatch(1);
                 AtomicInteger skippedClusters = new AtomicInteger(0);
                 AtomicReference<Map<String, SearchShardsResponse>> response = new AtomicReference<>();
+                SearchResponse.Clusters ccsClusters = new SearchResponse.Clusters(null, remoteIndicesByCluster, false);
                 TransportSearchAction.collectSearchShards(
                     IndicesOptions.lenientExpandOpen(),
                     null,
@@ -980,7 +1018,7 @@ public class TransportSearchActionTests extends ESTestCase {
                     null,
                     skippedClusters,
                     remoteIndicesByCluster,
-                    null, /// MP FIXME
+                    ccsClusters,
                     service,
                     new LatchedActionListener<>(ActionTestUtils.assertNoFailureListener(response::set), latch)
                 );
@@ -988,13 +1026,20 @@ public class TransportSearchActionTests extends ESTestCase {
                 assertNotNull(response.get());
                 Map<String, SearchShardsResponse> map = response.get();
                 assertEquals(numClusters - disconnectedNodesIndices.size(), map.size());
-                assertEquals(skippedClusters.get(), disconnectedNodesIndices.size());
+                assertEquals(disconnectedNodesIndices.size(), skippedClusters.get());
+                assertEquals(numClusters, ccsClusters.getTotal());
+                assertEquals(0, ccsClusters.getSuccessful());
+                assertEquals(disconnectedNodesIndices.size(), ccsClusters.getSkipped());
                 for (int i = 0; i < numClusters; i++) {
                     String clusterAlias = "remote" + i;
+                    SearchResponse.Cluster cluster = ccsClusters.getCluster(clusterAlias).get();
                     if (disconnectedNodesIndices.contains(i)) {
                         assertFalse(map.containsKey(clusterAlias));
+                        assertEquals(SearchResponse.Cluster.Status.SKIPPED, cluster.getStatus());
+                        assertNull(cluster.getTotalShards());
                     } else {
                         assertNotNull(map.get(clusterAlias));
+                        assertEquals(SearchResponse.Cluster.Status.RUNNING, cluster.getStatus());
                     }
                 }
             }
@@ -1017,6 +1062,7 @@ public class TransportSearchActionTests extends ESTestCase {
                 final CountDownLatch latch = new CountDownLatch(1);
                 AtomicInteger skippedClusters = new AtomicInteger(0);
                 AtomicReference<Map<String, SearchShardsResponse>> response = new AtomicReference<>();
+                SearchResponse.Clusters ccsClusters = new SearchResponse.Clusters(null, remoteIndicesByCluster, false);
                 TransportSearchAction.collectSearchShards(
                     IndicesOptions.lenientExpandOpen(),
                     null,
@@ -1026,19 +1072,24 @@ public class TransportSearchActionTests extends ESTestCase {
                     null,
                     skippedClusters,
                     remoteIndicesByCluster,
-                    null, /// MP FIXME
+                    ccsClusters,
                     service,
                     new LatchedActionListener<>(ActionTestUtils.assertNoFailureListener(response::set), latch)
                 );
                 awaitLatch(latch, 5, TimeUnit.SECONDS);
                 assertEquals(0, skippedClusters.get());
+                assertEquals(numClusters, ccsClusters.getTotal());
+                assertEquals(0, ccsClusters.getSkipped());
+                assertEquals(0, ccsClusters.getSuccessful());
                 assertNotNull(response.get());
                 Map<String, SearchShardsResponse> map = response.get();
                 assertEquals(numClusters, map.size());
                 for (int i = 0; i < numClusters; i++) {
                     String clusterAlias = "remote" + i;
+                    SearchResponse.Cluster cluster = ccsClusters.getCluster(clusterAlias).get();
                     assertTrue(map.containsKey(clusterAlias));
                     assertNotNull(map.get(clusterAlias));
+                    assertEquals(SearchResponse.Cluster.Status.RUNNING, cluster.getStatus());
                 }
             });
             assertEquals(0, service.getConnectionManager().size());
