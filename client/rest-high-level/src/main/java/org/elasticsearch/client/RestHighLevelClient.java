@@ -10,6 +10,7 @@ package org.elasticsearch.client;
 
 import org.apache.http.Header;
 import org.apache.http.HttpEntity;
+import org.apache.http.util.EntityUtils;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.ElasticsearchException;
@@ -573,6 +574,13 @@ public class RestHighLevelClient implements Closeable {
             @Override
             public void onSuccess(Response response) {
                 try {
+                    System.err.println("XXX RHLC response: " + response.toString());
+                    if (response.toString().contains("ccs_minimize_roundtrips")) {
+                        System.err.println("XXX RHLC http response: " + response.getHttpResponse());
+                        HttpEntity entity = response.getHttpResponse().getEntity();
+                        String body = EntityUtils.toString(entity, "UTF-8");
+                        System.err.println(body);
+                    }
                     actionListener.onResponse(responseConverter.apply(response));
                 } catch (Exception e) {
                     IOException ioe = new IOException("Unable to parse response body for " + response, e);

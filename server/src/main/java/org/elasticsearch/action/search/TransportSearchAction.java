@@ -397,9 +397,6 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                                     remoteAliasFilters
                                 );
                             }
-                            int localClusters = localIndices == null ? 0 : 1;
-                            int totalClusters = remoteClusterIndices.size() + localClusters;
-                            int successfulClusters = searchShardsResponses.size() + localClusters;
                             executeSearch(
                                 task,
                                 timeProvider,
@@ -410,8 +407,6 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                                 clusterState,
                                 remoteAliasFilters,
                                 ccsClusters,
-                                // new SearchResponse.Clusters(totalClusters, successfulClusters, skippedClusters.get()), //MP TODO: replace
-                                // with ccsClusters
                                 searchContext,
                                 searchPhaseProvider.apply(finalDelegate)
                             );
@@ -1287,6 +1282,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             SearchResponse.Clusters clusters
         ) {
             if (preFilter) {
+                /// MP TODO ** this is where local shards and shards searched via ClusterSearchShards API are checked for can-match
                 return new CanMatchPreFilterSearchPhase(
                     logger,
                     searchTransportService,

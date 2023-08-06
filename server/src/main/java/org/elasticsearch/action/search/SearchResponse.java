@@ -685,6 +685,11 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             return "Clusters{total=" + total + ", successful=" + getSuccessful() + ", skipped=" + getSkipped() + '}';
         }
 
+        public String toExtendedString() {
+            return "Clusters{total=" + total + ", successful=" + getSuccessful() + ", skipped=" + getSkipped() + ", Cluster map: "
+                + clusterInfo + '}';
+        }
+
         /**
          * @return true if any underlying Cluster objects have PARTIAL, SKIPPED, FAILED or RUNNING status.
          */
