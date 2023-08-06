@@ -73,6 +73,7 @@ final class CanMatchPreFilterSearchPhase extends SearchPhase {
     private final Map<String, Float> concreteIndexBoosts;
     private final Map<String, AliasFilter> aliasFilter;
     private final SearchTask task;
+    private final SearchResponse.Clusters clusters;
     private final Executor executor;
     private final boolean requireAtLeastOneMatch;
 
@@ -90,6 +91,7 @@ final class CanMatchPreFilterSearchPhase extends SearchPhase {
         GroupShardsIterator<SearchShardIterator> shardsIts,
         TransportSearchAction.SearchTimeProvider timeProvider,
         SearchTask task,
+        @Nullable SearchResponse.Clusters clusters,  /// MP TODO: Are we sure it's OK for this to be null? non-null when doing CCS MRT=false
         boolean requireAtLeastOneMatch,
         CoordinatorRewriteContextProvider coordinatorRewriteContextProvider,
         ActionListener<GroupShardsIterator<SearchShardIterator>> listener
@@ -105,6 +107,7 @@ final class CanMatchPreFilterSearchPhase extends SearchPhase {
         this.concreteIndexBoosts = concreteIndexBoosts;
         this.aliasFilter = aliasFilter;
         this.task = task;
+        this.clusters = clusters;
         this.requireAtLeastOneMatch = requireAtLeastOneMatch;
         this.coordinatorRewriteContextProvider = coordinatorRewriteContextProvider;
         this.executor = executor;
@@ -149,6 +152,7 @@ final class CanMatchPreFilterSearchPhase extends SearchPhase {
         assert assertSearchCoordinationThread();
         final List<SearchShardIterator> matchedShardLevelRequests = new ArrayList<>();
         for (SearchShardIterator searchShardIterator : shardsIts) {
+            // MP TODO **            searchShardIterator.getClusterAlias();   SSIter knows it's cluster alias
             final CanMatchNodeRequest canMatchNodeRequest = new CanMatchNodeRequest(
                 request,
                 searchShardIterator.getOriginalIndices().indicesOptions(),

@@ -131,6 +131,7 @@ public class TransportSearchShardsAction extends HandledTransportAction<SearchSh
                         shardIts,
                         timeProvider,
                         (SearchTask) task,
+                        null, /// MP TODO: do we need to pass in non-null clusters here? (I think "no")
                         false,
                         searchService.getCoordinatorRewriteContextProvider(timeProvider::absoluteStartMillis),
                         delegate.map(its -> new SearchShardsResponse(toGroups(its), clusterState.nodes().getAllNodes(), aliasFilters))
