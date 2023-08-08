@@ -686,8 +686,15 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         }
 
         public String toExtendedString() {
-            return "Clusters{total=" + total + ", successful=" + getSuccessful() + ", skipped=" + getSkipped() + ", Cluster map: "
-                + clusterInfo + '}';
+            return "Clusters{total="
+                + total
+                + ", successful="
+                + getSuccessful()
+                + ", skipped="
+                + getSkipped()
+                + ", Cluster map: "
+                + clusterInfo
+                + '}';
         }
 
         /**
@@ -914,8 +921,8 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
                 + '\''
                 + ", status="
                 + status
-                + ", failures="
-                + failures
+                + ", failures(size)="
+                + failures.size()
                 + ", totalShards="
                 + totalShards
                 + ", successfulShards="

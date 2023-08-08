@@ -184,4 +184,19 @@ public final class SearchShardIterator implements Comparable<SearchShardIterator
     public int compareTo(SearchShardIterator o) {
         return COMPARATOR.compare(this, o);
     }
+
+    @Override
+    public String toString() {
+        return "SearchShardIterator{"
+            + "skip="
+            + skip
+            + ", prefiltered="
+            + prefiltered
+            + ", shardId="
+            + shardId
+            + ", clusterAlias='"
+            + clusterAlias
+            + '\''
+            + '}';
+    }
 }

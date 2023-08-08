@@ -27,6 +27,7 @@ import org.elasticsearch.common.util.concurrent.AbstractRunnable;
 import org.elasticsearch.common.util.concurrent.AtomicArray;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Releasables;
+import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.search.SearchContextMissingException;
 import org.elasticsearch.search.SearchPhaseResult;
@@ -39,6 +40,7 @@ import org.elasticsearch.search.internal.SearchContext;
 import org.elasticsearch.search.internal.ShardSearchContextId;
 import org.elasticsearch.search.internal.ShardSearchRequest;
 import org.elasticsearch.tasks.TaskCancelledException;
+import org.elasticsearch.transport.RemoteClusterAware;
 import org.elasticsearch.transport.Transport;
 
 import java.util.ArrayDeque;
@@ -51,6 +53,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiFunction;
 import java.util.stream.Collectors;
 
@@ -87,7 +90,7 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
     private final AtomicInteger successfulOps = new AtomicInteger();
     private final AtomicInteger skippedOps = new AtomicInteger();
     private final SearchTimeProvider timeProvider;
-    private final SearchResponse.Clusters clusters;
+    protected final SearchResponse.Clusters clusters;
 
     protected final GroupShardsIterator<SearchShardIterator> toSkipShardsIts;
     protected final GroupShardsIterator<SearchShardIterator> shardsIts;
@@ -121,6 +124,7 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
         SearchResponse.Clusters clusters
     ) {
         super(name);
+        logger.warn("XXX ASAA ctor resultConsumer is: {} // {}", resultConsumer, resultConsumer.getClass());
         final List<SearchShardIterator> toSkipIterators = new ArrayList<>();
         final List<SearchShardIterator> iterators = new ArrayList<>();
         for (final SearchShardIterator iterator : shardsIts) {
@@ -266,6 +270,7 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
     }
 
     void skipShard(SearchShardIterator iterator) {
+        logger.warn("XXX ASAA DEBUG 222 (inc success and skipped here): skipShard for {}", iterator.toString());
         successfulOps.incrementAndGet();
         skippedOps.incrementAndGet();
         assert iterator.skip();
@@ -411,6 +416,7 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
          */
         ShardOperationFailedException[] shardSearchFailures = buildShardFailures();
         if (shardSearchFailures.length == getNumShards()) {
+            logger.warn("XXX ASAA executeNextPhase where all shards failed"); /// MP: TODO not useful for MRT=false as not shard specific
             shardSearchFailures = ExceptionsHelper.groupBy(shardSearchFailures);
             Throwable cause = shardSearchFailures.length == 0
                 ? null
@@ -542,6 +548,7 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
      */
     @Override
     public final void onShardFailure(final int shardIndex, SearchShardTarget shardTarget, Exception e) {
+        logger.warn("XXX ASAA onShardFailure for shardIdx: {}; shardTarget: {}; exc: {}", shardIndex, shardTarget.toString(), e);
         if (TransportActions.isShardNotAvailableException(e)) {
             // Groups shard not available exceptions under a generic exception that returns a SERVICE_UNAVAILABLE(503)
             // temporary error.
@@ -550,6 +557,7 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
         // we don't aggregate shard on failures due to the internal cancellation,
         // but do keep the header counts right
         if ((requestCancelled.get() && isTaskCancelledException(e)) == false) {
+            logger.warn("XXX ASAA onShardFailure for shardIdx: {}; shardTarget: {}; SHARD FAILURES CREATED HERE", shardIndex, shardTarget);
             AtomicArray<ShardSearchFailure> shardFailures = this.shardFailures.get();
             // lazily create shard failures, so we can early build the empty shard failure list in most cases (no failures)
             if (shardFailures == null) { // this is double checked locking but it's fine since SetOnce uses a volatile read internally
@@ -574,6 +582,11 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
 
             if (results.hasResult(shardIndex)) {
                 assert failure == null : "shard failed before but shouldn't: " + failure;
+                logger.warn(
+                    "XXX ASAA onShardFailure for shardIdx: {}; shardTarget: {}; DECREMENTING SUCCESSFUL_OPS COUNTER",
+                    shardIndex,
+                    shardTarget
+                );
                 successfulOps.decrementAndGet(); // if this shard was successful before (initial phase) we have to adjust the counter
             }
         }
@@ -600,6 +613,57 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
     }
 
     private void onShardResultConsumed(Result result, SearchShardIterator shardIt) {
+        logger.warn(
+            "XXX ASAA SUCCESSFUL_OPS INCREMENTED onShardResultConsumed shardIt: {} ; SearchShardTarg: {}",
+            shardIt,
+            result.getSearchShardTarget()
+        );
+        /// MP --- START
+        String clusterAlias = shardIt.getClusterAlias();
+        if (clusterAlias == null) {
+            logger.warn("XXX ASAA YES CLUSTER_ALIAS WAS NULL !!!!!!!!!!!!!!");
+            clusterAlias = RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
+        }
+        AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
+
+        boolean swapped;
+        do {
+            SearchResponse.Cluster curr = clusterRef.get();
+            SearchResponse.Cluster.Status status = curr.getStatus();
+            assert status == SearchResponse.Cluster.Status.RUNNING
+                : "should have RUNNING status after can-match but has " + curr.getStatus();
+
+            TimeValue took = null;
+            int successfulShards = curr.getSuccessfulShards() == null ? 1 : curr.getSuccessfulShards() + 1;
+            if (successfulShards == curr.getTotalShards()) {  /// MP TODO: do we know for sure that total shards is fully completed here?
+                status = SearchResponse.Cluster.Status.SUCCESSFUL;
+                took = new TimeValue(timeProvider.buildTookInMillis());
+            } else {
+                int skippedShards = curr.getSkippedShards() == null ? 0 : curr.getSkippedShards();
+                int failedShards = curr.getFailedShards() == null ? 0 : curr.getFailedShards();
+                if (successfulShards + skippedShards + failedShards == curr.getTotalShards()) {
+                    status = SearchResponse.Cluster.Status.PARTIAL;
+                    took = new TimeValue(timeProvider.buildTookInMillis());
+                }
+            }
+            SearchResponse.Cluster updated = new SearchResponse.Cluster(
+                curr.getClusterAlias(),
+                curr.getIndexExpression(),
+                status,
+                curr.getTotalShards(),
+                successfulShards,
+                curr.getSkippedShards(),
+                curr.getFailedShards(),
+                curr.getFailures(),
+                took,
+                false  /// MP TODO: need to deal with timed_out in MRT=false - how do that?
+            );
+            swapped = clusterRef.compareAndSet(curr, updated);
+            logger.warn("XXX CCC ASAA DEBUG 44 onShardResultConsumed swapped: {} ;; new cluster: {}", updated);
+        } while (swapped == false);
+
+        /// MP --- END
+
         successfulOps.incrementAndGet();
         // clean a previous error on this shard group (note, this code will be serialized on the same shardIndex value level
         // so its ok concurrency wise to miss potentially the shard failures being created because of another failure
@@ -673,6 +737,7 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
         }
     }
 
+    /// MP TODO: FOUND IT - this is where the SearchResponse is finally created!!
     private SearchResponse buildSearchResponse(
         InternalSearchResponse internalSearchResponse,
         ShardSearchFailure[] failures,

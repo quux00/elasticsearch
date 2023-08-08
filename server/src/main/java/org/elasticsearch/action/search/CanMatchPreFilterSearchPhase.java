@@ -40,6 +40,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.Executor;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.function.BiFunction;
 import java.util.stream.Collectors;
@@ -94,7 +95,7 @@ final class CanMatchPreFilterSearchPhase extends SearchPhase {
         @Nullable SearchResponse.Clusters clusters,  /// MP TODO: Are we sure it's OK for this to be null? non-null when doing CCS MRT=false
         boolean requireAtLeastOneMatch,
         CoordinatorRewriteContextProvider coordinatorRewriteContextProvider,
-        ActionListener<GroupShardsIterator<SearchShardIterator>> listener
+        ActionListener<GroupShardsIterator<SearchShardIterator>> listener  /// MP TODO: what is this listener?
     ) {
         super("can_match");
         this.logger = logger;
@@ -148,11 +149,13 @@ final class CanMatchPreFilterSearchPhase extends SearchPhase {
     // tries to pre-filter shards based on information that's available to the coordinator
     // without having to reach out to the actual shards
     private void runCoordinatorRewritePhase() {
+        logger.warn("XXX CCC runCoordinatorRewritePhase");
         // TODO: the index filter (i.e, `_index:patten`) should be prefiltered on the coordinator
         assert assertSearchCoordinationThread();
         final List<SearchShardIterator> matchedShardLevelRequests = new ArrayList<>();
         for (SearchShardIterator searchShardIterator : shardsIts) {
-            // MP TODO **            searchShardIterator.getClusterAlias();   SSIter knows it's cluster alias
+            logger.warn("XXX CCC BEFORE LOCAL-CAN-MATCH runCoordinatorRewritePhase shardIter {}", searchShardIterator.toString());
+            // MP TODO ** searchShardIterator.getClusterAlias(); SSIter knows it's cluster alias
             final CanMatchNodeRequest canMatchNodeRequest = new CanMatchNodeRequest(
                 request,
                 searchShardIterator.getOriginalIndices().indicesOptions(),
@@ -180,8 +183,45 @@ final class CanMatchPreFilterSearchPhase extends SearchPhase {
                 }
             }
             if (canMatch) {
+                logger.warn(
+                    "XXX CCC CanMatchPFSearchPhase DEBUG 1 canMatch=true for {}. Adding SSIter to matchedShardLevelRequests.",
+                    searchShardIterator
+                );
                 matchedShardLevelRequests.add(searchShardIterator);
             } else {
+                logger.warn(
+                    "XXX CCC CanMatchPFSearchPhase DEBUG 2 canMatch=false for {}. Should I be updating the Cluster here?",
+                    searchShardIterator
+                );
+                /// MP --- START new code legit
+                AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(searchShardIterator.getClusterAlias());
+                boolean swapped;
+                /// MP TODO I think we have to use RUNNING here, but then how/when check whether total == skipped?
+                /// MP TODO Options: 1) in the QueryPhase when see all are skipped (will it get there?)
+                /// MP TODO Options: 2) whilst iterating over this set of shard iters, have to keep counts for each
+                /// MP TODO Options: cluster and then at the end check if skipped=total and if yes, set to SKIPPED?
+                SearchResponse.Cluster.Status status = SearchResponse.Cluster.Status.RUNNING;
+                do {
+                    SearchResponse.Cluster curr = clusterRef.get();
+                    assert curr.getStatus() == SearchResponse.Cluster.Status.RUNNING
+                        : "should have RUNNING status after can-match but has " + curr.getStatus();
+                    SearchResponse.Cluster updated = new SearchResponse.Cluster(
+                        curr.getClusterAlias(),
+                        curr.getIndexExpression(),
+                        status,
+                        curr.getTotalShards() + 1,
+                        curr.getSuccessfulShards() + 1,
+                        curr.getSkippedShards() + 1,
+                        curr.getFailedShards(),
+                        curr.getFailures(),
+                        null,
+                        false
+                    );
+                    swapped = clusterRef.compareAndSet(curr, updated);
+                    logger.warn("XXX CCC CanMatchPFSearchPhase DEBUG 2 canMatch=false swapped: {} ;;;; new cluster: {}", updated);
+                } while (swapped == false);
+
+                /// MP --- END new code legit
                 CanMatchShardResponse result = new CanMatchShardResponse(canMatch, null);
                 result.setShardIndex(request.shardRequestIndex());
                 results.consumeResult(result, () -> {});
@@ -278,6 +318,8 @@ final class CanMatchPreFilterSearchPhase extends SearchPhase {
                                 CanMatchNodeResponse.ResponseOrFailure response = canMatchNodeResponse.getResponses().get(i);
                                 if (response.getResponse() != null) {
                                     CanMatchShardResponse shardResponse = response.getResponse();
+                                    // logger.warn("XXX CCC DEBUG 77 Round.onResponse shardResponse shardIdx: {} ; canMatch: {}",
+                                    // shardResponse.getShardIndex(), shardResponse.canMatch());
                                     shardResponse.setShardIndex(shardLevelRequests.get(i).getShardRequestIndex());
                                     onOperation(shardResponse.getShardIndex(), shardResponse);
                                 } else {
@@ -290,12 +332,14 @@ final class CanMatchPreFilterSearchPhase extends SearchPhase {
 
                         @Override
                         public void onFailure(Exception e) {
+                            logger.warn("XXX CCC DEBUG 78 Round.onFailure exc: {}", e);
                             for (CanMatchNodeRequest.Shard shard : shardLevelRequests) {
                                 onOperationFailed(shard.getShardRequestIndex(), e);
                             }
                         }
                     });
                 } catch (Exception e) {
+                    logger.warn("XXX CCC DEBUG 70 Round.catch exc: {}", e);
                     for (CanMatchNodeRequest.Shard shard : shardLevelRequests) {
                         onOperationFailed(shard.getShardRequestIndex(), e);
                     }
@@ -321,6 +365,7 @@ final class CanMatchPreFilterSearchPhase extends SearchPhase {
         }
 
         private void finishRound() {
+            logger.warn("XXX CCC Round finishRound");
             List<SearchShardIterator> remainingShards = new ArrayList<>();
             for (SearchShardIterator ssi : shards) {
                 int shardIndex = shardItIndexMap.get(ssi);
@@ -375,6 +420,12 @@ final class CanMatchPreFilterSearchPhase extends SearchPhase {
     }
 
     private void finishPhase() {
+        logger.warn(
+            "XXX CCC Round.finishPhase - this is where we could update all Cluster objs or possibly in the listener callback below"
+        );
+        for (SearchShardIterator shardsIt : shardsIts) {
+            logger.warn("XXX CCC finishPhase - shardsIter: {}", shardsIt);
+        }
         listener.onResponse(getIterator(results, shardsIts));
     }
 

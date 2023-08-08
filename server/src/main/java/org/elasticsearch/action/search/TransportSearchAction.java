@@ -723,7 +723,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                                 false
                             );
                             swapped = clusterRef.compareAndSet(curr, updated);
-                            logger.warn("XXX innerOnResponse swapped: {} ;;;; new cluster: {}", updated);
+                            logger.warn("XXX innerOnResponse swapped: {} ;;;; new cluster: {}", swapped, updated);
                         } while (swapped == false);
                     }
 
@@ -822,6 +822,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
      * Creates a new Cluster object using the {@link ShardSearchFailure} info and skip_unavailable
      * flag to set Status. The new Cluster object is swapped into the clusterRef {@link AtomicReference}.
      */
+    /// MP TODO: add unit tests
     static void ccsClusterInfoUpdate(
         ShardSearchFailure failure,
         AtomicReference<SearchResponse.Cluster> clusterRef,
@@ -862,7 +863,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
      * @param searchResponse SearchResponse from cluster sub-search
      * @param clusterRef AtomicReference of the Cluster object to be updated
      */
-    private static void ccsClusterInfoUpdate(
+    /// MP TODO: add unit tests
+    static void ccsClusterInfoUpdate(
         SearchResponse searchResponse,
         AtomicReference<SearchResponse.Cluster> clusterRef,
         boolean skipUnavailable
@@ -907,6 +909,69 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             );
             swapped = clusterRef.compareAndSet(orig, updated);
         } while (swapped == false);
+    }
+
+    /**
+     * TODO: DOCUMENT ME
+     * @param clusters
+     * @param iters
+     * @param timeProvider
+     */
+    /// MP TODO: add unit test for this after deciding if we are going to keep it
+    static void ccsClusterInfoUpdate(
+        SearchResponse.Clusters clusters,
+        GroupShardsIterator<SearchShardIterator> iters,
+        SearchTimeProvider timeProvider
+    ) {
+        // convert to mapping the SearchShardIterators by cluster rather than by index
+        Map<String, List<SearchShardIterator>> byCluster = new HashMap<>();
+        for (SearchShardIterator iter : iters) {
+            byCluster.computeIfAbsent(iter.getClusterAlias(), k -> new ArrayList<>()).add(iter);
+        }
+
+        logger.warn("XXX TSA DEBUG 333 ccsClusterInfoUpdate with GroupShardsIterator: keys: {}", byCluster.keySet());
+        logger.warn("XXX TSA DEBUG 334 ccsClusterInfoUpdate: values: {}", byCluster.values());
+
+        for (Map.Entry<String, List<SearchShardIterator>> entry : byCluster.entrySet()) {
+            String clusterAlias = entry.getKey() == null ? RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY : entry.getKey();
+            List<SearchShardIterator> clusterIters = entry.getValue();
+
+            int total = clusterIters.size();
+            // prefiltered=false means that can-match was not done as part of the SearchShards API pre-phase
+            // so we need to now look at the post-SearchShards-phase can-match outcomes only, as the
+            // SearchShards API candidates already had their Cluster state pertaining to skipped shards updated in CCSActionListener
+            int skipped = (int) clusterIters.stream().filter(iter -> iter.prefiltered() == false && iter.skip()).count();
+            if (skipped > 0) {
+                TimeValue took = null;
+                SearchResponse.Cluster.Status status = SearchResponse.Cluster.Status.RUNNING;
+                if (skipped == clusterIters.size()) {
+                    status = SearchResponse.Cluster.Status.SUCCESSFUL; // all shards were skipped due to can-match, so a successful search
+                    took = new TimeValue(timeProvider.buildTookInMillis());  /// MP TODO: is this right?
+                }
+                AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
+                boolean swapped;
+                do {
+                    SearchResponse.Cluster curr = clusterRef.get();
+                    assert curr.getTotalShards() == null && curr.getSkippedShards() == null : "total and skipped shards are set";
+                    assert curr.getStatus() == SearchResponse.Cluster.Status.RUNNING
+                        : "should have RUNNING status after can-match but has " + curr.getStatus();
+                    SearchResponse.Cluster updated = new SearchResponse.Cluster(
+                        curr.getClusterAlias(),
+                        curr.getIndexExpression(),
+                        status,
+                        total,
+                        skipped,
+                        skipped,
+                        0,
+                        Collections.emptyList(),
+                        took,
+                        false
+                    );
+                    swapped = clusterRef.compareAndSet(curr, updated);
+                    logger.warn("XXX TSA DEBUG 334 ccsClusterInfoUpdate swapped: {} ;;;; new cluster: {}", swapped, updated);
+                } while (swapped == false);
+            }
+        }
     }
 
     void executeLocalSearch(
@@ -1297,7 +1362,13 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     clusters,
                     true,
                     searchService.getCoordinatorRewriteContextProvider(timeProvider::absoluteStartMillis),
-                    listener.delegateFailureAndWrap((l, iters) -> {
+                    listener.delegateFailureAndWrap((ActionListener<SearchResponse> l, GroupShardsIterator<SearchShardIterator> iters) -> {
+                        logger.warn("XXX TSA DEBUG 888 callback after local-can-match");
+                        for (SearchShardIterator iter : iters) {
+                            logger.warn("    XXX TSA DEBUG 889 callback after local-can-match: shardIter: {}", iter);
+                        }
+                        // update Cluster object state with new can-match skipped shard info
+                        ccsClusterInfoUpdate(clusters, iters, timeProvider);
                         SearchPhase action = newSearchPhase(
                             task,
                             searchRequest,
@@ -1316,6 +1387,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     })
                 );
             } else {
+                /// MP TODO maybe the final Clusters update should go here? NOTE: this is the ONLY place it is called, so good candidate!
                 final QueryPhaseResultConsumer queryResultConsumer = searchPhaseController.newSearchPhaseResults(
                     executor,
                     circuitBreaker,

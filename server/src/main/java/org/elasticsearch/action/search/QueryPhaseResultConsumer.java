@@ -91,6 +91,9 @@ public class QueryPhaseResultConsumer extends ArraySearchPhaseResults<SearchPhas
         this.performFinalReduce = request.isFinalReduce();
         this.onPartialMergeFailure = onPartialMergeFailure;
 
+        logger.warn("XXX QQQ QueryPhaseResultConsumer ctor: progressListener: {}", progressListener.getClass());
+        logger.warn("XXX QQQ QueryPhaseResultConsumer ctor: performFinalReduce: {}", performFinalReduce);
+
         SearchSourceBuilder source = request.source();
         int size = source == null || source.size() == -1 ? SearchService.DEFAULT_SIZE : source.size();
         int from = source == null || source.from() == -1 ? SearchService.DEFAULT_FROM : source.from();
@@ -111,6 +114,18 @@ public class QueryPhaseResultConsumer extends ArraySearchPhaseResults<SearchPhas
 
     @Override
     public void consumeResult(SearchPhaseResult result, Runnable next) {
+        logger.warn(
+            "XXX QQQ QueryPhaseResultConsumer consumeResult: SearchShardTarget {}; thread id: {}",
+            result.getSearchShardTarget(),
+            Thread.currentThread().getId()
+        );
+        logger.warn(
+            "XXX QQQ QueryPhaseResultConsumer consumeResult: queryResult {}; fetchResult: {}, thread id: {}",
+            result.queryResult(),
+            result.fetchResult(),
+            Thread.currentThread().getId()
+        );
+
         super.consumeResult(result, () -> {});
         QuerySearchResult querySearchResult = result.queryResult();
         progressListener.notifyQueryResult(querySearchResult.getShardIndex());

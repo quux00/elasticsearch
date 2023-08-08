@@ -251,13 +251,15 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
         SearchListenerPlugin.blockQueryPhase();
 
         SubmitAsyncSearchRequest request = new SubmitAsyncSearchRequest(localIndex, REMOTE_CLUSTER + ":" + remoteIndex);
-        boolean ccsMinimizeRoundTrips = false;    /// MP TODO: change to false when ready and then randomBoolean
+        boolean ccsMinimizeRoundTrips = randomBoolean();
+        System.err.println("ccsMinimizeRoundTrips: " + ccsMinimizeRoundTrips);
         request.setCcsMinimizeRoundtrips(ccsMinimizeRoundTrips);
         request.setWaitForCompletionTimeout(TimeValue.timeValueMillis(1));
         request.setKeepOnCompletion(true);
         RangeQueryBuilder rangeQueryBuilder = new RangeQueryBuilder("@timestamp")
-//                .from(EARLIEST_TIMESTAMP + 1).to(LATEST_TIMESTAMP);
-                .from(EARLIEST_TIMESTAMP - 2000).to(EARLIEST_TIMESTAMP - 1000);
+            // .from(EARLIEST_TIMESTAMP + 1).to(LATEST_TIMESTAMP);
+            .from(EARLIEST_TIMESTAMP - 2000)
+            .to(EARLIEST_TIMESTAMP - 1000);
         request.getSearchRequest().source(new SearchSourceBuilder().query(rangeQueryBuilder).size(1000));
 
         AsyncSearchResponse response = submitAsyncSearch(request);
@@ -287,6 +289,7 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
             assertFalse(statusResponse.isRunning());
             assertNotNull(statusResponse.getCompletionStatus());
         });
+        Thread.sleep(111);  /// MP FIXME remove
 
         {
             AsyncSearchResponse finishedResponse = getAsyncSearch(response.getId());
@@ -300,63 +303,69 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
             assertThat(clusters.getSuccessful(), equalTo(2));
             assertThat(clusters.getSkipped(), equalTo(0));
 
-//            SearchResponse.Cluster localClusterSearchInfo = clusters.getCluster(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY).get();
-//            assertNotNull(localClusterSearchInfo);
-//            assertThat(localClusterSearchInfo.getStatus(), equalTo(SearchResponse.Cluster.Status.SUCCESSFUL));
-//            assertThat(localClusterSearchInfo.getTotalShards(), equalTo(localNumShards));
-//            assertThat(localClusterSearchInfo.getSuccessfulShards(), equalTo(localNumShards));
-//            // artifact of the way can-match skipping is done during local search vs. SearchShards API
-//            // used during ccs_minimize_roundtrips=false
-//            int expectedSkipped = ccsMinimizeRoundTrips ? localNumShards - 1 : localNumShards;
-//            assertThat(localClusterSearchInfo.getSkippedShards(), equalTo(expectedSkipped)); // all should be skipped
-//            assertThat(localClusterSearchInfo.getFailedShards(), equalTo(0));
-//            assertThat(localClusterSearchInfo.getFailures().size(), equalTo(0));
-//            assertThat(localClusterSearchInfo.getTook().millis(), greaterThan(0L));
-//
-//            SearchResponse.Cluster remoteClusterSearchInfo = clusters.getCluster(REMOTE_CLUSTER).get();
-//            assertNotNull(remoteClusterSearchInfo);
-//            assertThat(remoteClusterSearchInfo.getStatus(), equalTo(SearchResponse.Cluster.Status.SUCCESSFUL));
-//            assertThat(remoteClusterSearchInfo.getTotalShards(), equalTo(remoteNumShards));
-//            assertThat(remoteClusterSearchInfo.getSuccessfulShards(), equalTo(remoteNumShards));
+            SearchResponse.Cluster localClusterSearchInfo = clusters.getCluster(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY).get();
+            assertNotNull(localClusterSearchInfo);
+            SearchResponse.Cluster remoteClusterSearchInfo = clusters.getCluster(REMOTE_CLUSTER).get();
+            assertNotNull(remoteClusterSearchInfo);
+
+            System.err.println("local :" + localClusterSearchInfo);
+            System.err.println("remote:" + remoteClusterSearchInfo);
+
+            assertThat(localClusterSearchInfo.getStatus(), equalTo(SearchResponse.Cluster.Status.SUCCESSFUL));
+            assertThat(localClusterSearchInfo.getTotalShards(), equalTo(localNumShards));
+            assertThat(localClusterSearchInfo.getSuccessfulShards(), equalTo(localNumShards));
+            // artifact of the way can-match skipping is done during local search vs. SearchShards API
+            // used during ccs_minimize_roundtrips=false
+            int expectedSkipped = localNumShards - 1;   /// MP TODO: Hmm, is this always true?
+            assertThat(localClusterSearchInfo.getSkippedShards(), equalTo(expectedSkipped));
+            assertThat(localClusterSearchInfo.getFailedShards(), equalTo(0));
+            assertThat(localClusterSearchInfo.getFailures().size(), equalTo(0));
+            assertThat(localClusterSearchInfo.getTook().millis(), greaterThan(0L));
+
+            assertThat(remoteClusterSearchInfo.getStatus(), equalTo(SearchResponse.Cluster.Status.SUCCESSFUL));
+            assertThat(remoteClusterSearchInfo.getTotalShards(), equalTo(remoteNumShards));
+            assertThat(remoteClusterSearchInfo.getSuccessfulShards(), equalTo(remoteNumShards));
 //            expectedSkipped = ccsMinimizeRoundTrips ? remoteNumShards - 1 : remoteNumShards;
-//            assertThat(remoteClusterSearchInfo.getSkippedShards(), equalTo(expectedSkipped)); // all should be skipped
-//            assertThat(remoteClusterSearchInfo.getFailedShards(), equalTo(0));
-//            assertThat(remoteClusterSearchInfo.getFailures().size(), equalTo(0));
-//            assertThat(remoteClusterSearchInfo.getTook().millis(), greaterThan(0L));
+            expectedSkipped = remoteNumShards;  /// MP TODO: My guess is that this will fail some of the time (line 312 above will fail first)
+            System.err.println(remoteClusterSearchInfo);
+            assertThat(remoteClusterSearchInfo.getSkippedShards(), equalTo(expectedSkipped)); // all should be skipped
+            assertThat(remoteClusterSearchInfo.getFailedShards(), equalTo(0));
+            assertThat(remoteClusterSearchInfo.getFailures().size(), equalTo(0));
+            assertThat(remoteClusterSearchInfo.getTook().millis(), greaterThan(0L));
         }
 
-//        // check that the async_search/status response includes the same cluster details
-//        {
-//            AsyncStatusResponse statusResponse = getAsyncStatus(response.getId());
-//
-//            SearchResponse.Clusters clusters = statusResponse.getClusters();
-//            assertFalse("search cluster results should NOT be marked as partial", clusters.hasPartialResults());
-//            assertThat(clusters.getTotal(), equalTo(2));
-//            assertThat(clusters.getSuccessful(), equalTo(2));
-//            assertThat(clusters.getSkipped(), equalTo(0));
-//
-//            SearchResponse.Cluster localClusterSearchInfo = clusters.getCluster(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY).get();
-//            assertNotNull(localClusterSearchInfo);
-//            assertThat(localClusterSearchInfo.getStatus(), equalTo(SearchResponse.Cluster.Status.SUCCESSFUL));
-//            assertThat(localClusterSearchInfo.getTotalShards(), equalTo(localNumShards));
-//            assertThat(localClusterSearchInfo.getSuccessfulShards(), equalTo(localNumShards));
-//            int expectedSkipped = ccsMinimizeRoundTrips ? localNumShards - 1 : localNumShards;
-//            assertThat(localClusterSearchInfo.getSkippedShards(), equalTo(expectedSkipped));
-//            assertThat(localClusterSearchInfo.getFailedShards(), equalTo(0));
-//            assertThat(localClusterSearchInfo.getFailures().size(), equalTo(0));
-//            assertThat(localClusterSearchInfo.getTook().millis(), greaterThan(0L));
-//
-//            SearchResponse.Cluster remoteClusterSearchInfo = clusters.getCluster(REMOTE_CLUSTER).get();
-//            assertNotNull(remoteClusterSearchInfo);
-//            assertThat(remoteClusterSearchInfo.getStatus(), equalTo(SearchResponse.Cluster.Status.SUCCESSFUL));
-//            assertThat(remoteClusterSearchInfo.getTotalShards(), equalTo(remoteNumShards));
-//            assertThat(remoteClusterSearchInfo.getSuccessfulShards(), equalTo(remoteNumShards));
-//            expectedSkipped = ccsMinimizeRoundTrips ? remoteNumShards - 1 : remoteNumShards;
-//            assertThat(remoteClusterSearchInfo.getSkippedShards(), equalTo(expectedSkipped));
-//            assertThat(remoteClusterSearchInfo.getFailedShards(), equalTo(0));
-//            assertThat(remoteClusterSearchInfo.getFailures().size(), equalTo(0));
-//            assertThat(remoteClusterSearchInfo.getTook().millis(), greaterThan(0L));
-//        }
+        // check that the async_search/status response includes the same cluster details
+        {
+            AsyncStatusResponse statusResponse = getAsyncStatus(response.getId());
+
+            SearchResponse.Clusters clusters = statusResponse.getClusters();
+            assertFalse("search cluster results should NOT be marked as partial", clusters.hasPartialResults());
+            assertThat(clusters.getTotal(), equalTo(2));
+            assertThat(clusters.getSuccessful(), equalTo(2));
+            assertThat(clusters.getSkipped(), equalTo(0));
+
+            SearchResponse.Cluster localClusterSearchInfo = clusters.getCluster(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY).get();
+            assertNotNull(localClusterSearchInfo);
+            assertThat(localClusterSearchInfo.getStatus(), equalTo(SearchResponse.Cluster.Status.SUCCESSFUL));
+            assertThat(localClusterSearchInfo.getTotalShards(), equalTo(localNumShards));
+            assertThat(localClusterSearchInfo.getSuccessfulShards(), equalTo(localNumShards));
+            int expectedSkipped = localNumShards - 1;
+            assertThat(localClusterSearchInfo.getSkippedShards(), equalTo(expectedSkipped));
+            assertThat(localClusterSearchInfo.getFailedShards(), equalTo(0));
+            assertThat(localClusterSearchInfo.getFailures().size(), equalTo(0));
+            assertThat(localClusterSearchInfo.getTook().millis(), greaterThan(0L));
+
+            SearchResponse.Cluster remoteClusterSearchInfo = clusters.getCluster(REMOTE_CLUSTER).get();
+            assertNotNull(remoteClusterSearchInfo);
+            assertThat(remoteClusterSearchInfo.getStatus(), equalTo(SearchResponse.Cluster.Status.SUCCESSFUL));
+            assertThat(remoteClusterSearchInfo.getTotalShards(), equalTo(remoteNumShards));
+            assertThat(remoteClusterSearchInfo.getSuccessfulShards(), equalTo(remoteNumShards));
+            expectedSkipped = remoteNumShards;
+            assertThat(remoteClusterSearchInfo.getSkippedShards(), equalTo(expectedSkipped));
+            assertThat(remoteClusterSearchInfo.getFailedShards(), equalTo(0));
+            assertThat(remoteClusterSearchInfo.getFailures().size(), equalTo(0));
+            assertThat(remoteClusterSearchInfo.getTook().millis(), greaterThan(0L));
+        }
     }
 
     public void testClusterDetailsAfterCCSWithFailuresOnAllShards() throws Exception {
@@ -1296,8 +1305,13 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
         String localIndex = "demo";
         int numShardsLocal = randomIntBetween(3, 6);
         Settings localSettings = indexSettings(numShardsLocal, 0).build();
-        assertAcked(client(LOCAL_CLUSTER).admin().indices().prepareCreate(localIndex).setSettings(localSettings)
-                .setMapping("@timestamp", "type=date", "f", "type=text"));
+        assertAcked(
+            client(LOCAL_CLUSTER).admin()
+                .indices()
+                .prepareCreate(localIndex)
+                .setSettings(localSettings)
+                .setMapping("@timestamp", "type=date", "f", "type=text")
+        );
         indexDocs(client(LOCAL_CLUSTER), localIndex);
 
         String remoteIndex = "prod";
@@ -1341,7 +1355,7 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
     }
 
     private static long EARLIEST_TIMESTAMP = 1691348810000L;
-    private static long LATEST_TIMESTAMP   = 1691348820000L;
+    private static long LATEST_TIMESTAMP = 1691348820000L;
 
     private int indexDocs(Client client, String index) {
         int numDocs = between(50, 100);
