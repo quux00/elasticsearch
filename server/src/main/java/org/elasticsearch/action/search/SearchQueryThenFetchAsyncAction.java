@@ -122,45 +122,51 @@ class SearchQueryThenFetchAsyncAction extends AbstractSearchAsyncAction<SearchPh
         XXX SQTFAA onShardGroupFailure: idx: 3; clusterAlias: remote1, exc: ... search[phase/query]] disconnected
         XXX SQTFAA onShardGroupFailure: idx: 6; clusterAlias: remote1, exc: ... search[phase/query]] disconnected
          */
-        String clusterAlias = shardTarget.getClusterAlias();
-        logger.warn(
-            "XXX SQTFAA onShardGroupFailure: idx: {}; clusterAlias: {}, shardId: {} exc: {}",
-            shardIndex,
-            clusterAlias,
-            shardTarget.getShardId(),
-            exc.getMessage()
-        );
-        if (clusterAlias == null) {
-            clusterAlias = RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
-        }
-        AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
-        boolean swapped;
-        do {
-            SearchResponse.Cluster curr = clusterRef.get();
-            SearchResponse.Cluster.Status status = SearchResponse.Cluster.Status.RUNNING;
-            int numFailedShards = curr.getFailedShards() == null ? 1 : curr.getFailedShards() + 1;
-            if (curr.getTotalShards() != null && curr.getTotalShards() == numFailedShards) {
-                status = SearchResponse.Cluster.Status.FAILED;
-            }
-
-            List<ShardSearchFailure> failures = new ArrayList<ShardSearchFailure>();
-            curr.getFailures().forEach(failures::add);
-            failures.add(new ShardSearchFailure(exc, shardTarget));
-            SearchResponse.Cluster updated = new SearchResponse.Cluster(
-                curr.getClusterAlias(),
-                curr.getIndexExpression(),
-                status,
-                curr.getTotalShards(),
-                curr.getSuccessfulShards(),
-                curr.getSkippedShards(),
-                numFailedShards,
-                failures,
-                null,
-                false
+        if (clusters.hasClusterObjects() && clusters.isCcsMinimizeRoundtrips() == false) {
+            String clusterAlias = shardTarget.getClusterAlias();
+            logger.warn(
+                "XXX SQTFAA onShardGroupFailure: idx: {}; clusterAlias: {}, shardId: {} exc: {}",
+                shardIndex,
+                clusterAlias,
+                shardTarget.getShardId(),
+                exc.getMessage()
             );
-            swapped = clusterRef.compareAndSet(curr, updated);
-            logger.warn("XXX SQTFAA onShardGroupFailure swapped: {} ;;;; new cluster: {}", swapped, updated);
-        } while (swapped == false);
+            if (clusterAlias == null) {
+                clusterAlias = RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
+            }
+            AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
+            boolean swapped;
+            do {
+                SearchResponse.Cluster curr = clusterRef.get();
+                SearchResponse.Cluster.Status status = SearchResponse.Cluster.Status.RUNNING;
+                int numFailedShards = curr.getFailedShards() == null ? 1 : curr.getFailedShards() + 1;
+
+                if (curr.getTotalShards() != null && curr.getTotalShards() == numFailedShards) { // TODO: can't do this unless can set num shards up front
+                    logger.warn("XXX SQTFAA onShardGroupFailure SETTING FAILED status bcs total=failed !");
+                    /// MP FIXME: set as SKIPPED if skipUnavailable=true !!! but need skipUnavailable flag - so put into Cluster object?
+                    status = SearchResponse.Cluster.Status.FAILED;
+                }
+
+
+                List<ShardSearchFailure> failures = new ArrayList<ShardSearchFailure>();
+                curr.getFailures().forEach(failures::add);
+                failures.add(new ShardSearchFailure(exc, shardTarget));
+                SearchResponse.Cluster updated = new SearchResponse.Cluster(
+                    curr.getClusterAlias(),
+                    curr.getIndexExpression(),
+                    status,
+                    curr.getTotalShards(),
+                    curr.getSuccessfulShards(),
+                    curr.getSkippedShards(),
+                    numFailedShards,
+                    failures,
+                    null,
+                    false
+                );
+                swapped = clusterRef.compareAndSet(curr, updated);
+                logger.warn("XXX SQTFAA onShardGroupFailure swapped: {} ;;;; new cluster: {}", swapped, updated);
+            } while (swapped == false);
+        }
         /// MP --- END
 
         progressListener.notifyQueryFailure(shardIndex, shardTarget, exc);

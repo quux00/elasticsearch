@@ -613,54 +613,58 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
     }
 
     private void onShardResultConsumed(Result result, SearchShardIterator shardIt) {
+        /// MP: TODO: if you throw an error from here you will invoke the "DECREMENTING SUCCESSFUL_OPS COUNTER" code
         logger.warn(
             "XXX ASAA SUCCESSFUL_OPS INCREMENTED onShardResultConsumed shardIt: {} ; SearchShardTarg: {}",
             shardIt,
             result.getSearchShardTarget()
         );
         /// MP --- START
-        String clusterAlias = shardIt.getClusterAlias();
-        if (clusterAlias == null) {
-            logger.warn("XXX ASAA YES CLUSTER_ALIAS WAS NULL !!!!!!!!!!!!!!");
-            clusterAlias = RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
-        }
-        AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
-
-        boolean swapped;
-        do {
-            SearchResponse.Cluster curr = clusterRef.get();
-            SearchResponse.Cluster.Status status = curr.getStatus();
-            assert status == SearchResponse.Cluster.Status.RUNNING
-                : "should have RUNNING status after can-match but has " + curr.getStatus();
-
-            TimeValue took = null;
-            int successfulShards = curr.getSuccessfulShards() == null ? 1 : curr.getSuccessfulShards() + 1;
-            if (successfulShards == curr.getTotalShards()) {  /// MP TODO: do we know for sure that total shards is fully completed here?
-                status = SearchResponse.Cluster.Status.SUCCESSFUL;
-                took = new TimeValue(timeProvider.buildTookInMillis());
-            } else {
-                int skippedShards = curr.getSkippedShards() == null ? 0 : curr.getSkippedShards();
-                int failedShards = curr.getFailedShards() == null ? 0 : curr.getFailedShards();
-                if (successfulShards + skippedShards + failedShards == curr.getTotalShards()) {
-                    status = SearchResponse.Cluster.Status.PARTIAL;
-                    took = new TimeValue(timeProvider.buildTookInMillis());
-                }
+        if (clusters.hasClusterObjects() && clusters.isCcsMinimizeRoundtrips() == false) {  // guards against local-only searches
+            String clusterAlias = shardIt.getClusterAlias();
+            if (clusterAlias == null) {
+                logger.warn("XXX ASAA YES CLUSTER_ALIAS WAS NULL !!!!!!!!!!!!!!");
+                clusterAlias = RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
             }
-            SearchResponse.Cluster updated = new SearchResponse.Cluster(
-                curr.getClusterAlias(),
-                curr.getIndexExpression(),
-                status,
-                curr.getTotalShards(),
-                successfulShards,
-                curr.getSkippedShards(),
-                curr.getFailedShards(),
-                curr.getFailures(),
-                took,
-                false  /// MP TODO: need to deal with timed_out in MRT=false - how do that?
-            );
-            swapped = clusterRef.compareAndSet(curr, updated);
-            logger.warn("XXX CCC ASAA DEBUG 44 onShardResultConsumed swapped: {} ;; new cluster: {}", updated);
-        } while (swapped == false);
+            AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
+            boolean swapped;
+            do {
+                SearchResponse.Cluster curr = clusterRef.get();
+                SearchResponse.Cluster.Status status = curr.getStatus();
+                assert status == SearchResponse.Cluster.Status.RUNNING
+                    : "should have RUNNING status after can-match but has " + curr.getStatus();
+
+                TimeValue took = null;
+                int successfulShards = curr.getSuccessfulShards() == null ? 1 : curr.getSuccessfulShards() + 1;
+                if (curr.getTotalShards() != null) {
+                    if (successfulShards == curr.getTotalShards()) {  /// MP TODO: do we know for sure that total shards is fully completed here?
+                        status = SearchResponse.Cluster.Status.SUCCESSFUL;
+                        took = new TimeValue(timeProvider.buildTookInMillis());
+                    } else {
+                        int skippedShards = curr.getSkippedShards() == null ? 0 : curr.getSkippedShards();
+                        int failedShards = curr.getFailedShards() == null ? 0 : curr.getFailedShards();
+                        if (successfulShards + skippedShards + failedShards == curr.getTotalShards()) {
+                            status = SearchResponse.Cluster.Status.PARTIAL;
+                            took = new TimeValue(timeProvider.buildTookInMillis());
+                        }
+                    }
+                }
+                SearchResponse.Cluster updated = new SearchResponse.Cluster(
+                    curr.getClusterAlias(),
+                    curr.getIndexExpression(),
+                    status,
+                    curr.getTotalShards(),
+                    successfulShards,
+                    curr.getSkippedShards(),
+                    curr.getFailedShards(),
+                    curr.getFailures(),
+                    took,
+                    false  /// MP TODO: need to deal with timed_out in MRT=false - how do that?
+                );
+                swapped = clusterRef.compareAndSet(curr, updated);
+                logger.warn("XXX CCC ASAA DEBUG 44 onShardResultConsumed swapped: {} ;; new cluster: {}", updated);
+            } while (swapped == false);
+        }
 
         /// MP --- END
 

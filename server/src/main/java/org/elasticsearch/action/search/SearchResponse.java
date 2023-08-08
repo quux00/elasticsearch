@@ -663,6 +663,14 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             return clusterInfo.get(clusterAlias);
         }
 
+        /**
+         * @return true if this Clusters object has been initialized with underlying Cluster objects.
+         *              This will be false for local-cluster (non-CCS) only searches.
+         */
+        public boolean hasClusterObjects() {
+            return clusterInfo != null && clusterInfo.size() > 0;
+        }
+
         @Override
         public boolean equals(Object o) {
             if (this == o) {

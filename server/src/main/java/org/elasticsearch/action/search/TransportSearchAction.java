@@ -923,10 +923,17 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         GroupShardsIterator<SearchShardIterator> iters,
         SearchTimeProvider timeProvider
     ) {
+        if (clusters.hasClusterObjects() == false || clusters.isCcsMinimizeRoundtrips()) {
+            // Clusters object does not have underlying Cluster objects to update, so return
+            return;
+        }
         // convert to mapping the SearchShardIterators by cluster rather than by index
         Map<String, List<SearchShardIterator>> byCluster = new HashMap<>();
         for (SearchShardIterator iter : iters) {
-            byCluster.computeIfAbsent(iter.getClusterAlias(), k -> new ArrayList<>()).add(iter);
+            // only add SearchShardIterators that have not been already screened via SearchShards API
+            if (iter.prefiltered() == false) {
+                byCluster.computeIfAbsent(iter.getClusterAlias(), k -> new ArrayList<>()).add(iter);
+            }
         }
 
         logger.warn("XXX TSA DEBUG 333 ccsClusterInfoUpdate with GroupShardsIterator: keys: {}", byCluster.keySet());
@@ -941,36 +948,36 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             // so we need to now look at the post-SearchShards-phase can-match outcomes only, as the
             // SearchShards API candidates already had their Cluster state pertaining to skipped shards updated in CCSActionListener
             int skipped = (int) clusterIters.stream().filter(iter -> iter.prefiltered() == false && iter.skip()).count();
-            if (skipped > 0) {
-                TimeValue took = null;
-                SearchResponse.Cluster.Status status = SearchResponse.Cluster.Status.RUNNING;
-                if (skipped == clusterIters.size()) {
-                    status = SearchResponse.Cluster.Status.SUCCESSFUL; // all shards were skipped due to can-match, so a successful search
-                    took = new TimeValue(timeProvider.buildTookInMillis());  /// MP TODO: is this right?
-                }
-                AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
-                boolean swapped;
-                do {
-                    SearchResponse.Cluster curr = clusterRef.get();
-                    assert curr.getTotalShards() == null && curr.getSkippedShards() == null : "total and skipped shards are set";
-                    assert curr.getStatus() == SearchResponse.Cluster.Status.RUNNING
-                        : "should have RUNNING status after can-match but has " + curr.getStatus();
-                    SearchResponse.Cluster updated = new SearchResponse.Cluster(
-                        curr.getClusterAlias(),
-                        curr.getIndexExpression(),
-                        status,
-                        total,
-                        skipped,
-                        skipped,
-                        0,
-                        Collections.emptyList(),
-                        took,
-                        false
-                    );
-                    swapped = clusterRef.compareAndSet(curr, updated);
-                    logger.warn("XXX TSA DEBUG 334 ccsClusterInfoUpdate swapped: {} ;;;; new cluster: {}", swapped, updated);
-                } while (swapped == false);
+            TimeValue took = null;
+            SearchResponse.Cluster.Status status = SearchResponse.Cluster.Status.RUNNING;
+            if (skipped == total) {
+                status = SearchResponse.Cluster.Status.SUCCESSFUL; // all shards were skipped due to can-match, so a successful search
+                took = new TimeValue(timeProvider.buildTookInMillis());  /// MP TODO: is this right?
             }
+            AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
+            boolean swapped;
+            do {
+                SearchResponse.Cluster curr = clusterRef.get();
+                System.err.println(curr);
+                assert curr.getTotalShards() == null && curr.getSkippedShards() == null
+                    : "total and skipped shards are set for " + clusterAlias;
+                assert curr.getStatus() == SearchResponse.Cluster.Status.RUNNING
+                    : "should have RUNNING status after can-match but has " + curr.getStatus();
+                SearchResponse.Cluster updated = new SearchResponse.Cluster(
+                    curr.getClusterAlias(),
+                    curr.getIndexExpression(),
+                    status,
+                    total,
+                    skipped,
+                    skipped,
+                    0,
+                    Collections.emptyList(),
+                    took,
+                    false
+                );
+                swapped = clusterRef.compareAndSet(curr, updated);
+                logger.warn("XXX TSA DEBUG 334 ccsClusterInfoUpdate swapped: {} ;;;; new cluster: {}", swapped, updated);
+            } while (swapped == false);
         }
     }
 
