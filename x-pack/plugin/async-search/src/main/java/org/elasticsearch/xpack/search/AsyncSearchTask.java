@@ -477,9 +477,8 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask {
                             false  /// MP TODO: need to deal with timed_out in MRT=false - how do that?
                         );
                         swapped = clusterRef.compareAndSet(curr, updated);
-                        logger.warn("XXX AAA AsyncSearchTask onListShards DEBUG 55 swapped: {} ;; new cluster: {}", updated);
+                        logger.warn("XXX AAA AsyncSearchTask onListShards DEBUG 55 swapped: {} ;; new cluster: {}", swapped, updated);
                     } while (swapped == false);
-
                 }
             }
 

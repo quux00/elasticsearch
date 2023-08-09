@@ -52,5 +52,4 @@ public class SearchTask extends CancellableTask {
     public final SearchProgressListener getProgressListener() {
         return progressListener;
     }
-
 }

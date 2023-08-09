@@ -95,6 +95,7 @@ class SearchQueryThenFetchAsyncAction extends AbstractSearchAsyncAction<SearchPh
         // at the end of the search
         addReleasable(resultConsumer);
 
+        /// MP TODO: we need to create a non-NOOP SearchProgressListener for CCS searches for sync (async already has one)
         if (progressListener != SearchProgressListener.NOOP) {
             /// MP TODO ** for AsyncSearchTask and MutableSearchResponse, this sets the shared Clusters object, so that works here too
             notifyListShards(progressListener, clusters, request.source());

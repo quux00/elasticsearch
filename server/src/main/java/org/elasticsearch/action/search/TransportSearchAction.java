@@ -1411,6 +1411,11 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     })
                 );
             } else {
+                /// MP TODO may also want to check '&& clusters.isCcsMinimizeRoundtrips() == false'
+                /// MP TODO: hmm, what about async-searches? I think we need to check if task.getProgressListener == NOOP also?
+                if (clusters.hasRemoteClusters() && task.getProgressListener() == SearchProgressListener.NOOP) {
+                    task.setProgressListener(new CrossClusterSearchProgressListener());
+                }
                 /// MP TODO maybe the final Clusters update should go here? NOTE: this is the ONLY place it is called, so good candidate!
                 final QueryPhaseResultConsumer queryResultConsumer = searchPhaseController.newSearchPhaseResults(
                     executor,

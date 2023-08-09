@@ -40,7 +40,9 @@ public abstract class SearchProgressListener {
      * @param clusters The statistics for remote clusters included in the search.
      * @param fetchPhase <code>true</code> if the search needs a fetch phase, <code>false</code> otherwise.
      **/
-    protected void onListShards(List<SearchShard> shards, List<SearchShard> skippedShards, Clusters clusters, boolean fetchPhase) {}
+    protected void onListShards(List<SearchShard> shards, List<SearchShard> skippedShards, Clusters clusters, boolean fetchPhase) {
+        System.err.println("XXX SSS SearchProgressListener onListShards: clusters: " + clusters);
+    }
 
     /**
      * Executed when a shard returns a query result.
@@ -96,6 +98,7 @@ public abstract class SearchProgressListener {
     protected void onFetchFailure(int shardIndex, SearchShardTarget shardTarget, Exception exc) {}
 
     final void notifyListShards(List<SearchShard> shards, List<SearchShard> skippedShards, Clusters clusters, boolean fetchPhase) {
+        System.err.println("SSS SearchProgressListener notifyListShards: " + clusters);
         this.shards = shards;
         try {
             onListShards(shards, skippedShards, clusters, fetchPhase);

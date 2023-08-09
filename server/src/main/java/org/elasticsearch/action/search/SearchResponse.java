@@ -512,6 +512,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             Predicate<String> skipUnavailablePredicate,
             boolean ccsMinimizeRoundtrips
         ) {
+            assert remoteClusterIndices != null : "remoteClusterIndices must not null in this Clusters constructor";
             this.total = remoteClusterIndices.size() + (localIndices == null ? 0 : 1);
             assert total >= 1 : "No local indices or remote clusters passed in";
             this.successful = 0; // calculated from clusterInfo map for minimize_roundtrips
@@ -666,12 +667,20 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             return clusterInfo.get(clusterAlias);
         }
 
-        /**
-         * @return true if this Clusters object has been initialized with underlying Cluster objects.
-         *              This will be false for local-cluster (non-CCS) only searches.
-         */
+        @Deprecated  // use hasRemoteClusters instead
         public boolean hasClusterObjects() {
             return clusterInfo != null && clusterInfo.size() > 0;
+        }
+
+        /**
+         * @return true if this Clusters object has been initialized with remote Cluster objects
+         *              This will be false for local-cluster (non-CCS) only searches.
+         */
+        public boolean hasRemoteClusters() {
+            if (clusterInfo.size() > 1) {
+                return true;
+            }
+            return clusterInfo.size() > 0 && clusterInfo.containsKey(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY) == false;
         }
 
         @Override
@@ -948,6 +957,35 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
 
         @Override
         public String toString() {
+            return "Cluster{"
+                + "alias='"
+                + clusterAlias
+                + '\''
+                + ", status="
+                + status
+                + ", totalShards="
+                + totalShards
+                + ", successfulShards="
+                + successfulShards
+                + ", skippedShards="
+                + skippedShards
+                + ", failedShards="
+                + failedShards
+                + ", failures(sz)="
+                + failures.size()
+                + ", took="
+                + took
+                + ", timedOut="
+                + timedOut
+                + ", indexExpression='"
+                + indexExpression
+                + '\''
+                + ", skipUnavailable="
+                + skipUnavailable
+                + '}';
+        }
+
+        public String toStringx() {
             return "Cluster{"
                 + "clusterAlias='"
                 + clusterAlias
