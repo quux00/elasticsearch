@@ -623,7 +623,6 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
         if (clusters.hasClusterObjects() && clusters.isCcsMinimizeRoundtrips() == false) {  // guards against local-only searches
             String clusterAlias = shardIt.getClusterAlias();
             if (clusterAlias == null) {
-                logger.warn("XXX ASAA YES CLUSTER_ALIAS WAS NULL !!!!!!!!!!!!!!");
                 clusterAlias = RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
             }
             AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
@@ -637,7 +636,8 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
                 TimeValue took = null;
                 int successfulShards = curr.getSuccessfulShards() == null ? 1 : curr.getSuccessfulShards() + 1;
                 if (curr.getTotalShards() != null) {
-                    if (successfulShards == curr.getTotalShards()) {  /// MP TODO: do we know for sure that total shards is fully completed here?
+                    if (successfulShards == curr.getTotalShards()) {  /// MP TODO: do we know for sure that total shards is fully completed
+                                                                      /// here?
                         status = SearchResponse.Cluster.Status.SUCCESSFUL;
                         took = new TimeValue(timeProvider.buildTookInMillis());
                     } else {
@@ -652,6 +652,7 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
                 SearchResponse.Cluster updated = new SearchResponse.Cluster(
                     curr.getClusterAlias(),
                     curr.getIndexExpression(),
+                    curr.isSkipUnavailable(),
                     status,
                     curr.getTotalShards(),
                     successfulShards,

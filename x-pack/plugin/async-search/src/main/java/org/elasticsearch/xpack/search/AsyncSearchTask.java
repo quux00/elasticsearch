@@ -6,6 +6,8 @@
  */
 package org.elasticsearch.xpack.search;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.search.TotalHits;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.ElasticsearchStatusException;
@@ -29,6 +31,7 @@ import org.elasticsearch.tasks.TaskId;
 import org.elasticsearch.tasks.TaskManager;
 import org.elasticsearch.threadpool.Scheduler.Cancellable;
 import org.elasticsearch.threadpool.ThreadPool;
+import org.elasticsearch.transport.RemoteClusterAware;
 import org.elasticsearch.xpack.core.async.AsyncExecutionId;
 import org.elasticsearch.xpack.core.async.AsyncTask;
 import org.elasticsearch.xpack.core.search.action.AsyncSearchResponse;
@@ -43,6 +46,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static java.util.Collections.singletonList;
 
@@ -50,6 +55,7 @@ import static java.util.Collections.singletonList;
  * Task that tracks the progress of a currently running {@link SearchRequest}.
  */
 final class AsyncSearchTask extends SearchTask implements AsyncTask {
+    private static final Logger logger = LogManager.getLogger(AsyncSearchTask.class);
     private final AsyncExecutionId searchId;
     private final Client client;
     private final ThreadPool threadPool;
@@ -405,6 +411,79 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask {
         protected void onListShards(List<SearchShard> shards, List<SearchShard> skipped, Clusters clusters, boolean fetchPhase) {
             // best effort to cancel expired tasks
             checkCancellation();
+            /// MP --- START
+            logger.warn(
+                "XXX AAA AsyncSearchTask onListShards: shards.size: {}, skipped.size: {}; fetchPhase: {}",
+                shards.size(),
+                skipped.size(),
+                fetchPhase
+            );
+            for (SearchShard shard : shards) {
+                logger.warn("    XXX AAA AsyncSearchTask onListShards: {}", shard);
+            }
+
+            if (clusters.isCcsMinimizeRoundtrips() == false && clusters.hasClusterObjects()) {
+                // Partition by clusterAlias and get counts
+                Map<String, Integer> totalByClusterAlias = Stream.concat(shards.stream(), skipped.stream())
+                    .collect(Collectors.groupingBy(shard -> {
+                        String clusterAlias = shard.clusterAlias();
+                        return clusterAlias != null ? clusterAlias : RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
+                    }, Collectors.reducing(0, e -> 1, Integer::sum)));
+                Map<String, Integer> skippedByClusterAlias = skipped.stream().collect(Collectors.groupingBy(shard -> {
+                    String clusterAlias = shard.clusterAlias();
+                    return clusterAlias != null ? clusterAlias : RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
+                }, Collectors.reducing(0, e -> 1, Integer::sum)));
+
+                for (Map.Entry<String, Integer> entry : totalByClusterAlias.entrySet()) {
+                    String clusterAlias = entry.getKey();
+                    AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
+                    if (clusterRef.get().getTotalShards() != null) {
+                        // this cluster has already had initial state set by SearchShards API
+                        continue;
+                    }
+
+                    final Integer totalCount = entry.getValue();
+                    System.err.println("XXX AAA AsyncSearchTask onListShards totalCount for " + clusterAlias + " = " + totalCount);
+                    /// MP TODO I don't know where this skipped list is really coming from - does it deal with SearchShards API results?
+                    /// MP TODO Is this called post local can-match?
+                    final Integer skippedCount = skippedByClusterAlias.get(clusterAlias);
+                    System.err.println("XXX AAA AsyncSearchTask onListShards skippedCount for " + clusterAlias + " = " + skippedCount);
+
+                    boolean swapped;
+                    do {
+                        SearchResponse.Cluster curr = clusterRef.get();
+                        SearchResponse.Cluster.Status status = curr.getStatus();
+                        assert status == SearchResponse.Cluster.Status.RUNNING
+                            : "should have RUNNING status during onListShards but has " + status;
+                        Integer currSkippedShards = curr.getSkippedShards();
+                        System.err.printf(
+                            "XXX AAA AsyncSearchTask onListShards currSkippedShards = %s; incoming skippedCount = %s\n",
+                            currSkippedShards,
+                            skippedCount
+                        );
+                        // assert ((currSkippedShards == null) || (curr.getSkippedShards().equals(skippedCount))) :
+                        // "currSkippedShards " + curr.getSkippedShards() + " and skippedCount = " + skippedCount;
+                        SearchResponse.Cluster updated = new SearchResponse.Cluster(
+                            curr.getClusterAlias(),
+                            curr.getIndexExpression(),
+                            curr.isSkipUnavailable(),
+                            status,
+                            entry.getValue(),
+                            0,
+                            skippedByClusterAlias.get(clusterAlias) == null ? 0 : skippedByClusterAlias.get(clusterAlias),
+                            0,
+                            curr.getFailures(),
+                            null,
+                            false  /// MP TODO: need to deal with timed_out in MRT=false - how do that?
+                        );
+                        swapped = clusterRef.compareAndSet(curr, updated);
+                        logger.warn("XXX AAA AsyncSearchTask onListShards DEBUG 55 swapped: {} ;; new cluster: {}", updated);
+                    } while (swapped == false);
+
+                }
+            }
+
+            /// MP --- END
             ccsMinimizeRoundtrips = clusters.isCcsMinimizeRoundtrips();
             searchResponse.compareAndSet(
                 null,

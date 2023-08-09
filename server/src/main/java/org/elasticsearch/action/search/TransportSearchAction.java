@@ -329,7 +329,12 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                         && rewritten.source().aggregations() != null
                             ? searchService.aggReduceContextBuilder(task::isCancelled, rewritten.source().aggregations())
                             : null;
-                    SearchResponse.Clusters initClusters = new SearchResponse.Clusters(localIndices, remoteClusterIndices, true);
+                    SearchResponse.Clusters initClusters = new SearchResponse.Clusters(
+                        localIndices,
+                        remoteClusterIndices,
+                        alias -> remoteClusterService.isSkipUnavailable(alias),
+                        true
+                    );
                     if (localIndices == null) {
                         // Notify the progress listener that a CCS with minimize_roundtrips is happening remote-only (no local shards)
                         task.getProgressListener().notifyListShards(Collections.emptyList(), Collections.emptyList(), initClusters, false);
@@ -358,7 +363,12 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     );
                 } else {
                     AtomicInteger skippedClusters = new AtomicInteger(0);
-                    SearchResponse.Clusters ccsClusters = new SearchResponse.Clusters(localIndices, remoteClusterIndices, false);
+                    SearchResponse.Clusters ccsClusters = new SearchResponse.Clusters(
+                        localIndices,
+                        remoteClusterIndices,
+                        alias -> remoteClusterService.isSkipUnavailable(alias),
+                        false
+                    );
                     // TODO: pass parentTaskId
                     collectSearchShards(
                         rewritten.indicesOptions(),
@@ -713,6 +723,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                             SearchResponse.Cluster updated = new SearchResponse.Cluster(
                                 curr.getClusterAlias(),
                                 curr.getIndexExpression(),
+                                curr.isSkipUnavailable(),
                                 status,
                                 groups.size(),
                                 skipped,
@@ -841,7 +852,6 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         boolean swapped;
         do {
             SearchResponse.Cluster orig = clusterRef.get();
-            String clusterAlias = orig.getClusterAlias();
             List<ShardSearchFailure> failures;
             if (orig.getFailures() != null) {
                 failures = new ArrayList<>(orig.getFailures());
@@ -849,8 +859,13 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                 failures = new ArrayList<>(1);
             }
             failures.add(failure);
-            String indexExpression = orig.getIndexExpression();
-            SearchResponse.Cluster updated = new SearchResponse.Cluster(clusterAlias, indexExpression, status, failures);
+            SearchResponse.Cluster updated = new SearchResponse.Cluster(
+                orig.getClusterAlias(),
+                orig.getIndexExpression(),
+                orig.isSkipUnavailable(),
+                status,
+                failures
+            );
             swapped = clusterRef.compareAndSet(orig, updated);
             logger.warn("XXX YYY 3 ccsClusterInfoUpdate swapped: {}", swapped);
         } while (swapped == false);
@@ -898,6 +913,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             SearchResponse.Cluster updated = new SearchResponse.Cluster(
                 orig.getClusterAlias(),
                 orig.getIndexExpression(),
+                orig.isSkipUnavailable(),
                 status,
                 searchResponse.getTotalShards(),
                 searchResponse.getSuccessfulShards(),
@@ -966,6 +982,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                 SearchResponse.Cluster updated = new SearchResponse.Cluster(
                     curr.getClusterAlias(),
                     curr.getIndexExpression(),
+                    curr.isSkipUnavailable(),
                     status,
                     total,
                     skipped,

@@ -503,11 +503,13 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
          * as each cluster returns.
          * @param localIndices The localIndices to be searched - null if no local indices are to be searched
          * @param remoteClusterIndices mapping of clusterAlias -> OriginalIndices for each remote cluster
+         * @param skipUnavailablePredicate
          * @param ccsMinimizeRoundtrips whether minimizing roundtrips for the CCS
          */
         public Clusters(
             @Nullable OriginalIndices localIndices,
             Map<String, OriginalIndices> remoteClusterIndices,
+            Predicate<String> skipUnavailablePredicate,
             boolean ccsMinimizeRoundtrips
         ) {
             this.total = remoteClusterIndices.size() + (localIndices == null ? 0 : 1);
@@ -518,12 +520,13 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             Map<String, AtomicReference<Cluster>> m = new HashMap<>();
             if (localIndices != null) {
                 String localKey = RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
-                Cluster c = new Cluster(localKey, String.join(",", localIndices.indices()));
+                Cluster c = new Cluster(localKey, String.join(",", localIndices.indices()), false);
                 m.put(localKey, new AtomicReference<>(c));
             }
             for (Map.Entry<String, OriginalIndices> remote : remoteClusterIndices.entrySet()) {
                 String clusterAlias = remote.getKey();
-                Cluster c = new Cluster(clusterAlias, String.join(",", remote.getValue().indices()));
+                boolean skipUnavailable = skipUnavailablePredicate.test(clusterAlias);
+                Cluster c = new Cluster(clusterAlias, String.join(",", remote.getValue().indices()), skipUnavailable);
                 m.put(clusterAlias, new AtomicReference<>(c));
             }
             this.clusterInfo = Collections.unmodifiableMap(m);
@@ -732,6 +735,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
     public static class Cluster implements ToXContentFragment, Writeable {
         private final String clusterAlias;
         private final String indexExpression; // original index expression from the user for this cluster
+        private final boolean skipUnavailable;
         private final Status status;
         private final Integer totalShards;
         private final Integer successfulShards;
@@ -764,8 +768,8 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
          *                     for the local cluster
          * @param indexExpression the original (not resolved/concrete) indices expression provided for this cluster.
          */
-        public Cluster(String clusterAlias, String indexExpression) {
-            this(clusterAlias, indexExpression, Status.RUNNING, null, null, null, null, null, null, false);
+        public Cluster(String clusterAlias, String indexExpression, boolean skipUnavailable) {
+            this(clusterAlias, indexExpression, skipUnavailable, Status.RUNNING, null, null, null, null, null, null, false);
         }
 
         /**
@@ -775,16 +779,24 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
          * @param clusterAlias clusterAlias as defined in the remote cluster settings or RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY
          *                     for the local cluster
          * @param indexExpression the original (not resolved/concrete) indices expression provided for this cluster.
+         * @param skipUnavailable whether cluster is marked as skip_unavailable in remote cluster settings
          * @param status current status of the search on this Cluster
          * @param failures list of failures that occurred during the search on this Cluster
          */
-        public Cluster(String clusterAlias, String indexExpression, Status status, List<ShardSearchFailure> failures) {
-            this(clusterAlias, indexExpression, status, null, null, null, null, failures, null, false);
+        public Cluster(
+            String clusterAlias,
+            String indexExpression,
+            boolean skipUnavailable,
+            Status status,
+            List<ShardSearchFailure> failures
+        ) {
+            this(clusterAlias, indexExpression, skipUnavailable, status, null, null, null, null, failures, null, false);
         }
 
         public Cluster(
             String clusterAlias,
             String indexExpression,
+            boolean skipUnavailable,
             Status status,
             Integer totalShards,
             Integer successfulShards,
@@ -799,6 +811,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             assert status != null : "status of Cluster cannot be null";
             this.clusterAlias = clusterAlias;
             this.indexExpression = indexExpression;
+            this.skipUnavailable = skipUnavailable;
             this.status = status;
             this.totalShards = totalShards;
             this.successfulShards = successfulShards;
@@ -825,6 +838,11 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             }
             this.timedOut = in.readBoolean();
             this.failures = Collections.unmodifiableList(in.readList(ShardSearchFailure::readShardSearchFailure));
+            if (in.getTransportVersion().onOrAfter(TransportVersion.V_8_500_052)) {  /// MP TODO: need to bump to new TransportVersion
+                this.skipUnavailable = in.readBoolean();
+            } else {
+                this.skipUnavailable = false;
+            }
         }
 
         @Override
@@ -839,6 +857,9 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             out.writeOptionalLong(took == null ? null : took.millis());
             out.writeBoolean(timedOut);
             out.writeList(failures);
+            if (out.getTransportVersion().onOrAfter(TransportVersion.V_8_500_052)) {  /// MP TODO: need to bump to new TransportVersion
+                out.writeBoolean(skipUnavailable);
+            }
         }
 
         @Override
@@ -887,6 +908,10 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
 
         public String getIndexExpression() {
             return indexExpression;
+        }
+
+        public boolean isSkipUnavailable() {
+            return skipUnavailable;
         }
 
         public Status getStatus() {

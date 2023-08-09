@@ -208,6 +208,7 @@ final class CanMatchPreFilterSearchPhase extends SearchPhase {
                     SearchResponse.Cluster updated = new SearchResponse.Cluster(
                         curr.getClusterAlias(),
                         curr.getIndexExpression(),
+                        curr.isSkipUnavailable(),
                         status,
                         curr.getTotalShards() + 1,
                         curr.getSuccessfulShards() + 1,

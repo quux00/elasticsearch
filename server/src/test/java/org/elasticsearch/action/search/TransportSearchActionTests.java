@@ -523,7 +523,12 @@ public class TransportSearchActionTests extends ESTestCase {
                 ActionListener.wrap(r -> fail("no response expected"), failure::set),
                 latch
             );
-            SearchResponse.Clusters initClusters = new SearchResponse.Clusters(localIndices, remoteIndicesByCluster, true);
+            SearchResponse.Clusters initClusters = new SearchResponse.Clusters(
+                localIndices,
+                remoteIndicesByCluster,
+                clusterAlias -> true,
+                true
+            );
 
             TransportSearchAction.ccsRemoteReduce(
                 new TaskId("n", 1),
@@ -591,7 +596,12 @@ public class TransportSearchActionTests extends ESTestCase {
                     ActionTestUtils.assertNoFailureListener(response::set),
                     latch
                 );
-                SearchResponse.Clusters initClusters = new SearchResponse.Clusters(localIndices, remoteIndicesByCluster, true);
+                SearchResponse.Clusters initClusters = new SearchResponse.Clusters(
+                    localIndices,
+                    remoteIndicesByCluster,
+                    clusterAlias -> true,
+                    true
+                );
 
                 TransportSearchAction.ccsRemoteReduce(
                     new TaskId("n", 1),
@@ -632,7 +642,12 @@ public class TransportSearchActionTests extends ESTestCase {
                     ActionListener.wrap(r -> fail("no response expected"), failure::set),
                     latch
                 );
-                SearchResponse.Clusters initClusters = new SearchResponse.Clusters(localIndices, remoteIndicesByCluster, true);
+                SearchResponse.Clusters initClusters = new SearchResponse.Clusters(
+                    localIndices,
+                    remoteIndicesByCluster,
+                    clusterAlias -> true,
+                    true
+                );
                 TransportSearchAction.ccsRemoteReduce(
                     new TaskId("n", 1),
                     searchRequest,
@@ -693,7 +708,12 @@ public class TransportSearchActionTests extends ESTestCase {
                     ActionListener.wrap(r -> fail("no response expected"), failure::set),
                     latch
                 );
-                SearchResponse.Clusters initClusters = new SearchResponse.Clusters(localIndices, remoteIndicesByCluster, true);
+                SearchResponse.Clusters initClusters = new SearchResponse.Clusters(
+                    localIndices,
+                    remoteIndicesByCluster,
+                    clusterAlias -> true,
+                    true
+                );
 
                 TransportSearchAction.ccsRemoteReduce(
                     new TaskId("n", 1),
@@ -741,7 +761,12 @@ public class TransportSearchActionTests extends ESTestCase {
                 if (localIndices != null) {
                     clusterAliases.add("");
                 }
-                SearchResponse.Clusters initClusters = new SearchResponse.Clusters(localIndices, remoteIndicesByCluster, true);
+                SearchResponse.Clusters initClusters = new SearchResponse.Clusters(
+                    localIndices,
+                    remoteIndicesByCluster,
+                    clusterAlias -> true,
+                    true
+                );
 
                 TransportSearchAction.ccsRemoteReduce(
                     new TaskId("n", 1),
@@ -801,7 +826,12 @@ public class TransportSearchActionTests extends ESTestCase {
                 if (localIndices != null) {
                     clusterAliases.add("");
                 }
-                SearchResponse.Clusters initClusters = new SearchResponse.Clusters(localIndices, remoteIndicesByCluster, true);
+                SearchResponse.Clusters initClusters = new SearchResponse.Clusters(
+                    localIndices,
+                    remoteIndicesByCluster,
+                    clusterAlias -> true,
+                    true
+                );
 
                 TransportSearchAction.ccsRemoteReduce(
                     new TaskId("n", 1),
@@ -864,7 +894,12 @@ public class TransportSearchActionTests extends ESTestCase {
                 final CountDownLatch latch = new CountDownLatch(1);
                 AtomicReference<Map<String, SearchShardsResponse>> response = new AtomicReference<>();
                 AtomicInteger skippedClusters = new AtomicInteger();
-                SearchResponse.Clusters ccsClusters = new SearchResponse.Clusters(null, remoteIndicesByCluster, false);
+                SearchResponse.Clusters ccsClusters = new SearchResponse.Clusters(
+                    null,
+                    remoteIndicesByCluster,
+                    clusterAlias -> true,
+                    false
+                );
                 TransportSearchAction.collectSearchShards(
                     IndicesOptions.lenientExpandOpen(),
                     null,
@@ -901,7 +936,12 @@ public class TransportSearchActionTests extends ESTestCase {
                 final CountDownLatch latch = new CountDownLatch(1);
                 AtomicReference<Exception> failure = new AtomicReference<>();
                 AtomicInteger skippedClusters = new AtomicInteger(0);
-                SearchResponse.Clusters ccsClusters = new SearchResponse.Clusters(null, remoteIndicesByCluster, false);
+                SearchResponse.Clusters ccsClusters = new SearchResponse.Clusters(
+                    null,
+                    remoteIndicesByCluster,
+                    clusterAlias -> true,
+                    false
+                );
                 TransportSearchAction.collectSearchShards(
                     IndicesOptions.lenientExpandOpen(),
                     "index_not_found",
@@ -959,7 +999,12 @@ public class TransportSearchActionTests extends ESTestCase {
                 final CountDownLatch latch = new CountDownLatch(1);
                 AtomicInteger skippedClusters = new AtomicInteger(0);
                 AtomicReference<Exception> failure = new AtomicReference<>();
-                SearchResponse.Clusters ccsClusters = new SearchResponse.Clusters(null, remoteIndicesByCluster, false);
+                SearchResponse.Clusters ccsClusters = new SearchResponse.Clusters(
+                    null,
+                    remoteIndicesByCluster,
+                    clusterAlias -> true,
+                    false
+                );
                 TransportSearchAction.collectSearchShards(
                     IndicesOptions.lenientExpandOpen(),
                     null,
@@ -1008,7 +1053,12 @@ public class TransportSearchActionTests extends ESTestCase {
                 final CountDownLatch latch = new CountDownLatch(1);
                 AtomicInteger skippedClusters = new AtomicInteger(0);
                 AtomicReference<Map<String, SearchShardsResponse>> response = new AtomicReference<>();
-                SearchResponse.Clusters ccsClusters = new SearchResponse.Clusters(null, remoteIndicesByCluster, false);
+                SearchResponse.Clusters ccsClusters = new SearchResponse.Clusters(
+                    null,
+                    remoteIndicesByCluster,
+                    clusterAlias -> true,
+                    false
+                );
                 TransportSearchAction.collectSearchShards(
                     IndicesOptions.lenientExpandOpen(),
                     null,
@@ -1062,7 +1112,12 @@ public class TransportSearchActionTests extends ESTestCase {
                 final CountDownLatch latch = new CountDownLatch(1);
                 AtomicInteger skippedClusters = new AtomicInteger(0);
                 AtomicReference<Map<String, SearchShardsResponse>> response = new AtomicReference<>();
-                SearchResponse.Clusters ccsClusters = new SearchResponse.Clusters(null, remoteIndicesByCluster, false);
+                SearchResponse.Clusters ccsClusters = new SearchResponse.Clusters(
+                    null,
+                    remoteIndicesByCluster,
+                    clusterAlias -> true,
+                    false
+                );
                 TransportSearchAction.collectSearchShards(
                     IndicesOptions.lenientExpandOpen(),
                     null,

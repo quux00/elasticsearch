@@ -14,6 +14,7 @@ import org.apache.lucene.search.TopFieldDocs;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.routing.GroupShardsIterator;
+import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.search.SearchPhaseResult;
 import org.elasticsearch.search.SearchShardTarget;
 import org.elasticsearch.search.internal.AliasFilter;
@@ -137,16 +138,26 @@ class SearchQueryThenFetchAsyncAction extends AbstractSearchAsyncAction<SearchPh
             AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
             boolean swapped;
             do {
+                TimeValue took = null;
                 SearchResponse.Cluster curr = clusterRef.get();
                 SearchResponse.Cluster.Status status = SearchResponse.Cluster.Status.RUNNING;
                 int numFailedShards = curr.getFailedShards() == null ? 1 : curr.getFailedShards() + 1;
 
-                if (curr.getTotalShards() != null && curr.getTotalShards() == numFailedShards) { // TODO: can't do this unless can set num shards up front
-                    logger.warn("XXX SQTFAA onShardGroupFailure SETTING FAILED status bcs total=failed !");
-                    /// MP FIXME: set as SKIPPED if skipUnavailable=true !!! but need skipUnavailable flag - so put into Cluster object?
-                    status = SearchResponse.Cluster.Status.FAILED;
+                /// MP TODO: should this be changed to assert curr.getTotalShards == null ?? should always be set now, right?
+                if (curr.getTotalShards() != null) {
+                    if (curr.getTotalShards() == numFailedShards) {
+                        if (curr.isSkipUnavailable()) {
+                            logger.warn("XXX SQTFAA onShardGroupFailure SETTING SKIPPED status bcs total=failed_shards !");
+                            status = SearchResponse.Cluster.Status.SKIPPED;
+                        } else {
+                            logger.warn("XXX SQTFAA onShardGroupFailure SETTING FAILED status bcs total=failed_shards !");
+                            status = SearchResponse.Cluster.Status.FAILED;
+                        }
+                    } else if (curr.getTotalShards() == numFailedShards + curr.getSuccessfulShards()) {
+                        status = SearchResponse.Cluster.Status.PARTIAL;
+                        took = new TimeValue(buildTookInMillis());
+                    }
                 }
-
 
                 List<ShardSearchFailure> failures = new ArrayList<ShardSearchFailure>();
                 curr.getFailures().forEach(failures::add);
@@ -154,13 +165,14 @@ class SearchQueryThenFetchAsyncAction extends AbstractSearchAsyncAction<SearchPh
                 SearchResponse.Cluster updated = new SearchResponse.Cluster(
                     curr.getClusterAlias(),
                     curr.getIndexExpression(),
+                    curr.isSkipUnavailable(),
                     status,
                     curr.getTotalShards(),
                     curr.getSuccessfulShards(),
                     curr.getSkippedShards(),
                     numFailedShards,
                     failures,
-                    null,
+                    took,
                     false
                 );
                 swapped = clusterRef.compareAndSet(curr, updated);
