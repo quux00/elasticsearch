@@ -38,11 +38,9 @@ public class CrossClusterSearchProgressListener extends SearchProgressListener {
      * @param clusters The statistics for remote clusters included in the search.
      * @param fetchPhase <code>true</code> if the search needs a fetch phase, <code>false</code> otherwise.
      **/
-    public void onListShards(List<SearchShard> shards, List<SearchShard> skipped, SearchResponse.Clusters clusters,
-                             boolean fetchPhase) {
+    public void onListShards(List<SearchShard> shards, List<SearchShard> skipped, SearchResponse.Clusters clusters, boolean fetchPhase) {
         logger.warn("XXX SSS CCSProgListener onListShards: shards size: {}; shards: {}", shards.size(), shards);
-        logger.warn("XXX SSS CCSProgListener onListShards: skipped size: {}; skipped: {}", skipped.size(),
-            skipped);
+        logger.warn("XXX SSS CCSProgListener onListShards: skipped size: {}; skipped: {}", skipped.size(), skipped);
         logger.warn("XXX SSS CCSProgListener onListShards: clusters: " + clusters);
         logger.warn("XXX SSS CCSProgListener onListShards: fetchPhase: " + fetchPhase);
         ccsMinimizeRoundtrips = clusters.isCcsMinimizeRoundtrips();

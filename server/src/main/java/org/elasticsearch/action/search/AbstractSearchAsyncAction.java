@@ -341,6 +341,12 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
                         @Override
                         public void innerOnResponse(Result result) {
                             try {
+                                /// MP --- START
+                                // if (ThreadLocalRandom.current().nextInt(10) == 3) {
+                                // logger.warn("XXX POISONPILL >>>>>> throwing so successfulOps should be DECREMENTED");
+                                // throw new RuntimeException("I WILL FIGURE THIS OUT!");
+                                // }
+                                /// MP --- END
                                 onShardResult(result, shardIt);
                             } catch (Exception exc) {
                                 onShardFailure(shardIndex, shard, shardIt, exc);
@@ -495,10 +501,12 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
         return failures;
     }
 
+    /// MP TODO ** this is the onShardFailure handler called upon actual search failure
+    /// MP TODO ** the OTHER onShardFailure handler is called upon a failure in the onResponse success handler so it has to decrement
     private void onShardFailure(final int shardIndex, SearchShardTarget shard, final SearchShardIterator shardIt, Exception e) {
         // we always add the shard failure for a specific shard instance
         // we do make sure to clean it on a successful response from a shard
-        onShardFailure(shardIndex, shard, e);
+        onShardFailure(shardIndex, shard, e);   /// MP TODO ** but it calls the other one anywya, so just add to that one
         final SearchShardTarget nextShard = shardIt.nextOrNull();
         final boolean lastShard = nextShard == null;
         logger.debug(() -> format("%s: Failed to execute [%s] lastShard [%s]", shard, request, lastShard), e);
@@ -548,7 +556,66 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
      */
     @Override
     public final void onShardFailure(final int shardIndex, SearchShardTarget shardTarget, Exception e) {
+        /// MP TODO: IDEA :: create an onShardFailure hook into SearchProgressListener -> allow me to instrument that code ONLY!
         logger.warn("XXX ASAA onShardFailure for shardIdx: {}; shardTarget: {}; exc: {}", shardIndex, shardTarget.toString(), e);
+        /// MP --- START
+        if (clusters.hasClusterObjects() && clusters.isCcsMinimizeRoundtrips() == false) {
+            String clusterAlias = shardTarget.getClusterAlias();
+            logger.warn(
+                "XXX ASAA onShardFailure: idx: {}; clusterAlias: {}, shardId: {} exc: {}",
+                shardIndex,
+                clusterAlias,
+                shardTarget.getShardId(),
+                e.getMessage()
+            );
+            if (clusterAlias == null) {
+                clusterAlias = RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
+            }
+            AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
+            boolean swapped;
+            do {
+                TimeValue took = null;
+                SearchResponse.Cluster curr = clusterRef.get();
+                SearchResponse.Cluster.Status status = SearchResponse.Cluster.Status.RUNNING;
+                int numFailedShards = curr.getFailedShards() == null ? 1 : curr.getFailedShards() + 1;
+
+                /// MP TODO: should this be changed to assert curr.getTotalShards == null ?? should always be set now, right?
+                if (curr.getTotalShards() != null) {
+                    if (curr.getTotalShards() == numFailedShards) {
+                        if (curr.isSkipUnavailable()) {
+                            logger.warn("XXX ASAA onShardFailure SETTING SKIPPED status bcs total=failed_shards !");
+                            status = SearchResponse.Cluster.Status.SKIPPED;
+                        } else {
+                            logger.warn("XXX ASAA onShardFailure SETTING FAILED status bcs total=failed_shards !");
+                            status = SearchResponse.Cluster.Status.FAILED;
+                        }
+                    } else if (curr.getTotalShards() == numFailedShards + curr.getSuccessfulShards()) {
+                        status = SearchResponse.Cluster.Status.PARTIAL;
+                        took = new TimeValue(buildTookInMillis());
+                    }
+                }
+
+                List<ShardSearchFailure> failures = new ArrayList<>();
+                curr.getFailures().forEach(failures::add);
+                failures.add(new ShardSearchFailure(e, shardTarget));
+                SearchResponse.Cluster updated = new SearchResponse.Cluster(
+                    curr.getClusterAlias(),
+                    curr.getIndexExpression(),
+                    curr.isSkipUnavailable(),
+                    status,
+                    curr.getTotalShards(),
+                    curr.getSuccessfulShards(),
+                    curr.getSkippedShards(),
+                    numFailedShards,
+                    failures,
+                    took,
+                    false
+                );
+                swapped = clusterRef.compareAndSet(curr, updated);
+                logger.warn("XXX ASAA onShardFailure swapped: {} ;;;; new cluster: {}", swapped, updated);
+            } while (swapped == false);
+        }
+        /// MP --- END
         if (TransportActions.isShardNotAvailableException(e)) {
             // Groups shard not available exceptions under a generic exception that returns a SERVICE_UNAVAILABLE(503)
             // temporary error.
@@ -587,6 +654,7 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
                     shardIndex,
                     shardTarget
                 );
+                /// MP TODO: I need to add decrement logic here as well for the Clusters counter ??? !!!
                 successfulOps.decrementAndGet(); // if this shard was successful before (initial phase) we have to adjust the counter
             }
         }

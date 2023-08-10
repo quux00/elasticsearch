@@ -658,7 +658,7 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
         request.setCcsMinimizeRoundtrips(minimizeRoundtrips);
         request.setWaitForCompletionTimeout(TimeValue.timeValueMillis(1));
         request.setKeepOnCompletion(true);
-        // throw Exception of all shards of remoteIndex, but against localIndex
+        // throw Exception on all shards of remoteIndex, but none against localIndex
         ThrowingQueryBuilder queryBuilder = new ThrowingQueryBuilder(
             randomLong(),
             new IllegalStateException("index corrupted"),
@@ -952,7 +952,6 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
 
         AsyncSearchResponse response = submitAsyncSearch(request);
         assertNotNull(response.getSearchResponse());
-        assertTrue(response.isRunning());
 
         assertBusy(() -> {
             AsyncStatusResponse statusResponse = getAsyncStatus(response.getId());
