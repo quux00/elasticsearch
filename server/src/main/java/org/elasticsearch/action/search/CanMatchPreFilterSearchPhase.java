@@ -194,34 +194,35 @@ final class CanMatchPreFilterSearchPhase extends SearchPhase {
                     searchShardIterator
                 );
                 /// MP --- START new code legit
-                AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(searchShardIterator.getClusterAlias());
-                boolean swapped;
-                /// MP TODO I think we have to use RUNNING here, but then how/when check whether total == skipped?
-                /// MP TODO Options: 1) in the QueryPhase when see all are skipped (will it get there?)
-                /// MP TODO Options: 2) whilst iterating over this set of shard iters, have to keep counts for each
-                /// MP TODO Options: cluster and then at the end check if skipped=total and if yes, set to SKIPPED?
-                SearchResponse.Cluster.Status status = SearchResponse.Cluster.Status.RUNNING;
-                do {
-                    SearchResponse.Cluster curr = clusterRef.get();
-                    assert curr.getStatus() == SearchResponse.Cluster.Status.RUNNING
-                        : "should have RUNNING status after can-match but has " + curr.getStatus();
-                    SearchResponse.Cluster updated = new SearchResponse.Cluster(
-                        curr.getClusterAlias(),
-                        curr.getIndexExpression(),
-                        curr.isSkipUnavailable(),
-                        status,
-                        curr.getTotalShards() + 1,
-                        curr.getSuccessfulShards() + 1,
-                        curr.getSkippedShards() + 1,
-                        curr.getFailedShards(),
-                        curr.getFailures(),
-                        null,
-                        false
-                    );
-                    swapped = clusterRef.compareAndSet(curr, updated);
-                    logger.warn("XXX CCC CanMatchPFSearchPhase DEBUG 2 canMatch=false swapped: {} ;;;; new cluster: {}", updated);
-                } while (swapped == false);
-
+                if (clusters != null && clusters.hasRemoteClusters()) {
+                    AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(searchShardIterator.getClusterAlias());
+                    boolean swapped;
+                    /// MP TODO I think we have to use RUNNING here, but then how/when check whether total == skipped?
+                    /// MP TODO Options: 1) in the QueryPhase when see all are skipped (will it get there?)
+                    /// MP TODO Options: 2) whilst iterating over this set of shard iters, have to keep counts for each
+                    /// MP TODO Options: cluster and then at the end check if skipped=total and if yes, set to SKIPPED?
+                    SearchResponse.Cluster.Status status = SearchResponse.Cluster.Status.RUNNING;
+                    do {
+                        SearchResponse.Cluster curr = clusterRef.get();
+                        assert curr.getStatus() == SearchResponse.Cluster.Status.RUNNING
+                            : "should have RUNNING status after can-match but has " + curr.getStatus();
+                        SearchResponse.Cluster updated = new SearchResponse.Cluster(
+                            curr.getClusterAlias(),
+                            curr.getIndexExpression(),
+                            curr.isSkipUnavailable(),
+                            status,
+                            curr.getTotalShards() + 1,
+                            curr.getSuccessfulShards() + 1,
+                            curr.getSkippedShards() + 1,
+                            curr.getFailedShards(),
+                            curr.getFailures(),
+                            null,
+                            false
+                        );
+                        swapped = clusterRef.compareAndSet(curr, updated);
+                        logger.warn("XXX CCC CanMatchPFSearchPhase DEBUG 2 canMatch=false swapped: {} ;;;; new cluster: {}", updated);
+                    } while (swapped == false);
+                }
                 /// MP --- END new code legit
                 CanMatchShardResponse result = new CanMatchShardResponse(canMatch, null);
                 result.setShardIndex(request.shardRequestIndex());
