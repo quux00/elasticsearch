@@ -324,7 +324,12 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                         && rewritten.source().aggregations() != null
                             ? searchService.aggReduceContextBuilder(task::isCancelled, rewritten.source().aggregations())
                             : null;
-                    SearchResponse.Clusters initClusters = new SearchResponse.Clusters(localIndices, remoteClusterIndices, true);
+                    SearchResponse.Clusters initClusters = new SearchResponse.Clusters(
+                        localIndices,
+                        remoteClusterIndices,
+                        true,
+                        alias -> remoteClusterService.isSkipUnavailable(alias)
+                    );
                     if (localIndices == null) {
                         // Notify the progress listener that a CCS with minimize_roundtrips is happening remote-only (no local shards)
                         task.getProgressListener().notifyListShards(Collections.emptyList(), Collections.emptyList(), initClusters, false);
@@ -777,7 +782,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             }
             failures.add(failure);
             String indexExpression = orig.getIndexExpression();
-            SearchResponse.Cluster updated = new SearchResponse.Cluster(clusterAlias, indexExpression, status, failures);
+            SearchResponse.Cluster updated = new SearchResponse.Cluster(clusterAlias, indexExpression, orig.isSkipUnavailable(), status,
+                failures);
             swapped = clusterRef.compareAndSet(orig, updated);
         } while (swapped == false);
     }
@@ -823,6 +829,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             SearchResponse.Cluster updated = new SearchResponse.Cluster(
                 orig.getClusterAlias(),
                 orig.getIndexExpression(),
+                orig.isSkipUnavailable(),
                 status,
                 searchResponse.getTotalShards(),
                 searchResponse.getSuccessfulShards(),

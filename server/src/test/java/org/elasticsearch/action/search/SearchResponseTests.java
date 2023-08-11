@@ -200,7 +200,8 @@ public class SearchResponseTests extends ESTestCase {
             remoteClusterIndices.put("cluster_" + i, new OriginalIndices(new String[] { "foo", "bar*" }, IndicesOptions.lenientExpand()));
         }
 
-        SearchResponse.Clusters clusters = new SearchResponse.Clusters(localIndices, remoteClusterIndices, ccsMinimizeRoundtrips);
+        SearchResponse.Clusters clusters = new SearchResponse.Clusters(localIndices, remoteClusterIndices, ccsMinimizeRoundtrips,
+                alias -> false);
 
         int successful = successfulClusters;
         int skipped = skippedClusters;
@@ -252,6 +253,7 @@ public class SearchResponseTests extends ESTestCase {
             SearchResponse.Cluster update = new SearchResponse.Cluster(
                 cluster.getClusterAlias(),
                 cluster.getIndexExpression(),
+                false,
                 status,
                 totalShards,
                 successfulShards,
