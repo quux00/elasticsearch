@@ -38,6 +38,7 @@ public class CrossClusterSearchProgressListener extends SearchProgressListener {
      * @param clusters The statistics for remote clusters included in the search.
      * @param fetchPhase <code>true</code> if the search needs a fetch phase, <code>false</code> otherwise.
      **/
+    @Override
     public void onListShards(List<SearchShard> shards, List<SearchShard> skipped, SearchResponse.Clusters clusters, boolean fetchPhase) {
         logger.warn("XXX SSS CCSProgListener onListShards: shards size: {}; shards: {}", shards.size(), shards);
         logger.warn("XXX SSS CCSProgListener onListShards: skipped size: {}; skipped: {}", skipped.size(), skipped);
@@ -105,11 +106,17 @@ public class CrossClusterSearchProgressListener extends SearchProgressListener {
         }
     }
 
+    @Override
+    public void onShardFailure(final int shardIndex, SearchShardTarget shard, Exception e) {
+        logger.warn("XXX SSS CCSProgListener onShardFailure. shardIdx {}, SearchShardTarget: {}; Exception: {}", shardIndex, shard, e);
+    }
+
     /**
      * Executed when a shard returns a query result.
      *
      * @param shardIndex The index of the shard in the list provided by {@link SearchProgressListener#onListShards} )}.
      */
+    @Override
     public void onQueryResult(int shardIndex) {
         logger.warn("XXX SSS CCSProgListener onQueryResult shardIdx: {}", shardIndex);
     }
@@ -121,6 +128,7 @@ public class CrossClusterSearchProgressListener extends SearchProgressListener {
      * @param shardTarget The last shard target that thrown an exception.
      * @param exc The cause of the failure.
      */
+    @Override
     public void onQueryFailure(int shardIndex, SearchShardTarget shardTarget, Exception exc) {
         logger.warn("XXX SSS CCSProgListener onQueryFailure shardTarget: {}; exc: {}", shardTarget, exc);
     }
@@ -134,7 +142,15 @@ public class CrossClusterSearchProgressListener extends SearchProgressListener {
      * @param aggs The partial result for aggregations.
      * @param reducePhase The version number for this reduce.
      */
-    public void onPartialReduce(List<SearchShard> shards, TotalHits totalHits, InternalAggregations aggs, int reducePhase) {}
+    @Override
+    public void onPartialReduce(List<SearchShard> shards, TotalHits totalHits, InternalAggregations aggs, int reducePhase) {
+        logger.warn(
+            "XXX SSS CCSProgListener onPartialReduce. shards {}, totalHits: {}; reducePhase: {}",
+            shards,
+            totalHits.value,
+            reducePhase
+        );
+    }
 
     /**
      * Executed once when the final reduce is created.
@@ -144,14 +160,25 @@ public class CrossClusterSearchProgressListener extends SearchProgressListener {
      * @param aggs The final result for aggregations.
      * @param reducePhase The version number for this reduce.
      */
-    public void onFinalReduce(List<SearchShard> shards, TotalHits totalHits, InternalAggregations aggs, int reducePhase) {}
+    @Override
+    public void onFinalReduce(List<SearchShard> shards, TotalHits totalHits, InternalAggregations aggs, int reducePhase) {
+        logger.warn(
+            "XXX SSS CCSProgListener onFinalReduce. shards {}, totalHits: {}; reducePhase: {}",
+            shards,
+            totalHits.value,
+            reducePhase
+        );
+    }
 
     /**
      * Executed when a shard returns a fetch result.
      *
      * @param shardIndex The index of the shard in the list provided by {@link SearchProgressListener#onListShards})}.
      */
-    public void onFetchResult(int shardIndex) {}
+    @Override
+    public void onFetchResult(int shardIndex) {
+        logger.warn("XXX SSS CCSProgListener onFetchResult shardIndex: {}", shardIndex);
+    }
 
     /**
      * Executed when a shard reports a fetch failure.
@@ -160,6 +187,7 @@ public class CrossClusterSearchProgressListener extends SearchProgressListener {
      * @param shardTarget The last shard target that thrown an exception.
      * @param exc The cause of the failure.
      */
+    @Override
     public void onFetchFailure(int shardIndex, SearchShardTarget shardTarget, Exception exc) {
         logger.warn("XXX SSS CCSProgListener onFetchFailure shardTarget: {}; exc: {}", shardTarget, exc);
     }

@@ -782,8 +782,13 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             }
             failures.add(failure);
             String indexExpression = orig.getIndexExpression();
-            SearchResponse.Cluster updated = new SearchResponse.Cluster(clusterAlias, indexExpression, orig.isSkipUnavailable(), status,
-                failures);
+            SearchResponse.Cluster updated = new SearchResponse.Cluster(
+                clusterAlias,
+                indexExpression,
+                orig.isSkipUnavailable(),
+                status,
+                failures
+            );
             swapped = clusterRef.compareAndSet(orig, updated);
         } while (swapped == false);
     }
@@ -1234,6 +1239,16 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     })
                 );
             } else {
+                // for synchronous CCS minimize_roundtrips=false, use the CrossClusterSearchProgressListener
+                // this is not needed for async since it has its own Listener.
+                // (AsyncSearchTask will not return SearchProgressListener.NOOP)
+                /// MP TODO what about async search MRT=false - how are we going to handle that? does it's Listener need to be updated?
+                if (clusters.isCcsMinimizeRoundtrips() == false
+                    && clusters.hasRemoteClusters()
+                    && task.getProgressListener() == SearchProgressListener.NOOP) {
+                    task.setProgressListener(new CrossClusterSearchProgressListener());
+                }
+
                 final QueryPhaseResultConsumer queryResultConsumer = searchPhaseController.newSearchPhaseResults(
                     executor,
                     circuitBreaker,

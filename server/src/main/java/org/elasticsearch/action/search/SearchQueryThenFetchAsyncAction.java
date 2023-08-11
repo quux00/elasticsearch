@@ -29,8 +29,6 @@ import static org.elasticsearch.action.search.SearchPhaseController.getTopDocsSi
 
 class SearchQueryThenFetchAsyncAction extends AbstractSearchAsyncAction<SearchPhaseResult> {
 
-    private final SearchProgressListener progressListener;
-
     // informations to track the best bottom top doc globally.
     private final int topDocsSize;
     private final int trackTotalHitsUpTo;
@@ -72,7 +70,6 @@ class SearchQueryThenFetchAsyncAction extends AbstractSearchAsyncAction<SearchPh
         );
         this.topDocsSize = getTopDocsSize(request);
         this.trackTotalHitsUpTo = request.resolveTrackTotalHitsUpTo();
-        this.progressListener = task.getProgressListener();
 
         // register the release of the query consumer to free up the circuit breaker memory
         // at the end of the search

@@ -43,6 +43,14 @@ public abstract class SearchProgressListener {
     protected void onListShards(List<SearchShard> shards, List<SearchShard> skippedShards, Clusters clusters, boolean fetchPhase) {}
 
     /**
+     * TODO: DOCUMENT ME
+     * @param shardIndex
+     * @param shard
+     * @param e
+     */
+    protected void onShardFailure(final int shardIndex, SearchShardTarget shard, Exception e) {}
+
+    /**
      * Executed when a shard returns a query result.
      *
      * @param shardIndex The index of the shard in the list provided by {@link SearchProgressListener#onListShards} )}.
@@ -101,6 +109,14 @@ public abstract class SearchProgressListener {
             onListShards(shards, skippedShards, clusters, fetchPhase);
         } catch (Exception e) {
             logger.warn("Failed to execute progress listener on list shards", e);
+        }
+    }
+
+    final void notifyShardFailure(final int shardIndex, SearchShardTarget shard, Exception e) {
+        try {
+            onShardFailure(shardIndex, shard, e);
+        } catch (Exception exc) {
+            logger.warn("Failed to execute progress listener on list shards", exc);
         }
     }
 

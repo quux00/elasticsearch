@@ -750,6 +750,16 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             return clusterInfo.keySet().size() > 0;
         }
 
+        /**
+         * @return true if this Clusters object has been initialized with remote Cluster objects
+         *              This will be false for local-cluster (non-CCS) only searches.
+         */
+        public boolean hasRemoteClusters() {
+            if (clusterInfo.size() > 1) {
+                return true;
+            }
+            return clusterInfo.size() > 0 && clusterInfo.containsKey(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY) == false;
+        }
     }
 
     /**

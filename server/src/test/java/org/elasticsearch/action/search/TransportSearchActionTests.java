@@ -523,8 +523,7 @@ public class TransportSearchActionTests extends ESTestCase {
                 ActionListener.wrap(r -> fail("no response expected"), failure::set),
                 latch
             );
-            SearchResponse.Clusters initClusters = new SearchResponse.Clusters(localIndices, remoteIndicesByCluster,
-                true, alias -> false);
+            SearchResponse.Clusters initClusters = new SearchResponse.Clusters(localIndices, remoteIndicesByCluster, true, alias -> false);
 
             TransportSearchAction.ccsRemoteReduce(
                 new TaskId("n", 1),
@@ -592,8 +591,12 @@ public class TransportSearchActionTests extends ESTestCase {
                     ActionTestUtils.assertNoFailureListener(response::set),
                     latch
                 );
-                SearchResponse.Clusters initClusters = new SearchResponse.Clusters(localIndices, remoteIndicesByCluster, true,
-                    alias -> false);
+                SearchResponse.Clusters initClusters = new SearchResponse.Clusters(
+                    localIndices,
+                    remoteIndicesByCluster,
+                    true,
+                    alias -> false
+                );
 
                 TransportSearchAction.ccsRemoteReduce(
                     new TaskId("n", 1),
