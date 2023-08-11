@@ -96,7 +96,7 @@ public class CrossClusterSearchIT extends AbstractMultiClustersTestCase {
         PlainActionFuture<SearchResponse> queryFuture = new PlainActionFuture<>();
         SearchRequest searchRequest = new SearchRequest(localIndex, REMOTE_CLUSTER + ":" + remoteIndex);
         searchRequest.allowPartialSearchResults(false);
-        boolean minimizeRoundtrips = true;  // TODO: support MRT=false
+        boolean minimizeRoundtrips = false;  // TODO: change to randomBoolean()
         searchRequest.setCcsMinimizeRoundtrips(minimizeRoundtrips);
 
         searchRequest.source(new SearchSourceBuilder().query(new MatchAllQueryBuilder()).size(1000));
@@ -148,8 +148,9 @@ public class CrossClusterSearchIT extends AbstractMultiClustersTestCase {
         PlainActionFuture<SearchResponse> queryFuture = new PlainActionFuture<>();
         SearchRequest searchRequest = new SearchRequest(localIndex, REMOTE_CLUSTER + ":" + remoteIndex);
         searchRequest.allowPartialSearchResults(false);
-        boolean minimizeRoundtrips = true; // TODO support MRT=false
+        boolean minimizeRoundtrips = false; // TODO support MRT=false
         searchRequest.setCcsMinimizeRoundtrips(minimizeRoundtrips);
+        searchRequest.setPreFilterShardSize(1);
         RangeQueryBuilder rangeQueryBuilder = new RangeQueryBuilder("@timestamp").from(EARLIEST_TIMESTAMP - 2000)
             .to(EARLIEST_TIMESTAMP - 1000);
 
@@ -160,6 +161,7 @@ public class CrossClusterSearchIT extends AbstractMultiClustersTestCase {
 
         SearchResponse searchResponse = queryFuture.get();
         assertNotNull(searchResponse);
+        System.err.println(searchResponse);
 
         SearchResponse.Clusters clusters = searchResponse.getClusters();
         assertFalse("search cluster results should NOT be marked as partial", clusters.hasPartialResults());

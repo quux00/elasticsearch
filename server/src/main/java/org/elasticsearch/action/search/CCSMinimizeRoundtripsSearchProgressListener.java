@@ -24,11 +24,10 @@ import java.util.stream.Stream;
 /**
  * DOCUMENT ME
  */
-public class CrossClusterSearchProgressListener extends SearchProgressListener {
+public class CCSMinimizeRoundtripsSearchProgressListener extends SearchProgressListener {
 
-    private static final Logger logger = LogManager.getLogger(CrossClusterSearchProgressListener.class);
-
-    private boolean ccsMinimizeRoundtrips;
+    private static final Logger logger = LogManager.getLogger(CCSMinimizeRoundtripsSearchProgressListener.class);
+    private SearchResponse.Clusters clusters;
 
     /**
      * Executed when shards are ready to be queried.
@@ -44,65 +43,71 @@ public class CrossClusterSearchProgressListener extends SearchProgressListener {
         logger.warn("XXX SSS CCSProgListener onListShards: skipped size: {}; skipped: {}", skipped.size(), skipped);
         logger.warn("XXX SSS CCSProgListener onListShards: clusters: {}", clusters);
         logger.warn("XXX SSS CCSProgListener onListShards: fetchPhase: {}", fetchPhase);
-        ccsMinimizeRoundtrips = clusters.isCcsMinimizeRoundtrips();
+        assert clusters.isCcsMinimizeRoundtrips() == false : "minimize_roundtrips must be false to use this SearchListener";
 
-        if (ccsMinimizeRoundtrips == false) {
-            // Partition by clusterAlias and get counts
-            Map<String, Integer> totalByClusterAlias = Stream.concat(shards.stream(), skipped.stream())
-                .collect(Collectors.groupingBy(shard -> {
-                    String clusterAlias = shard.clusterAlias();
-                    return clusterAlias != null ? clusterAlias : RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
-                }, Collectors.reducing(0, e -> 1, Integer::sum)));
-            Map<String, Integer> skippedByClusterAlias = skipped.stream().collect(Collectors.groupingBy(shard -> {
+        this.clusters = clusters;
+
+        try {
+            throw new RuntimeException("SSS CCSProgList onListShards ");
+        } catch (RuntimeException e) {
+            logger.warn(e.getMessage() + " stack trace ", e);
+        }
+
+        // Partition by clusterAlias and get counts
+        Map<String, Integer> totalByClusterAlias = Stream.concat(shards.stream(), skipped.stream())
+            .collect(Collectors.groupingBy(shard -> {
                 String clusterAlias = shard.clusterAlias();
                 return clusterAlias != null ? clusterAlias : RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
             }, Collectors.reducing(0, e -> 1, Integer::sum)));
+        Map<String, Integer> skippedByClusterAlias = skipped.stream().collect(Collectors.groupingBy(shard -> {
+            String clusterAlias = shard.clusterAlias();
+            return clusterAlias != null ? clusterAlias : RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
+        }, Collectors.reducing(0, e -> 1, Integer::sum)));
 
-            for (Map.Entry<String, Integer> entry : totalByClusterAlias.entrySet()) {
-                String clusterAlias = entry.getKey();
-                AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
-                if (clusterRef.get().getTotalShards() != null) {
-                    // this cluster has already had initial state set by SearchShards API
-                    continue;
-                }
-
-                final Integer totalCount = entry.getValue();
-                System.err.println("XXX SSS CCSProgListener onListShards totalCount for " + clusterAlias + " = " + totalCount);
-                /// MP TODO I don't know where this skipped list is really coming from - does it deal with SearchShards API results?
-                /// MP TODO Is this called post local can-match?
-                final Integer skippedCount = skippedByClusterAlias.get(clusterAlias);
-                System.err.println("XXX SSS CCSProgListener onListShards skippedCount for " + clusterAlias + " = " + skippedCount);
-
-                boolean swapped;
-                do {
-                    SearchResponse.Cluster curr = clusterRef.get();
-                    SearchResponse.Cluster.Status status = curr.getStatus();
-                    assert status == SearchResponse.Cluster.Status.RUNNING
-                        : "should have RUNNING status during onListShards but has " + status;
-                    Integer currSkippedShards = curr.getSkippedShards();
-                    System.err.printf(
-                        "XXX SSS CCSProgListener currSkippedShards = %s; incoming skippedCount = %s\n",
-                        currSkippedShards,
-                        skippedCount
-                    );
-                    SearchResponse.Cluster updated = new SearchResponse.Cluster(
-                        curr.getClusterAlias(),
-                        curr.getIndexExpression(),
-                        curr.isSkipUnavailable(),
-                        status,
-                        entry.getValue(),
-                        0,
-                        skippedByClusterAlias.get(clusterAlias) == null ? 0 : skippedByClusterAlias.get(clusterAlias),
-                        0,
-                        curr.getFailures(),
-                        null,
-                        false  /// MP TODO: need to deal with timed_out in MRT=false - how do that?
-                    );
-                    swapped = clusterRef.compareAndSet(curr, updated);
-                    logger.warn("XXX SSS CCSProgListener onListShards DEBUG 66 swapped: {} ;; new cluster: {}", swapped, updated);
-                } while (swapped == false);
-
+        for (Map.Entry<String, Integer> entry : totalByClusterAlias.entrySet()) {
+            String clusterAlias = entry.getKey();
+            AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
+            if (clusterRef.get().getTotalShards() != null) {
+                // this cluster has already had initial state set by SearchShards API handler
+                /// MP TODO: will I need to implement the SearchShards API handler (innerOnResponse) handler or should we do it all here?
+                continue;
             }
+
+            final Integer totalCount = entry.getValue();
+            System.err.println("XXX SSS CCSProgListener onListShards totalCount for " + clusterAlias + " = " + totalCount);
+            /// MP TODO I don't know where this skipped list is really coming from - does it deal with SearchShards API results?
+            /// MP TODO Is this called post local can-match?
+            final Integer skippedCount = skippedByClusterAlias.get(clusterAlias);
+            System.err.println("XXX SSS CCSProgListener onListShards skippedCount for " + clusterAlias + " = " + skippedCount);
+
+            boolean swapped;
+            do {
+                SearchResponse.Cluster curr = clusterRef.get();
+                SearchResponse.Cluster.Status status = curr.getStatus();
+                assert status == SearchResponse.Cluster.Status.RUNNING
+                    : "should have RUNNING status during onListShards but has " + status;
+                Integer currSkippedShards = curr.getSkippedShards();
+                System.err.printf(
+                    "XXX SSS CCSProgListener currSkippedShards = %s; incoming skippedCount = %s\n",
+                    currSkippedShards,
+                    skippedCount
+                );
+                SearchResponse.Cluster updated = new SearchResponse.Cluster(
+                    curr.getClusterAlias(),
+                    curr.getIndexExpression(),
+                    curr.isSkipUnavailable(),
+                    status,
+                    entry.getValue(),
+                    0,
+                    skippedByClusterAlias.get(clusterAlias) == null ? 0 : skippedByClusterAlias.get(clusterAlias),
+                    0,
+                    curr.getFailures(),
+                    null,
+                    false  /// MP TODO: need to deal with timed_out in MRT=false - how do that?
+                );
+                swapped = clusterRef.compareAndSet(curr, updated);
+                logger.warn("XXX SSS CCSProgListener onListShards DEBUG 66 swapped: {} ;; new cluster: {}", swapped, updated);
+            } while (swapped == false);
         }
     }
 

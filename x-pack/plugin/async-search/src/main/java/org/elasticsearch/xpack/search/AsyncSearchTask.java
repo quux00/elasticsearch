@@ -6,6 +6,8 @@
  */
 package org.elasticsearch.xpack.search;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.search.TotalHits;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.ElasticsearchStatusException;
@@ -13,6 +15,7 @@ import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.cluster.node.tasks.cancel.CancelTasksRequest;
 import org.elasticsearch.action.admin.cluster.node.tasks.cancel.CancelTasksResponse;
+import org.elasticsearch.action.search.CCSMinimizeRoundtripsSearchProgressListener;
 import org.elasticsearch.action.search.SearchProgressActionListener;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
@@ -50,6 +53,7 @@ import static java.util.Collections.singletonList;
  * Task that tracks the progress of a currently running {@link SearchRequest}.
  */
 final class AsyncSearchTask extends SearchTask implements AsyncTask {
+    private static final Logger logger = LogManager.getLogger(AsyncSearchTask.class);
     private final AsyncExecutionId searchId;
     private final Client client;
     private final ThreadPool threadPool;
@@ -367,20 +371,48 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask {
 
     class Listener extends SearchProgressActionListener {
 
+        private CCSMinimizeRoundtripsSearchProgressListener delegate;
+
+        @Override
+        protected void onListShards(List<SearchShard> shards, List<SearchShard> skipped, Clusters clusters, boolean fetchPhase) {
+            // best effort to cancel expired tasks
+            checkCancellation();
+            ccsMinimizeRoundtrips = clusters.isCcsMinimizeRoundtrips();
+            if (ccsMinimizeRoundtrips == false) {
+                logger.warn("XXX AsyncSearchTask.Listener settting CCSMinimizeRoundtripsSearchProgressListener as delegate");
+                delegate = new CCSMinimizeRoundtripsSearchProgressListener();
+                delegate.onListShards(shards, skipped, clusters, fetchPhase);
+            }
+            searchResponse.compareAndSet(
+                null,
+                new MutableSearchResponse(shards.size() + skipped.size(), skipped.size(), clusters, threadPool.getThreadContext())
+            );
+            executeInitListeners();
+        }
+
         @Override
         protected void onQueryResult(int shardIndex) {
             checkCancellation();
+            if (delegate != null) {
+                delegate.onQueryResult(shardIndex);
+            }
         }
 
         @Override
         protected void onFetchResult(int shardIndex) {
             checkCancellation();
+            if (delegate != null) {
+                delegate.onFetchResult(shardIndex);
+            }
         }
 
         @Override
         protected void onQueryFailure(int shardIndex, SearchShardTarget shardTarget, Exception exc) {
             // best effort to cancel expired tasks
             checkCancellation();
+            if (delegate != null) {
+                delegate.onQueryFailure(shardIndex, shardTarget, exc);
+            }
             searchResponse.get()
                 .addQueryFailure(
                     shardIndex,
@@ -399,18 +431,6 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask {
             // failures either as an exception (when all shards failed during fetch, in which case async search will return the error
             // as well as the response obtained after the final reduction) or as part of the final response (if only some shards failed,
             // in which case the final response already includes results as well as shard fetch failures)
-        }
-
-        @Override
-        protected void onListShards(List<SearchShard> shards, List<SearchShard> skipped, Clusters clusters, boolean fetchPhase) {
-            // best effort to cancel expired tasks
-            checkCancellation();
-            ccsMinimizeRoundtrips = clusters.isCcsMinimizeRoundtrips();
-            searchResponse.compareAndSet(
-                null,
-                new MutableSearchResponse(shards.size() + skipped.size(), skipped.size(), clusters, threadPool.getThreadContext())
-            );
-            executeInitListeners();
         }
 
         @Override
@@ -433,6 +453,9 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask {
                  */
                 reducedAggs = () -> InternalAggregations.topLevelReduce(singletonList(aggregations), aggReduceContextSupplier.get());
             }
+            if (delegate != null) {
+                delegate.onPartialReduce(shards, totalHits, aggregations, reducePhase);
+            }
             searchResponse.get().updatePartialResponse(shards.size(), totalHits, reducedAggs, reducePhase);
         }
 
@@ -444,6 +467,9 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask {
         public void onFinalReduce(List<SearchShard> shards, TotalHits totalHits, InternalAggregations aggregations, int reducePhase) {
             // best effort to cancel expired tasks
             checkCancellation();
+            if (delegate != null) {
+                delegate.onFinalReduce(shards, totalHits, aggregations, reducePhase);
+            }
             searchResponse.get().updatePartialResponse(shards.size(), totalHits, () -> aggregations, reducePhase);
         }
 

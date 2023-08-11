@@ -14,8 +14,10 @@ import org.elasticsearch.action.admin.cluster.node.tasks.cancel.CancelTasksReque
 import org.elasticsearch.action.admin.cluster.node.tasks.cancel.CancelTasksResponse;
 import org.elasticsearch.action.admin.cluster.node.tasks.list.ListTasksResponse;
 import org.elasticsearch.action.search.SearchAction;
+import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.search.ShardSearchFailure;
+import org.elasticsearch.action.support.PlainActionFuture;
 import org.elasticsearch.action.support.master.AcknowledgedResponse;
 import org.elasticsearch.client.internal.Client;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
@@ -25,6 +27,7 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.IndexModule;
 import org.elasticsearch.index.query.MatchAllQueryBuilder;
+import org.elasticsearch.index.query.RangeQueryBuilder;
 import org.elasticsearch.index.shard.SearchOperationListener;
 import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.plugins.SearchPlugin;
@@ -82,6 +85,8 @@ import static org.hamcrest.Matchers.not;
 public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
 
     private static final String REMOTE_CLUSTER = "cluster_a";
+    private static long EARLIEST_TIMESTAMP = 1691348810000L;
+    private static long LATEST_TIMESTAMP = 1691348820000L;
 
     @Override
     protected Collection<String> remoteClusterAlias() {
@@ -140,7 +145,7 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
         SearchListenerPlugin.blockQueryPhase();
 
         SubmitAsyncSearchRequest request = new SubmitAsyncSearchRequest(localIndex, REMOTE_CLUSTER + ":" + remoteIndex);
-        request.setCcsMinimizeRoundtrips(true);
+        request.setCcsMinimizeRoundtrips(false); /// MP TODO: randomBoolean()
         request.setWaitForCompletionTimeout(TimeValue.timeValueMillis(1));
         request.setKeepOnCompletion(true);
         request.getSearchRequest().source(new SearchSourceBuilder().query(new MatchAllQueryBuilder()).size(1000));
@@ -174,6 +179,7 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
 
         {
             AsyncSearchResponse finishedResponse = getAsyncSearch(response.getId());
+            System.err.println(Strings.toString(finishedResponse.toXContent(XContentFactory.jsonBuilder(), ToXContent.EMPTY_PARAMS)));
 
             SearchResponse.Clusters clusters = finishedResponse.getSearchResponse().getClusters();
             assertFalse("search cluster results should NOT be marked as partial", clusters.hasPartialResults());
@@ -231,6 +237,86 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
             assertThat(remoteClusterSearchInfo.getFailedShards(), equalTo(0));
             assertThat(remoteClusterSearchInfo.getFailures().size(), equalTo(0));
             assertThat(remoteClusterSearchInfo.getTook().millis(), greaterThan(0L));
+        }
+    }
+
+    // CCS with a search where the timestamp of the query cannot match so should be SUCCESSFUL with all shards skipped
+    // during can-match
+    public void testCCSClusterDetailsWhereAllShardsSkippedInCanMatch() throws Exception {
+        Map<String, Object> testClusterInfo = setupTwoClusters();
+        String localIndex = (String) testClusterInfo.get("local.index");
+        String remoteIndex = (String) testClusterInfo.get("remote.index");
+        int localNumShards = (Integer) testClusterInfo.get("local.num_shards");
+        int remoteNumShards = (Integer) testClusterInfo.get("remote.num_shards");
+
+        SearchListenerPlugin.blockQueryPhase();
+
+        SubmitAsyncSearchRequest request = new SubmitAsyncSearchRequest(localIndex, REMOTE_CLUSTER + ":" + remoteIndex);
+        request.setCcsMinimizeRoundtrips(false); /// MP TODO: randomBoolean()
+        request.setWaitForCompletionTimeout(TimeValue.timeValueMillis(1));
+        request.setKeepOnCompletion(true);
+        RangeQueryBuilder rangeQueryBuilder = new RangeQueryBuilder("@timestamp").from(100)
+                .to(2000);
+        request.getSearchRequest().source(new SearchSourceBuilder().query(rangeQueryBuilder).size(10));
+
+        AsyncSearchResponse response = submitAsyncSearch(request);
+        assertNotNull(response.getSearchResponse());
+        assertTrue(response.isRunning());
+
+        {
+            SearchResponse.Clusters clusters = response.getSearchResponse().getClusters();
+            assertThat(clusters.getTotal(), equalTo(2));
+            assertTrue("search cluster results should be marked as partial", clusters.hasPartialResults());
+
+            SearchResponse.Cluster localClusterSearchInfo = clusters.getCluster(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY).get();
+            assertNotNull(localClusterSearchInfo);
+            assertThat(localClusterSearchInfo.getStatus(), equalTo(SearchResponse.Cluster.Status.RUNNING));
+
+            SearchResponse.Cluster remoteClusterSearchInfo = clusters.getCluster(REMOTE_CLUSTER).get();
+            assertNotNull(remoteClusterSearchInfo);
+            assertThat(localClusterSearchInfo.getStatus(), equalTo(SearchResponse.Cluster.Status.RUNNING));
+        }
+
+        SearchListenerPlugin.waitSearchStarted();
+        SearchListenerPlugin.allowQueryPhase();
+
+        assertBusy(() -> {
+            AsyncStatusResponse statusResponse = getAsyncStatus(response.getId());
+            assertFalse(statusResponse.isRunning());
+            assertNotNull(statusResponse.getCompletionStatus());
+        });
+
+        {
+            AsyncSearchResponse finishedResponse = getAsyncSearch(response.getId());
+            assertNotNull(finishedResponse);
+            System.err.println(Strings.toString(finishedResponse.toXContent(XContentFactory.jsonBuilder(), ToXContent.EMPTY_PARAMS)));
+
+            SearchResponse.Clusters clusters = finishedResponse.getSearchResponse().getClusters();
+            assertFalse("search cluster results should NOT be marked as partial", clusters.hasPartialResults());
+            assertThat(clusters.getTotal(), equalTo(2));
+            assertThat(clusters.getSuccessful(), equalTo(2));
+            assertThat(clusters.getSkipped(), equalTo(0));
+
+            SearchResponse.Cluster localClusterSearchInfo = clusters.getCluster(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY).get();
+            assertNotNull(localClusterSearchInfo);
+            SearchResponse.Cluster remoteClusterSearchInfo = clusters.getCluster(REMOTE_CLUSTER).get();
+            assertNotNull(remoteClusterSearchInfo);
+
+            assertThat(localClusterSearchInfo.getStatus(), equalTo(SearchResponse.Cluster.Status.SUCCESSFUL));
+            assertThat(localClusterSearchInfo.getTotalShards(), equalTo(localNumShards));
+            assertThat(localClusterSearchInfo.getSuccessfulShards(), equalTo(localNumShards));
+            assertThat(localClusterSearchInfo.getSkippedShards(), equalTo(0));
+            assertThat(localClusterSearchInfo.getFailedShards(), equalTo(0));
+            assertThat(localClusterSearchInfo.getFailures().size(), equalTo(0));
+            assertThat(localClusterSearchInfo.getTook().millis(), greaterThanOrEqualTo(0L));
+
+            assertThat(remoteClusterSearchInfo.getStatus(), equalTo(SearchResponse.Cluster.Status.SUCCESSFUL));
+            assertThat(remoteClusterSearchInfo.getTotalShards(), equalTo(remoteNumShards));
+            assertThat(remoteClusterSearchInfo.getSuccessfulShards(), equalTo(remoteNumShards));
+            assertThat(remoteClusterSearchInfo.getSkippedShards(), equalTo(0));
+            assertThat(remoteClusterSearchInfo.getFailedShards(), equalTo(0));
+            assertThat(remoteClusterSearchInfo.getFailures().size(), equalTo(0));
+            assertThat(remoteClusterSearchInfo.getTook().millis(), greaterThanOrEqualTo(0L));
         }
     }
 
@@ -1193,9 +1279,13 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
     }
 
     private int indexDocs(Client client, String index) {
-        int numDocs = between(1, 10);
+        int numDocs = between(50, 100);
         for (int i = 0; i < numDocs; i++) {
-            client.prepareIndex(index).setSource("f", "v").get();
+            long ts = EARLIEST_TIMESTAMP + i;
+            if (i == numDocs - 1) {
+                ts = LATEST_TIMESTAMP;
+            }
+            client.prepareIndex(index).setSource("f", "v", "@timestamp", ts).get();
         }
         client.admin().indices().prepareRefresh(index).get();
         return numDocs;
