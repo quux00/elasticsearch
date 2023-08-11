@@ -102,6 +102,8 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
 
     private final List<Releasable> releasables = new ArrayList<>();
 
+    protected final SearchProgressListener progressListener;
+
     AbstractSearchAsyncAction(
         String name,
         Logger logger,
@@ -166,6 +168,9 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
         this.aliasFilter = aliasFilter;
         this.results = resultConsumer;
         this.clusters = clusters;
+        this.progressListener = (task == null || task.getProgressListener() == null)
+            ? SearchProgressListener.NOOP
+            : task.getProgressListener();
     }
 
     protected void notifyListShards(
@@ -177,7 +182,8 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
             SearchProgressListener.buildSearchShards(this.shardsIts),
             SearchProgressListener.buildSearchShards(toSkipShardsIts),
             clusters,
-            sourceBuilder == null || sourceBuilder.size() > 0
+            sourceBuilder == null || sourceBuilder.size() > 0,
+            timeProvider
         );
     }
 
