@@ -50,7 +50,7 @@ public abstract class SearchProgressListener {
      * @param shard
      * @param e
      */
-    protected void onShardFailure(final int shardIndex, SearchShardTarget shard, Exception e) {}
+    protected void onShardFailure(int shardIndex, SearchShardTarget shard, Exception e) {}
 
     /**
      * Executed when a shard returns a query result.
