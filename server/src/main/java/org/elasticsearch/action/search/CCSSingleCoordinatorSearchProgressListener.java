@@ -11,6 +11,7 @@ package org.elasticsearch.action.search;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.search.TotalHits;
+import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.search.SearchShardTarget;
 import org.elasticsearch.search.aggregations.InternalAggregations;
 import org.elasticsearch.transport.RemoteClusterAware;
@@ -22,15 +23,21 @@ import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
 /**
- * DOCUMENT ME
+ * Use this progress listener for cross-cluster searches where a single
+ * coordinator is used for all clusters (minimize_roundtrips=false).
+ * It updates state in the SearchResponse.Clusters object as the search
+ * progresses so that the metadata required for the _clusters/details
+ * section in the SearchResponse is accurate.
  */
-public class CCSMinimizeRoundtripsSearchProgressListener extends SearchProgressListener {
+public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressListener {
 
-    private static final Logger logger = LogManager.getLogger(CCSMinimizeRoundtripsSearchProgressListener.class);
+    private static final Logger logger = LogManager.getLogger(CCSSingleCoordinatorSearchProgressListener.class);
     private SearchResponse.Clusters clusters;
+    private TransportSearchAction.SearchTimeProvider timeProvider;
+
 
     /**
-     * Executed when shards are ready to be queried.
+     * Executed when shards are ready to be queried (after can-match)
      *
      * @param shards The list of shards to query.
      * @param skipped The list of skipped shards.
@@ -38,7 +45,8 @@ public class CCSMinimizeRoundtripsSearchProgressListener extends SearchProgressL
      * @param fetchPhase <code>true</code> if the search needs a fetch phase, <code>false</code> otherwise.
      **/
     @Override
-    public void onListShards(List<SearchShard> shards, List<SearchShard> skipped, SearchResponse.Clusters clusters, boolean fetchPhase) {
+    public void onListShards(List<SearchShard> shards, List<SearchShard> skipped, SearchResponse.Clusters clusters, boolean fetchPhase,
+                             TransportSearchAction.SearchTimeProvider timeProvider) {
         logger.warn("XXX SSS CCSProgListener onListShards: shards size: {}; shards: {}", shards.size(), shards);
         logger.warn("XXX SSS CCSProgListener onListShards: skipped size: {}; skipped: {}", skipped.size(), skipped);
         logger.warn("XXX SSS CCSProgListener onListShards: clusters: {}", clusters);
@@ -46,12 +54,7 @@ public class CCSMinimizeRoundtripsSearchProgressListener extends SearchProgressL
         assert clusters.isCcsMinimizeRoundtrips() == false : "minimize_roundtrips must be false to use this SearchListener";
 
         this.clusters = clusters;
-
-        try {
-            throw new RuntimeException("SSS CCSProgList onListShards ");
-        } catch (RuntimeException e) {
-            logger.warn(e.getMessage() + " stack trace ", e);
-        }
+        this.timeProvider = timeProvider;
 
         // Partition by clusterAlias and get counts
         Map<String, Integer> totalByClusterAlias = Stream.concat(shards.stream(), skipped.stream())
@@ -67,17 +70,16 @@ public class CCSMinimizeRoundtripsSearchProgressListener extends SearchProgressL
         for (Map.Entry<String, Integer> entry : totalByClusterAlias.entrySet()) {
             String clusterAlias = entry.getKey();
             AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
-            if (clusterRef.get().getTotalShards() != null) {
-                // this cluster has already had initial state set by SearchShards API handler
-                /// MP TODO: will I need to implement the SearchShards API handler (innerOnResponse) handler or should we do it all here?
-                continue;
-            }
+            assert clusterRef.get().getTotalShards() == null : "total shards should not be set on a Cluster before onListShards";
 
-            final Integer totalCount = entry.getValue();
+            Integer totalCount = entry.getValue();
+            Integer skippedCount = skippedByClusterAlias.get(clusterAlias);
+            if (skippedCount == null) {
+                skippedCount = 0;
+            }
+            TimeValue took = null;
+
             System.err.println("XXX SSS CCSProgListener onListShards totalCount for " + clusterAlias + " = " + totalCount);
-            /// MP TODO I don't know where this skipped list is really coming from - does it deal with SearchShards API results?
-            /// MP TODO Is this called post local can-match?
-            final Integer skippedCount = skippedByClusterAlias.get(clusterAlias);
             System.err.println("XXX SSS CCSProgListener onListShards skippedCount for " + clusterAlias + " = " + skippedCount);
 
             boolean swapped;
@@ -86,26 +88,25 @@ public class CCSMinimizeRoundtripsSearchProgressListener extends SearchProgressL
                 SearchResponse.Cluster.Status status = curr.getStatus();
                 assert status == SearchResponse.Cluster.Status.RUNNING
                     : "should have RUNNING status during onListShards but has " + status;
-                Integer currSkippedShards = curr.getSkippedShards();
-                System.err.printf(
-                    "XXX SSS CCSProgListener currSkippedShards = %s; incoming skippedCount = %s\n",
-                    currSkippedShards,
-                    skippedCount
-                );
+                if (skippedCount != null && skippedCount == totalCount) {
+                    took = new TimeValue(timeProvider.buildTookInMillis());
+                    status = SearchResponse.Cluster.Status.SUCCESSFUL;
+                }
                 SearchResponse.Cluster updated = new SearchResponse.Cluster(
                     curr.getClusterAlias(),
                     curr.getIndexExpression(),
                     curr.isSkipUnavailable(),
                     status,
-                    entry.getValue(),
-                    0,
-                    skippedByClusterAlias.get(clusterAlias) == null ? 0 : skippedByClusterAlias.get(clusterAlias),
+                    totalCount,
+                    skippedCount,
+                    skippedCount,
                     0,
                     curr.getFailures(),
-                    null,
-                    false  /// MP TODO: need to deal with timed_out in MRT=false - how do that?
+                    took,
+                    false
                 );
                 swapped = clusterRef.compareAndSet(curr, updated);
+                assert swapped : "compareAndSet in onListShards should never fail due to race condition";
                 logger.warn("XXX SSS CCSProgListener onListShards DEBUG 66 swapped: {} ;; new cluster: {}", swapped, updated);
             } while (swapped == false);
         }

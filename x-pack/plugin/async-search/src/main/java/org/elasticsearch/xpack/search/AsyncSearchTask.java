@@ -15,7 +15,7 @@ import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.cluster.node.tasks.cancel.CancelTasksRequest;
 import org.elasticsearch.action.admin.cluster.node.tasks.cancel.CancelTasksResponse;
-import org.elasticsearch.action.search.CCSMinimizeRoundtripsSearchProgressListener;
+import org.elasticsearch.action.search.CCSSingleCoordinatorSearchProgressListener;
 import org.elasticsearch.action.search.SearchProgressActionListener;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
@@ -23,6 +23,7 @@ import org.elasticsearch.action.search.SearchResponse.Clusters;
 import org.elasticsearch.action.search.SearchShard;
 import org.elasticsearch.action.search.SearchTask;
 import org.elasticsearch.action.search.ShardSearchFailure;
+import org.elasticsearch.action.search.TransportSearchAction;
 import org.elasticsearch.client.internal.Client;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.search.SearchShardTarget;
@@ -371,17 +372,18 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask {
 
     class Listener extends SearchProgressActionListener {
 
-        private CCSMinimizeRoundtripsSearchProgressListener delegate;
+        private CCSSingleCoordinatorSearchProgressListener delegate;
 
         @Override
-        protected void onListShards(List<SearchShard> shards, List<SearchShard> skipped, Clusters clusters, boolean fetchPhase) {
+        protected void onListShards(List<SearchShard> shards, List<SearchShard> skipped, Clusters clusters, boolean fetchPhase,
+                                    TransportSearchAction.SearchTimeProvider timeProvider) {
             // best effort to cancel expired tasks
             checkCancellation();
             ccsMinimizeRoundtrips = clusters.isCcsMinimizeRoundtrips();
-            if (ccsMinimizeRoundtrips == false) {
-                logger.warn("XXX AsyncSearchTask.Listener settting CCSMinimizeRoundtripsSearchProgressListener as delegate");
-                delegate = new CCSMinimizeRoundtripsSearchProgressListener();
-                delegate.onListShards(shards, skipped, clusters, fetchPhase);
+            if (ccsMinimizeRoundtrips == false && clusters.hasClusterObjects()) {
+                logger.warn("XXX AsyncSearchTask.Listener settting CCSSingleCoordinatorSearchProgressListener as delegate");
+                delegate = new CCSSingleCoordinatorSearchProgressListener();
+                delegate.onListShards(shards, skipped, clusters, fetchPhase, timeProvider);
             }
             searchResponse.compareAndSet(
                 null,

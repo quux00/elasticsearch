@@ -254,7 +254,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
      * to moving backwards due to NTP and other such complexities, etc.). There are also issues with
      * using a relative clock for reporting real time. Thus, we simply separate these two uses.
      */
-    record SearchTimeProvider(long absoluteStartMillis, long relativeStartNanos, LongSupplier relativeCurrentNanosProvider) {
+    public record SearchTimeProvider(long absoluteStartMillis, long relativeStartNanos, LongSupplier relativeCurrentNanosProvider) {
 
         /**
          * Instantiates a new search time provider. The absolute start time is the real clock time
@@ -267,7 +267,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
          * @param relativeStartNanos           the relative start time in nanoseconds
          * @param relativeCurrentNanosProvider provides the current relative time
          */
-        SearchTimeProvider {}
+        public SearchTimeProvider {}
 
         long buildTookInMillis() {
             return TimeUnit.NANOSECONDS.toMillis(relativeCurrentNanosProvider.getAsLong() - relativeStartNanos);
@@ -333,7 +333,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     );
                     if (localIndices == null) {
                         // Notify the progress listener that a CCS with minimize_roundtrips is happening remote-only (no local shards)
-                        task.getProgressListener().notifyListShards(Collections.emptyList(), Collections.emptyList(), clusters, false);
+                        task.getProgressListener().notifyListShards(Collections.emptyList(), Collections.emptyList(), clusters,
+                            false, timeProvider);
                     }
                     ccsRemoteReduce(
                         parentTaskId,
@@ -1260,16 +1261,16 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     })
                 );
             } else {
-                // for synchronous CCS minimize_roundtrips=false, use the CCSMinimizeRoundtripsSearchProgressListener
+                // for synchronous CCS minimize_roundtrips=false, use the CCSSingleCoordinatorSearchProgressListener
                 // this is not needed for async since it has its own Listener.
                 // (AsyncSearchTask will not return SearchProgressListener.NOOP)
                 /// MP TODO what about async search MRT=false - how are we going to handle that? does its Listener need to be updated?
-                logger.warn("XXX about to set CCSMinimizeRoundtripsSearchProgressListener");
+                logger.warn("XXX about to set CCSSingleCoordinatorSearchProgressListener");
                 if (clusters.isCcsMinimizeRoundtrips() == false
                     && clusters.hasRemoteClusters()
                     && task.getProgressListener() == SearchProgressListener.NOOP) {
-                    logger.warn("XXX SETTING CCSMinimizeRoundtripsSearchProgressListener");
-                    task.setProgressListener(new CCSMinimizeRoundtripsSearchProgressListener());
+                    logger.warn("XXX SETTING CCSSingleCoordinatorSearchProgressListener");
+                    task.setProgressListener(new CCSSingleCoordinatorSearchProgressListener());
                 }
                 final QueryPhaseResultConsumer queryResultConsumer = searchPhaseController.newSearchPhaseResults(
                     executor,

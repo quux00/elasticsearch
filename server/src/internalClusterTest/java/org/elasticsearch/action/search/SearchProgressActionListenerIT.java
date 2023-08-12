@@ -109,7 +109,8 @@ public class SearchProgressActionListenerIT extends ESSingleNodeTestCase {
                 List<SearchShard> searchShards,
                 List<SearchShard> skippedShards,
                 SearchResponse.Clusters clusters,
-                boolean fetchPhase
+                boolean fetchPhase,
+                TransportSearchAction.SearchTimeProvider timeProvider
             ) {
                 shardsListener.set(searchShards);
                 assertEquals(fetchPhase, hasFetchPhase);

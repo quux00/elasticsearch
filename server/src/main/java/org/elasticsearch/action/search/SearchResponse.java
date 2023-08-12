@@ -475,7 +475,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
         private final Map<String, AtomicReference<Cluster>> clusterInfo;
 
         // this field is not Writeable, as it is only needed on the initial "querying cluster" coordinator of a CCS search
-        private final transient boolean ccsMinimizeRoundtrips;
+        private final boolean ccsMinimizeRoundtrips;
 
         /**
          * For use with cross-cluster searches.
@@ -522,6 +522,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
          * @param skipped number of skipped clusters (skipped can only happen for remote clusters with skip_unavailable=true)
          */
         public Clusters(int total, int successful, int skipped) {
+            /// MP TODO: change assert to total == 1 or total = 0
             assert total >= 0 && successful >= 0 && skipped >= 0 && successful <= total
                 : "total: " + total + " successful: " + successful + " skipped: " + skipped;
             assert skipped == total - successful : "total: " + total + " successful: " + successful + " skipped: " + skipped;
@@ -548,7 +549,11 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             } else {
                 this.clusterInfo = Collections.emptyMap();
             }
-            this.ccsMinimizeRoundtrips = false;
+            if (in.getTransportVersion().onOrAfter(TransportVersion.V_8_500_054)) {  /// MP TODO: need to bump to new TransportVersion
+                this.ccsMinimizeRoundtrips = in.readBoolean();
+            } else {
+                this.ccsMinimizeRoundtrips = false;
+            }
             assert total >= 0 : "total is negative: " + total;
             assert total >= successful + skipped
                 : "successful + skipped is larger than total. total: " + total + " successful: " + successful + " skipped: " + skipped;
@@ -576,6 +581,9 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
                 } else {
                     out.writeList(Collections.emptyList());
                 }
+            }
+            if (out.getTransportVersion().onOrAfter(TransportVersion.V_8_500_054)) {  /// MP TODO: need to bump to new TransportVersion
+                out.writeBoolean(ccsMinimizeRoundtrips);
             }
         }
 
@@ -881,7 +889,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             }
             this.timedOut = in.readBoolean();
             this.failures = Collections.unmodifiableList(in.readList(ShardSearchFailure::readShardSearchFailure));
-            if (in.getTransportVersion().onOrAfter(TransportVersion.V_8_500_052)) {  /// MP TODO: need to bump to new TransportVersion
+            if (in.getTransportVersion().onOrAfter(TransportVersion.V_8_500_054)) {  /// MP TODO: need to bump to new TransportVersion
                 this.skipUnavailable = in.readBoolean();
             } else {
                 this.skipUnavailable = false;
@@ -900,7 +908,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             out.writeOptionalLong(took == null ? null : took.millis());
             out.writeBoolean(timedOut);
             out.writeList(failures);
-            if (out.getTransportVersion().onOrAfter(TransportVersion.V_8_500_052)) {  /// MP TODO: need to bump to new TransportVersion
+            if (out.getTransportVersion().onOrAfter(TransportVersion.V_8_500_054)) {  /// MP TODO: need to bump to new TransportVersion
                 out.writeBoolean(skipUnavailable);
             }
         }
