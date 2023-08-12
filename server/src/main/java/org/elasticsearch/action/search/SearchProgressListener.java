@@ -41,8 +41,13 @@ public abstract class SearchProgressListener {
      * @param fetchPhase <code>true</code> if the search needs a fetch phase, <code>false</code> otherwise.
      * @param timeProvider absolute and relative time provider for this search
      **/
-    protected void onListShards(List<SearchShard> shards, List<SearchShard> skippedShards, Clusters clusters, boolean fetchPhase,
-                                TransportSearchAction.SearchTimeProvider timeProvider) {}
+    protected void onListShards(
+        List<SearchShard> shards,
+        List<SearchShard> skippedShards,
+        Clusters clusters,
+        boolean fetchPhase,
+        TransportSearchAction.SearchTimeProvider timeProvider
+    ) {}
 
     /**
      * TODO: DOCUMENT ME
@@ -105,8 +110,13 @@ public abstract class SearchProgressListener {
      */
     protected void onFetchFailure(int shardIndex, SearchShardTarget shardTarget, Exception exc) {}
 
-    final void notifyListShards(List<SearchShard> shards, List<SearchShard> skippedShards, Clusters clusters, boolean fetchPhase,
-                                TransportSearchAction.SearchTimeProvider timeProvider) {
+    final void notifyListShards(
+        List<SearchShard> shards,
+        List<SearchShard> skippedShards,
+        Clusters clusters,
+        boolean fetchPhase,
+        TransportSearchAction.SearchTimeProvider timeProvider
+    ) {
         this.shards = shards;
         try {
             onListShards(shards, skippedShards, clusters, fetchPhase, timeProvider);

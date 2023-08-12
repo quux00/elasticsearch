@@ -158,8 +158,8 @@ public class AsyncSearchTaskTests extends ESTestCase {
             thread.start();
         }
         assertFalse(latch.await(numThreads * 2, TimeUnit.MILLISECONDS));
-        task.getSearchProgressActionListener().onListShards(shards, skippedShards, SearchResponse.Clusters.EMPTY, false,
-            createTimeProvider());
+        task.getSearchProgressActionListener()
+            .onListShards(shards, skippedShards, SearchResponse.Clusters.EMPTY, false, createTimeProvider());
         latch.await();
     }
 
@@ -257,8 +257,8 @@ public class AsyncSearchTaskTests extends ESTestCase {
             skippedShards.add(new SearchShard(null, new ShardId("0", "0", 1)));
         }
         int totalShards = numShards + numSkippedShards;
-        task.getSearchProgressActionListener().onListShards(shards, skippedShards, SearchResponse.Clusters.EMPTY, false,
-            createTimeProvider());
+        task.getSearchProgressActionListener()
+            .onListShards(shards, skippedShards, SearchResponse.Clusters.EMPTY, false, createTimeProvider());
         for (int i = 0; i < numShards; i++) {
             task.getSearchProgressActionListener()
                 .onPartialReduce(shards.subList(i, i + 1), new TotalHits(0, TotalHits.Relation.GREATER_THAN_OR_EQUAL_TO), null, 0);
@@ -285,8 +285,8 @@ public class AsyncSearchTaskTests extends ESTestCase {
         }
         int totalShards = numShards + numSkippedShards;
         /// MP TODO: we should now test these NOT using Clsuters.EMPTY
-        task.getSearchProgressActionListener().onListShards(shards, skippedShards, SearchResponse.Clusters.EMPTY, false,
-            createTimeProvider());
+        task.getSearchProgressActionListener()
+            .onListShards(shards, skippedShards, SearchResponse.Clusters.EMPTY, false, createTimeProvider());
         for (int i = 0; i < numShards; i++) {
             task.getSearchProgressActionListener()
                 .onPartialReduce(shards.subList(i, i + 1), new TotalHits(0, TotalHits.Relation.GREATER_THAN_OR_EQUAL_TO), null, 0);
@@ -322,8 +322,8 @@ public class AsyncSearchTaskTests extends ESTestCase {
             skippedShards.add(new SearchShard(null, new ShardId("0", "0", 1)));
         }
         int totalShards = numShards + numSkippedShards;
-        task.getSearchProgressActionListener().onListShards(shards, skippedShards, SearchResponse.Clusters.EMPTY, false,
-            createTimeProvider());
+        task.getSearchProgressActionListener()
+            .onListShards(shards, skippedShards, SearchResponse.Clusters.EMPTY, false, createTimeProvider());
         for (int i = 0; i < numShards; i++) {
             task.getSearchProgressActionListener()
                 .onPartialReduce(shards.subList(0, i + 1), new TotalHits(0, TotalHits.Relation.GREATER_THAN_OR_EQUAL_TO), null, 0);
@@ -355,8 +355,8 @@ public class AsyncSearchTaskTests extends ESTestCase {
             skippedShards.add(new SearchShard(null, new ShardId("0", "0", 1)));
         }
         int totalShards = numShards + numSkippedShards;
-        task.getSearchProgressActionListener().onListShards(shards, skippedShards, SearchResponse.Clusters.EMPTY, false,
-            createTimeProvider());
+        task.getSearchProgressActionListener()
+            .onListShards(shards, skippedShards, SearchResponse.Clusters.EMPTY, false, createTimeProvider());
 
         listener.onFailure(new SearchPhaseExecutionException("fetch", "boum", ShardSearchFailure.EMPTY_ARRAY));
         assertCompletionListeners(task, totalShards, 0, numSkippedShards, 0, true, true);
@@ -484,10 +484,6 @@ public class AsyncSearchTaskTests extends ESTestCase {
     }
 
     static TransportSearchAction.SearchTimeProvider createTimeProvider() {
-        return new TransportSearchAction.SearchTimeProvider(
-            System.currentTimeMillis(),
-            System.nanoTime(),
-            System::nanoTime
-        );
+        return new TransportSearchAction.SearchTimeProvider(System.currentTimeMillis(), System.nanoTime(), System::nanoTime);
     }
 }

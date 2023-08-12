@@ -375,8 +375,13 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask {
         private CCSSingleCoordinatorSearchProgressListener delegate;
 
         @Override
-        protected void onListShards(List<SearchShard> shards, List<SearchShard> skipped, Clusters clusters, boolean fetchPhase,
-                                    TransportSearchAction.SearchTimeProvider timeProvider) {
+        protected void onListShards(
+            List<SearchShard> shards,
+            List<SearchShard> skipped,
+            Clusters clusters,
+            boolean fetchPhase,
+            TransportSearchAction.SearchTimeProvider timeProvider
+        ) {
             // best effort to cancel expired tasks
             checkCancellation();
             ccsMinimizeRoundtrips = clusters.isCcsMinimizeRoundtrips();

@@ -333,8 +333,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     );
                     if (localIndices == null) {
                         // Notify the progress listener that a CCS with minimize_roundtrips is happening remote-only (no local shards)
-                        task.getProgressListener().notifyListShards(Collections.emptyList(), Collections.emptyList(), clusters,
-                            false, timeProvider);
+                        task.getProgressListener()
+                            .notifyListShards(Collections.emptyList(), Collections.emptyList(), clusters, false, timeProvider);
                     }
                     ccsRemoteReduce(
                         parentTaskId,
@@ -639,7 +639,6 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         }
         return new SearchResponseMerger(from, size, trackTotalHitsUpTo, timeProvider, aggReduceContextBuilder);
     }
-
 
     /**
      * Used for ccs_minimize_roundtrips=false

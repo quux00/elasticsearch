@@ -36,7 +36,6 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
     private SearchResponse.Clusters clusters;
     private TransportSearchAction.SearchTimeProvider timeProvider;
 
-
     /**
      * Executed when shards are ready to be queried (after can-match)
      *
@@ -46,8 +45,13 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
      * @param fetchPhase <code>true</code> if the search needs a fetch phase, <code>false</code> otherwise.
      **/
     @Override
-    public void onListShards(List<SearchShard> shards, List<SearchShard> skipped, SearchResponse.Clusters clusters, boolean fetchPhase,
-                             TransportSearchAction.SearchTimeProvider timeProvider) {
+    public void onListShards(
+        List<SearchShard> shards,
+        List<SearchShard> skipped,
+        SearchResponse.Clusters clusters,
+        boolean fetchPhase,
+        TransportSearchAction.SearchTimeProvider timeProvider
+    ) {
         logger.warn("XXX SSS CCSProgListener onListShards: shards size: {}; shards: {}", shards.size(), shards);
         logger.warn("XXX SSS CCSProgListener onListShards: skipped size: {}; skipped: {}", skipped.size(), skipped);
         logger.warn("XXX SSS CCSProgListener onListShards: clusters: {}", clusters);
@@ -58,11 +62,10 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
         this.timeProvider = timeProvider;
 
         // Partition by clusterAlias and get counts
-        Map<String, Integer> totalByClusterAlias = Stream.concat(shards.stream(), skipped.stream())
-            .collect(Collectors.groupingBy(shard -> {
-                String clusterAlias = shard.clusterAlias();
-                return clusterAlias != null ? clusterAlias : RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
-            }, Collectors.reducing(0, e -> 1, Integer::sum)));
+        Map<String, Integer> totalByClusterAlias = Stream.concat(shards.stream(), skipped.stream()).collect(Collectors.groupingBy(shard -> {
+            String clusterAlias = shard.clusterAlias();
+            return clusterAlias != null ? clusterAlias : RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
+        }, Collectors.reducing(0, e -> 1, Integer::sum)));
         Map<String, Integer> skippedByClusterAlias = skipped.stream().collect(Collectors.groupingBy(shard -> {
             String clusterAlias = shard.clusterAlias();
             return clusterAlias != null ? clusterAlias : RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
@@ -87,8 +90,7 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
             do {
                 SearchResponse.Cluster curr = clusterRef.get();
                 SearchResponse.Cluster.Status status = curr.getStatus();
-                assert status == SearchResponse.Cluster.Status.RUNNING
-                    : "should have RUNNING status during onListShards but has " + status;
+                assert status == SearchResponse.Cluster.Status.RUNNING : "should have RUNNING status during onListShards but has " + status;
                 if (skippedCount != null && skippedCount == totalCount) {
                     took = new TimeValue(timeProvider.buildTookInMillis());
                     status = SearchResponse.Cluster.Status.SUCCESSFUL;
@@ -223,6 +225,71 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
             totalHits.value,
             reducePhase
         );
+
+        if (clusters.hasClusterObjects() == false) {
+            return;
+        }
+
+        try {
+            throw new RuntimeException("__L__ onFinalReduce");
+        } catch (RuntimeException e) {
+            logger.warn(e.getMessage() + " stack trace ", e);
+        }
+
+        Map<String, Integer> totalByClusterAlias = shards.stream().collect(Collectors.groupingBy(shard -> {
+            String clusterAlias = shard.clusterAlias();
+            return clusterAlias != null ? clusterAlias : RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
+        }, Collectors.reducing(0, e -> 1, Integer::sum)));
+
+        System.err.println("XXX __L__ CCSProgListener onFinalReduce: " + totalByClusterAlias);
+        for (Map.Entry<String, Integer> entry : totalByClusterAlias.entrySet()) {
+            String clusterAlias = entry.getKey();
+            if (clusterAlias == null) {
+                clusterAlias = RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
+            }
+            int successfulCount = entry.getValue().intValue();
+
+            AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
+            boolean swapped;
+            do {
+                SearchResponse.Cluster curr = clusterRef.get();
+                SearchResponse.Cluster.Status status = curr.getStatus();
+                assert status == SearchResponse.Cluster.Status.RUNNING
+                    : "should have RUNNING status when onFinalReduce is called but has " + curr.getStatus();
+
+                TimeValue took = new TimeValue(timeProvider.buildTookInMillis());
+                // curr.getSuccessfulShards() may be > 0 since skipped shards from can-match increment the successful shards counter
+                int successfulShards = curr.getSuccessfulShards() + successfulCount;
+                assert successfulShards + curr.getFailedShards() == curr.getTotalShards()
+                    : "successfulShards("
+                        + successfulShards
+                        + ") + failedShards("
+                        + curr.getFailedShards()
+                        + ") != totalShards ("
+                        + curr.getTotalShards()
+                        + ')';
+                if (successfulShards == curr.getTotalShards()) {
+                    status = SearchResponse.Cluster.Status.SUCCESSFUL;
+                } else {
+                    status = SearchResponse.Cluster.Status.PARTIAL;
+                }
+                SearchResponse.Cluster updated = new SearchResponse.Cluster(
+                    curr.getClusterAlias(),
+                    curr.getIndexExpression(),
+                    curr.isSkipUnavailable(),
+                    status,
+                    curr.getTotalShards(),
+                    successfulShards,
+                    curr.getSkippedShards(),
+                    curr.getFailedShards(),
+                    curr.getFailures(),
+                    took,
+                    false  /// MP TODO: need to deal with timed_out in MRT=false - how do that?
+                );
+                swapped = clusterRef.compareAndSet(curr, updated);
+                logger.warn("XXX __L__ DEBUG 44 onFinalReduce swapped: {} ;; new cluster: {}", updated);
+            } while (swapped == false);
+        }
     }
 
     /**

@@ -98,8 +98,7 @@ public class QueryPhaseResultConsumerTests extends ESTestCase {
             System.nanoTime(),
             System::nanoTime
         );
-        searchProgressListener.notifyListShards(searchShards, Collections.emptyList(), SearchResponse.Clusters.EMPTY, false,
-            timeProvider);
+        searchProgressListener.notifyListShards(searchShards, Collections.emptyList(), SearchResponse.Clusters.EMPTY, false, timeProvider);
 
         SearchRequest searchRequest = new SearchRequest("index");
         searchRequest.setBatchedReduceSize(2);

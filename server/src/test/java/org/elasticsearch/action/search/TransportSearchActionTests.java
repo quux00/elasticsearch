@@ -591,12 +591,7 @@ public class TransportSearchActionTests extends ESTestCase {
                     ActionTestUtils.assertNoFailureListener(response::set),
                     latch
                 );
-                SearchResponse.Clusters clusters = new SearchResponse.Clusters(
-                    localIndices,
-                    remoteIndicesByCluster,
-                    true,
-                    alias -> false
-                );
+                SearchResponse.Clusters clusters = new SearchResponse.Clusters(localIndices, remoteIndicesByCluster, true, alias -> false);
 
                 TransportSearchAction.ccsRemoteReduce(
                     new TaskId("n", 1),
@@ -869,12 +864,7 @@ public class TransportSearchActionTests extends ESTestCase {
                 final CountDownLatch latch = new CountDownLatch(1);
                 AtomicReference<Map<String, SearchShardsResponse>> response = new AtomicReference<>();
                 AtomicInteger skippedClusters = new AtomicInteger();
-                SearchResponse.Clusters clusters = new SearchResponse.Clusters(
-                    null,
-                    remoteIndicesByCluster,
-                    true,
-                    clusterAlias -> true
-                );
+                SearchResponse.Clusters clusters = new SearchResponse.Clusters(null, remoteIndicesByCluster, true, clusterAlias -> true);
                 TransportSearchAction.collectSearchShards(
                     IndicesOptions.lenientExpandOpen(),
                     null,
@@ -904,12 +894,7 @@ public class TransportSearchActionTests extends ESTestCase {
                 final CountDownLatch latch = new CountDownLatch(1);
                 AtomicReference<Exception> failure = new AtomicReference<>();
                 AtomicInteger skippedClusters = new AtomicInteger(0);
-                SearchResponse.Clusters clusters = new SearchResponse.Clusters(
-                    null,
-                    remoteIndicesByCluster,
-                    true,
-                    clusterAlias -> true
-                );
+                SearchResponse.Clusters clusters = new SearchResponse.Clusters(null, remoteIndicesByCluster, true, clusterAlias -> true);
                 TransportSearchAction.collectSearchShards(
                     IndicesOptions.lenientExpandOpen(),
                     "index_not_found",
@@ -958,12 +943,7 @@ public class TransportSearchActionTests extends ESTestCase {
                 final CountDownLatch latch = new CountDownLatch(1);
                 AtomicInteger skippedClusters = new AtomicInteger(0);
                 AtomicReference<Exception> failure = new AtomicReference<>();
-                SearchResponse.Clusters clusters = new SearchResponse.Clusters(
-                    null,
-                    remoteIndicesByCluster,
-                    true,
-                    clusterAlias -> true
-                );
+                SearchResponse.Clusters clusters = new SearchResponse.Clusters(null, remoteIndicesByCluster, true, clusterAlias -> true);
                 TransportSearchAction.collectSearchShards(
                     IndicesOptions.lenientExpandOpen(),
                     null,
@@ -994,12 +974,7 @@ public class TransportSearchActionTests extends ESTestCase {
                 final CountDownLatch latch = new CountDownLatch(1);
                 AtomicInteger skippedClusters = new AtomicInteger(0);
                 AtomicReference<Map<String, SearchShardsResponse>> response = new AtomicReference<>();
-                SearchResponse.Clusters clusters = new SearchResponse.Clusters(
-                    null,
-                    remoteIndicesByCluster,
-                    true,
-                    clusterAlias -> true
-                );
+                SearchResponse.Clusters clusters = new SearchResponse.Clusters(null, remoteIndicesByCluster, true, clusterAlias -> true);
                 TransportSearchAction.collectSearchShards(
                     IndicesOptions.lenientExpandOpen(),
                     null,
@@ -1046,12 +1021,7 @@ public class TransportSearchActionTests extends ESTestCase {
                 final CountDownLatch latch = new CountDownLatch(1);
                 AtomicInteger skippedClusters = new AtomicInteger(0);
                 AtomicReference<Map<String, SearchShardsResponse>> response = new AtomicReference<>();
-                SearchResponse.Clusters clusters = new SearchResponse.Clusters(
-                    null,
-                    remoteIndicesByCluster,
-                    true,
-                    clusterAlias -> true
-                );
+                SearchResponse.Clusters clusters = new SearchResponse.Clusters(null, remoteIndicesByCluster, true, clusterAlias -> true);
                 TransportSearchAction.collectSearchShards(
                     IndicesOptions.lenientExpandOpen(),
                     null,
