@@ -359,7 +359,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                         )
                     );
                 } else {
-                    AtomicInteger skippedClusters = new AtomicInteger(0);
+                    AtomicInteger skippedClusters = new AtomicInteger(0);  /// MP TODO: I believe this can be removed now
                     SearchResponse.Clusters clusters = new SearchResponse.Clusters(
                         localIndices,
                         remoteClusterIndices,

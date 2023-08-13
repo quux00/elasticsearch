@@ -158,7 +158,7 @@ public class CrossClusterSearchIT extends AbstractMultiClustersTestCase {
         RangeQueryBuilder rangeQueryBuilder = new RangeQueryBuilder("@timestamp").from(EARLIEST_TIMESTAMP - 2000)
             .to(EARLIEST_TIMESTAMP - 1000);
 
-        searchRequest.source(new SearchSourceBuilder().query(rangeQueryBuilder).size(1000));
+        searchRequest.source(new SearchSourceBuilder().query(rangeQueryBuilder).size(10));
         client(LOCAL_CLUSTER).search(searchRequest, queryFuture);
 
         System.err.println("minimizeRoundtrips: " + minimizeRoundtrips);
