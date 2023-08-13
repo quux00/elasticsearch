@@ -583,7 +583,6 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
                 successfulOps.decrementAndGet(); // if this shard was successful before (initial phase) we have to adjust the counter
             }
         }
-        progressListener.notifyShardFailure(shardIndex, shardTarget, e);
         results.consumeShardFailure(shardIndex);
     }
 

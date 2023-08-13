@@ -116,12 +116,6 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
         }
     }
 
-    /// MP TODO remove this from the SearchProgressListener abstract parent - don't need it !!
-    @Override
-    public void onShardFailure(int shardIndex, SearchShardTarget shard, Exception e) {
-        // logger.warn("XXX __L__ CCSProgListener onShardFailure. shardIdx {}, SearchShardTarget: {}; Exception: {}", shardIndex, shard, e);
-    }
-
     /**
      * Executed when a shard returns a query result.
      *
