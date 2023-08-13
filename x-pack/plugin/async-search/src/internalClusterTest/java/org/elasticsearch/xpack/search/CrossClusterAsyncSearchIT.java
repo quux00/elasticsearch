@@ -34,6 +34,7 @@ import org.elasticsearch.search.builder.SearchSourceBuilder;
 import org.elasticsearch.search.internal.LegacyReaderContext;
 import org.elasticsearch.search.internal.ReaderContext;
 import org.elasticsearch.search.internal.SearchContext;
+import org.elasticsearch.search.query.SlowRunningQueryBuilder;
 import org.elasticsearch.search.query.ThrowingQueryBuilder;
 import org.elasticsearch.tasks.CancellableTask;
 import org.elasticsearch.tasks.TaskCancelledException;
@@ -800,7 +801,7 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
             assertThat(remoteClusterSearchInfo.getSkippedShards(), equalTo(0));
             assertThat(remoteClusterSearchInfo.getFailedShards(), equalTo(0));
             assertThat(remoteClusterSearchInfo.getFailures().size(), equalTo(0));
-            assertThat(localClusterSearchInfo.getTook().millis(), greaterThanOrEqualTo(0L));
+            assertThat(remoteClusterSearchInfo.getTook().millis(), greaterThanOrEqualTo(0L));
             assertTrue(remoteClusterSearchInfo.isTimedOut());
         }
         // check that the async_search/status response includes the same cluster details

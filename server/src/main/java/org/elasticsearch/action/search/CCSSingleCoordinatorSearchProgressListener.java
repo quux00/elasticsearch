@@ -116,9 +116,10 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
         }
     }
 
+    /// MP TODO remove this from the SearchProgressListener abstract parent - don't need it !!
     @Override
     public void onShardFailure(int shardIndex, SearchShardTarget shard, Exception e) {
-        logger.warn("XXX __L__ CCSProgListener onShardFailure. shardIdx {}, SearchShardTarget: {}; Exception: {}", shardIndex, shard, e);
+        // logger.warn("XXX __L__ CCSProgListener onShardFailure. shardIdx {}, SearchShardTarget: {}; Exception: {}", shardIndex, shard, e);
     }
 
     /**
@@ -129,7 +130,7 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
      */
     @Override
     public void onQueryResult(int shardIndex, QuerySearchResult queryResult) {
-        logger.warn("XXX __Q__ CCSProgListener onQueryResult for : {}", queryResult.getSearchShardTarget());
+        // logger.warn("XXX __Q__ CCSProgListener onQueryResult for : {}", queryResult.getSearchShardTarget());
         if (queryResult.searchTimedOut() && clusters.hasClusterObjects()) {
             logger.warn("XXX __Q__ CCSProgListener onQueryResult TIMED_OUT on target: {}", queryResult.getSearchShardTarget());
             SearchShardTarget shardTarget = queryResult.getSearchShardTarget();
@@ -175,7 +176,7 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
      */
     @Override
     public void onQueryFailure(int shardIndex, SearchShardTarget shardTarget, Exception e) {
-        logger.warn("XXX __L__ CCSProgListener onQueryFailure shardTarget: {}; exc: {}", shardTarget, e);
+        // logger.warn("XXX __L__ CCSProgListener onQueryFailure shardTarget: {}; exc: {}", shardTarget, e);
 
         if (clusters.hasClusterObjects() == false) {
             return;
@@ -239,12 +240,12 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
      */
     @Override
     public void onPartialReduce(List<SearchShard> shards, TotalHits totalHits, InternalAggregations aggs, int reducePhase) {
-        logger.warn(
-            "XXX __P__ CCSProgListener onPartialReduce. shards {}, totalHits: {}; reducePhase: {}",
-            shards,
-            totalHits.value,
-            reducePhase
-        );
+        // logger.warn(
+        // "XXX __P__ CCSProgListener onPartialReduce. shards {}, totalHits: {}; reducePhase: {}",
+        // shards,
+        // totalHits.value,
+        // reducePhase
+        // );
 
         Map<String, Integer> totalByClusterAlias = shards.stream().collect(Collectors.groupingBy(shard -> {
             String clusterAlias = shard.clusterAlias();
@@ -267,11 +268,11 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
                 }
                 TimeValue took = null;
                 int successfulShards = successfulCount + curr.getSkippedShards();
-                if (successfulShards + curr.getFailedShards() == curr.getTotalShards()) {
-                    status = SearchResponse.Cluster.Status.PARTIAL;
+                if (successfulShards == curr.getTotalShards()) {
+                    status = curr.isTimedOut() ? SearchResponse.Cluster.Status.PARTIAL : SearchResponse.Cluster.Status.SUCCESSFUL;
                     took = new TimeValue(timeProvider.buildTookInMillis());
-                } else if (successfulShards == curr.getTotalShards()) {
-                    status = SearchResponse.Cluster.Status.SUCCESSFUL;
+                } else if (successfulShards + curr.getFailedShards() == curr.getTotalShards()) {
+                    status = SearchResponse.Cluster.Status.PARTIAL;
                     took = new TimeValue(timeProvider.buildTookInMillis());
                 }
                 SearchResponse.Cluster updated = new SearchResponse.Cluster(
@@ -303,12 +304,12 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
      */
     @Override
     public void onFinalReduce(List<SearchShard> shards, TotalHits totalHits, InternalAggregations aggs, int reducePhase) {
-        logger.warn(
-            "XXX __L__ CCSProgListener onFinalReduce. shards {}, totalHits: {}; reducePhase: {}",
-            shards,
-            totalHits.value,
-            reducePhase
-        );
+        // logger.warn(
+        // "XXX __L__ CCSProgListener onFinalReduce. shards {}, totalHits: {}; reducePhase: {}",
+        // shards,
+        // totalHits.value,
+        // reducePhase
+        // );
 
         if (clusters.hasClusterObjects() == false) {
             return;
@@ -375,14 +376,7 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
      * @param shardIndex The index of the shard in the list provided by {@link SearchProgressListener#onListShards})}.
      */
     @Override
-    public void onFetchResult(int shardIndex) {
-        logger.warn("XXX __L__ CCSProgListener onFetchResult shardIndex: {}", shardIndex);
-        try {
-            throw new RuntimeException("DDD");
-        } catch (RuntimeException e) {
-            logger.warn(e.getMessage() + " stack trace ", e);
-        }
-    }
+    public void onFetchResult(int shardIndex) {}
 
     /**
      * Executed when a shard reports a fetch failure.
@@ -392,7 +386,5 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
      * @param exc The cause of the failure.
      */
     @Override
-    public void onFetchFailure(int shardIndex, SearchShardTarget shardTarget, Exception exc) {
-        logger.warn("XXX __L__ CCSProgListener onFetchFailure shardTarget: {}; exc: {}", shardTarget, exc);
-    }
+    public void onFetchFailure(int shardIndex, SearchShardTarget shardTarget, Exception exc) {}
 }
