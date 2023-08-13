@@ -155,7 +155,7 @@ public class QueryPhaseResultConsumerTests extends ESTestCase {
         }
 
         @Override
-        protected void onQueryResult(int shardIndex) {
+        protected void onQueryResult(int shardIndex, QuerySearchResult queryResult) {
             onQueryResult.incrementAndGet();
             throw new UnsupportedOperationException();
         }

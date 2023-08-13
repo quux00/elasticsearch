@@ -14,6 +14,7 @@ import org.apache.lucene.search.TotalHits;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.search.SearchShardTarget;
 import org.elasticsearch.search.aggregations.InternalAggregations;
+import org.elasticsearch.search.query.QuerySearchResult;
 import org.elasticsearch.transport.RemoteClusterAware;
 
 import java.util.ArrayList;
@@ -123,11 +124,46 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
     /**
      * Executed when a shard returns a query result.
      *
-     * @param shardIndex The index of the shard in the list provided by {@link SearchProgressListener#onListShards} )}.
+     * @param shardIndex  The index of the shard in the list provided by {@link SearchProgressListener#onListShards} )}.
+     * @param queryResult QuerySearchResult holding the result for a SearchShardTarget
      */
     @Override
-    public void onQueryResult(int shardIndex) {
-        logger.warn("XXX __L__ CCSProgListener onQueryResult shardIdx: {}", shardIndex);
+    public void onQueryResult(int shardIndex, QuerySearchResult queryResult) {
+        logger.warn("XXX __Q__ CCSProgListener onQueryResult for : {}", queryResult.getSearchShardTarget());
+        if (queryResult.searchTimedOut() && clusters.hasClusterObjects()) {
+            logger.warn("XXX __Q__ CCSProgListener onQueryResult TIMED_OUT on target: {}", queryResult.getSearchShardTarget());
+            SearchShardTarget shardTarget = queryResult.getSearchShardTarget();
+            String clusterAlias = shardTarget.getClusterAlias();
+            if (clusterAlias == null) {
+                clusterAlias = RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
+            }
+            AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
+            boolean swapped;
+            do {
+                SearchResponse.Cluster curr = clusterRef.get();
+                if (curr.isTimedOut()) {
+                    break; // already marked as timed out on some other shard
+                }
+                if (curr.getStatus() == SearchResponse.Cluster.Status.FAILED || curr.getStatus() == SearchResponse.Cluster.Status.SKIPPED) {
+                    break; // safety check to make sure it hasn't hit a terminal FAILED/SKIPPED state where timeouts don't matter
+                }
+                SearchResponse.Cluster updated = new SearchResponse.Cluster(
+                    curr.getClusterAlias(),
+                    curr.getIndexExpression(),
+                    curr.isSkipUnavailable(),
+                    curr.getStatus(),
+                    curr.getTotalShards(),
+                    curr.getSuccessfulShards(),
+                    curr.getSkippedShards(),
+                    curr.getFailedShards(),
+                    curr.getFailures(),
+                    curr.getTook(),
+                    true
+                );
+                swapped = clusterRef.compareAndSet(curr, updated);
+                logger.warn("XXX __Q__ onQueryResult swapped: {} ;; new cluster: {}", swapped, updated);
+            } while (swapped == false);
+        }
     }
 
     /**
@@ -141,54 +177,55 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
     public void onQueryFailure(int shardIndex, SearchShardTarget shardTarget, Exception e) {
         logger.warn("XXX __L__ CCSProgListener onQueryFailure shardTarget: {}; exc: {}", shardTarget, e);
 
-        if (clusters.hasClusterObjects()) {
-            String clusterAlias = shardTarget.getClusterAlias();
-            if (clusterAlias == null) {
-                clusterAlias = RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
-            }
-            AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
-            boolean swapped;
-            do {
-                TimeValue took = null;
-                SearchResponse.Cluster curr = clusterRef.get();
-                SearchResponse.Cluster.Status status = SearchResponse.Cluster.Status.RUNNING;
-                int numFailedShards = curr.getFailedShards() == null ? 1 : curr.getFailedShards() + 1;
-
-                assert curr.getTotalShards() != null : "total shards should be set on the Cluster but not for " + clusterAlias;
-                if (curr.getTotalShards() == numFailedShards) {
-                    if (curr.isSkipUnavailable()) {
-                        logger.warn("XXX __L__ onQueryFailure SETTING SKIPPED status bcs total=failed_shards; skipun=true !");
-                        status = SearchResponse.Cluster.Status.SKIPPED;
-                    } else {
-                        logger.warn("XXX __L__ onQueryFailure SETTING FAILED status bcs total=failed_shards; skipun=false !");
-                        status = SearchResponse.Cluster.Status.FAILED;
-                        // TODO in the fail-fast ticket, should we throw an exception here to stop the search?
-                    }
-                } else if (curr.getTotalShards() == numFailedShards + curr.getSuccessfulShards()) {
-                    status = SearchResponse.Cluster.Status.PARTIAL;
-                    took = new TimeValue(timeProvider.buildTookInMillis());
-                }
-
-                List<ShardSearchFailure> failures = new ArrayList<>();
-                curr.getFailures().forEach(failures::add);
-                failures.add(new ShardSearchFailure(e, shardTarget));
-                SearchResponse.Cluster updated = new SearchResponse.Cluster(
-                    curr.getClusterAlias(),
-                    curr.getIndexExpression(),
-                    curr.isSkipUnavailable(),
-                    status,
-                    curr.getTotalShards(),
-                    curr.getSuccessfulShards(),
-                    curr.getSkippedShards(),
-                    numFailedShards,
-                    failures,
-                    took,
-                    false
-                );
-                swapped = clusterRef.compareAndSet(curr, updated);
-                logger.warn("XXX __L__ onQueryFailure swapped: {} ;;;; new cluster: {}", swapped, updated);
-            } while (swapped == false);
+        if (clusters.hasClusterObjects() == false) {
+            return;
         }
+        String clusterAlias = shardTarget.getClusterAlias();
+        if (clusterAlias == null) {
+            clusterAlias = RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
+        }
+        AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
+        boolean swapped;
+        do {
+            TimeValue took = null;
+            SearchResponse.Cluster curr = clusterRef.get();
+            SearchResponse.Cluster.Status status = SearchResponse.Cluster.Status.RUNNING;
+            int numFailedShards = curr.getFailedShards() == null ? 1 : curr.getFailedShards() + 1;
+
+            assert curr.getTotalShards() != null : "total shards should be set on the Cluster but not for " + clusterAlias;
+            if (curr.getTotalShards() == numFailedShards) {
+                if (curr.isSkipUnavailable()) {
+                    logger.warn("XXX __L__ onQueryFailure SETTING SKIPPED status bcs total=failed_shards; skipun=true !");
+                    status = SearchResponse.Cluster.Status.SKIPPED;
+                } else {
+                    logger.warn("XXX __L__ onQueryFailure SETTING FAILED status bcs total=failed_shards; skipun=false !");
+                    status = SearchResponse.Cluster.Status.FAILED;
+                    // TODO in the fail-fast ticket, should we throw an exception here to stop the search?
+                }
+            } else if (curr.getTotalShards() == numFailedShards + curr.getSuccessfulShards()) {
+                status = SearchResponse.Cluster.Status.PARTIAL;
+                took = new TimeValue(timeProvider.buildTookInMillis());
+            }
+
+            List<ShardSearchFailure> failures = new ArrayList<>();
+            curr.getFailures().forEach(failures::add);
+            failures.add(new ShardSearchFailure(e, shardTarget));
+            SearchResponse.Cluster updated = new SearchResponse.Cluster(
+                curr.getClusterAlias(),
+                curr.getIndexExpression(),
+                curr.isSkipUnavailable(),
+                status,
+                curr.getTotalShards(),
+                curr.getSuccessfulShards(),
+                curr.getSkippedShards(),
+                numFailedShards,
+                failures,
+                took,
+                curr.isTimedOut()
+            );
+            swapped = clusterRef.compareAndSet(curr, updated);
+            logger.warn("XXX __L__ onQueryFailure swapped: {} ;;;; new cluster: {}", swapped, updated);
+        } while (swapped == false);
     }
 
     /**
@@ -200,7 +237,6 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
      * @param aggs The partial result for aggregations.
      * @param reducePhase The version number for this reduce.
      */
-    /// MP TODO: do we need to add timedOut to this?
     @Override
     public void onPartialReduce(List<SearchShard> shards, TotalHits totalHits, InternalAggregations aggs, int reducePhase) {
         logger.warn(
@@ -231,11 +267,11 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
                 }
                 TimeValue took = null;
                 int successfulShards = successfulCount + curr.getSkippedShards();
-                if (successfulShards == curr.getTotalShards()) {
-                    status = SearchResponse.Cluster.Status.SUCCESSFUL;
-                    took = new TimeValue(timeProvider.buildTookInMillis());
-                } else if (successfulShards + curr.getFailedShards() == curr.getTotalShards()) {
+                if (successfulShards + curr.getFailedShards() == curr.getTotalShards()) {
                     status = SearchResponse.Cluster.Status.PARTIAL;
+                    took = new TimeValue(timeProvider.buildTookInMillis());
+                } else if (successfulShards == curr.getTotalShards()) {
+                    status = SearchResponse.Cluster.Status.SUCCESSFUL;
                     took = new TimeValue(timeProvider.buildTookInMillis());
                 }
                 SearchResponse.Cluster updated = new SearchResponse.Cluster(
@@ -249,7 +285,7 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
                     curr.getFailedShards(),
                     curr.getFailures(),
                     took,
-                    false
+                    curr.isTimedOut()
                 );
                 swapped = clusterRef.compareAndSet(curr, updated);
                 logger.warn("XXX __P__ DEBUG 33 onPartialReduce swapped: {} ;; new cluster: {}", updated);
@@ -265,7 +301,6 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
      * @param aggs The final result for aggregations.
      * @param reducePhase The version number for this reduce.
      */
-    /// MP TODO: do we need to add timedOut param to this callback?
     @Override
     public void onFinalReduce(List<SearchShard> shards, TotalHits totalHits, InternalAggregations aggs, int reducePhase) {
         logger.warn(
@@ -308,10 +343,12 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
                         + ") != totalShards ("
                         + curr.getTotalShards()
                         + ')';
-                if (successfulShards == curr.getTotalShards()) {
-                    status = SearchResponse.Cluster.Status.SUCCESSFUL;
-                } else {
+                if (curr.isTimedOut() || successfulShards < curr.getTotalShards()) {
                     status = SearchResponse.Cluster.Status.PARTIAL;
+                } else {
+                    assert successfulShards == curr.getTotalShards()
+                        : "successful (" + successfulShards + ") should equal total(" + curr.getTotalShards() + ") if get here";
+                    status = SearchResponse.Cluster.Status.SUCCESSFUL;
                 }
                 SearchResponse.Cluster updated = new SearchResponse.Cluster(
                     curr.getClusterAlias(),
@@ -324,7 +361,7 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
                     curr.getFailedShards(),
                     curr.getFailures(),
                     took,
-                    false  /// MP TODO: need to deal with timed_out in MRT=false - how do that?
+                    curr.isTimedOut()
                 );
                 swapped = clusterRef.compareAndSet(curr, updated);
                 logger.warn("XXX __L__ DEBUG 44 onFinalReduce swapped: {} ;; new cluster: {}", updated);
@@ -340,6 +377,11 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
     @Override
     public void onFetchResult(int shardIndex) {
         logger.warn("XXX __L__ CCSProgListener onFetchResult shardIndex: {}", shardIndex);
+        try {
+            throw new RuntimeException("DDD");
+        } catch (RuntimeException e) {
+            logger.warn(e.getMessage() + " stack trace ", e);
+        }
     }
 
     /**

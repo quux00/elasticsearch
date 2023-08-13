@@ -29,6 +29,7 @@ import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.search.SearchShardTarget;
 import org.elasticsearch.search.aggregations.AggregationReduceContext;
 import org.elasticsearch.search.aggregations.InternalAggregations;
+import org.elasticsearch.search.query.QuerySearchResult;
 import org.elasticsearch.tasks.TaskId;
 import org.elasticsearch.tasks.TaskManager;
 import org.elasticsearch.threadpool.Scheduler.Cancellable;
@@ -398,10 +399,10 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask {
         }
 
         @Override
-        protected void onQueryResult(int shardIndex) {
+        protected void onQueryResult(int shardIndex, QuerySearchResult queryResult) {
             checkCancellation();
             if (delegate != null) {
-                delegate.onQueryResult(shardIndex);
+                delegate.onQueryResult(shardIndex, queryResult);
             }
         }
 

@@ -18,6 +18,7 @@ import org.elasticsearch.search.SearchShardTarget;
 import org.elasticsearch.search.aggregations.AggregationBuilders;
 import org.elasticsearch.search.aggregations.InternalAggregations;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
+import org.elasticsearch.search.query.QuerySearchResult;
 import org.elasticsearch.search.sort.FieldSortBuilder;
 import org.elasticsearch.search.sort.SortOrder;
 import org.elasticsearch.tasks.TaskId;
@@ -117,7 +118,7 @@ public class SearchProgressActionListenerIT extends ESSingleNodeTestCase {
             }
 
             @Override
-            public void onQueryResult(int shardIndex) {
+            public void onQueryResult(int shardIndex, QuerySearchResult queryResult) {
                 assertThat(shardIndex, lessThan(shardsListener.get().size()));
                 numQueryResults.incrementAndGet();
             }

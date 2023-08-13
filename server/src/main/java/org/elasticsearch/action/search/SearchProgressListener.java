@@ -16,6 +16,7 @@ import org.elasticsearch.cluster.routing.GroupShardsIterator;
 import org.elasticsearch.search.SearchPhaseResult;
 import org.elasticsearch.search.SearchShardTarget;
 import org.elasticsearch.search.aggregations.InternalAggregations;
+import org.elasticsearch.search.query.QuerySearchResult;
 
 import java.util.List;
 import java.util.Objects;
@@ -60,9 +61,10 @@ public abstract class SearchProgressListener {
     /**
      * Executed when a shard returns a query result.
      *
-     * @param shardIndex The index of the shard in the list provided by {@link SearchProgressListener#onListShards} )}.
+     * @param shardIndex  The index of the shard in the list provided by {@link SearchProgressListener#onListShards} )}.
+     * @param queryResult
      */
-    protected void onQueryResult(int shardIndex) {}
+    protected void onQueryResult(int shardIndex, QuerySearchResult queryResult) {}
 
     /**
      * Executed when a shard reports a query failure.
@@ -133,9 +135,9 @@ public abstract class SearchProgressListener {
         }
     }
 
-    final void notifyQueryResult(int shardIndex) {
+    final void notifyQueryResult(int shardIndex, QuerySearchResult queryResult) {
         try {
-            onQueryResult(shardIndex);
+            onQueryResult(shardIndex, queryResult);
         } catch (Exception e) {
             logger.warn(() -> "[" + shards.get(shardIndex) + "] Failed to execute progress listener on query result", e);
         }
