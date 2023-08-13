@@ -162,6 +162,7 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
                     } else {
                         logger.warn("XXX __L__ onQueryFailure SETTING FAILED status bcs total=failed_shards; skipun=false !");
                         status = SearchResponse.Cluster.Status.FAILED;
+                        // TODO in the fail-fast ticket, should we throw an exception here to stop the search?
                     }
                 } else if (curr.getTotalShards() == numFailedShards + curr.getSuccessfulShards()) {
                     status = SearchResponse.Cluster.Status.PARTIAL;
@@ -199,14 +200,61 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
      * @param aggs The partial result for aggregations.
      * @param reducePhase The version number for this reduce.
      */
+    /// MP TODO: do we need to add timedOut to this?
     @Override
     public void onPartialReduce(List<SearchShard> shards, TotalHits totalHits, InternalAggregations aggs, int reducePhase) {
         logger.warn(
-            "XXX __L__ CCSProgListener onPartialReduce. shards {}, totalHits: {}; reducePhase: {}",
+            "XXX __P__ CCSProgListener onPartialReduce. shards {}, totalHits: {}; reducePhase: {}",
             shards,
             totalHits.value,
             reducePhase
         );
+
+        Map<String, Integer> totalByClusterAlias = shards.stream().collect(Collectors.groupingBy(shard -> {
+            String clusterAlias = shard.clusterAlias();
+            return clusterAlias != null ? clusterAlias : RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
+        }, Collectors.reducing(0, e -> 1, Integer::sum)));
+
+        System.err.println("XXX __P__ CCSProgListener onPartialReduce: " + totalByClusterAlias);
+        for (Map.Entry<String, Integer> entry : totalByClusterAlias.entrySet()) {
+            String clusterAlias = entry.getKey();
+            int successfulCount = entry.getValue().intValue();
+
+            AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
+            boolean swapped;
+            do {
+                SearchResponse.Cluster curr = clusterRef.get();
+                SearchResponse.Cluster.Status status = curr.getStatus();
+                if (status != SearchResponse.Cluster.Status.RUNNING) {
+                    // don't swap in a new Cluster if the final state has already been set
+                    break;
+                }
+                TimeValue took = null;
+                int successfulShards = successfulCount + curr.getSkippedShards();
+                if (successfulShards == curr.getTotalShards()) {
+                    status = SearchResponse.Cluster.Status.SUCCESSFUL;
+                    took = new TimeValue(timeProvider.buildTookInMillis());
+                } else if (successfulShards + curr.getFailedShards() == curr.getTotalShards()) {
+                    status = SearchResponse.Cluster.Status.PARTIAL;
+                    took = new TimeValue(timeProvider.buildTookInMillis());
+                }
+                SearchResponse.Cluster updated = new SearchResponse.Cluster(
+                    curr.getClusterAlias(),
+                    curr.getIndexExpression(),
+                    curr.isSkipUnavailable(),
+                    status,
+                    curr.getTotalShards(),
+                    successfulShards,
+                    curr.getSkippedShards(),
+                    curr.getFailedShards(),
+                    curr.getFailures(),
+                    took,
+                    false
+                );
+                swapped = clusterRef.compareAndSet(curr, updated);
+                logger.warn("XXX __P__ DEBUG 33 onPartialReduce swapped: {} ;; new cluster: {}", updated);
+            } while (swapped == false);
+        }
     }
 
     /**
@@ -217,6 +265,7 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
      * @param aggs The final result for aggregations.
      * @param reducePhase The version number for this reduce.
      */
+    /// MP TODO: do we need to add timedOut param to this callback?
     @Override
     public void onFinalReduce(List<SearchShard> shards, TotalHits totalHits, InternalAggregations aggs, int reducePhase) {
         logger.warn(
@@ -230,12 +279,6 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
             return;
         }
 
-        try {
-            throw new RuntimeException("__L__ onFinalReduce");
-        } catch (RuntimeException e) {
-            logger.warn(e.getMessage() + " stack trace ", e);
-        }
-
         Map<String, Integer> totalByClusterAlias = shards.stream().collect(Collectors.groupingBy(shard -> {
             String clusterAlias = shard.clusterAlias();
             return clusterAlias != null ? clusterAlias : RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
@@ -244,9 +287,6 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
         System.err.println("XXX __L__ CCSProgListener onFinalReduce: " + totalByClusterAlias);
         for (Map.Entry<String, Integer> entry : totalByClusterAlias.entrySet()) {
             String clusterAlias = entry.getKey();
-            if (clusterAlias == null) {
-                clusterAlias = RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
-            }
             int successfulCount = entry.getValue().intValue();
 
             AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
@@ -254,12 +294,12 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
             do {
                 SearchResponse.Cluster curr = clusterRef.get();
                 SearchResponse.Cluster.Status status = curr.getStatus();
-                assert status == SearchResponse.Cluster.Status.RUNNING
-                    : "should have RUNNING status when onFinalReduce is called but has " + curr.getStatus();
-
+                if (status != SearchResponse.Cluster.Status.RUNNING) {
+                    // don't swap in a new Cluster if the final state has already been set
+                    break;
+                }
                 TimeValue took = new TimeValue(timeProvider.buildTookInMillis());
-                // curr.getSuccessfulShards() may be > 0 since skipped shards from can-match increment the successful shards counter
-                int successfulShards = curr.getSuccessfulShards() + successfulCount;
+                int successfulShards = successfulCount + curr.getSkippedShards();
                 assert successfulShards + curr.getFailedShards() == curr.getTotalShards()
                     : "successfulShards("
                         + successfulShards

@@ -143,10 +143,13 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
         SearchListenerPlugin.blockQueryPhase();
 
         SubmitAsyncSearchRequest request = new SubmitAsyncSearchRequest(localIndex, REMOTE_CLUSTER + ":" + remoteIndex);
-        request.setCcsMinimizeRoundtrips(true); /// MP TODO: randomBoolean()
+        request.setCcsMinimizeRoundtrips(randomBoolean());
         request.setWaitForCompletionTimeout(TimeValue.timeValueMillis(1));
         request.setKeepOnCompletion(true);
-        request.getSearchRequest().source(new SearchSourceBuilder().query(new MatchAllQueryBuilder()).size(1000));
+        request.getSearchRequest().source(new SearchSourceBuilder().query(new MatchAllQueryBuilder()).size(10));
+        if (randomBoolean()) {
+            request.setBatchedReduceSize(randomIntBetween(2, 256));
+        }
 
         AsyncSearchResponse response = submitAsyncSearch(request);
         assertNotNull(response.getSearchResponse());
@@ -255,6 +258,9 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
         request.setCcsMinimizeRoundtrips(minimizeRoundtrips);
         request.setWaitForCompletionTimeout(TimeValue.timeValueMillis(1));
         request.setKeepOnCompletion(true);
+        if (randomBoolean()) {
+            request.setBatchedReduceSize(randomIntBetween(2, 256));
+        }
         RangeQueryBuilder rangeQueryBuilder = new RangeQueryBuilder("@timestamp").from(100).to(2000);
         request.getSearchRequest().source(new SearchSourceBuilder().query(rangeQueryBuilder).size(10));
 
@@ -337,6 +343,9 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
         SubmitAsyncSearchRequest request = new SubmitAsyncSearchRequest(localIndex, REMOTE_CLUSTER + ":" + remoteIndex);
         request.setCcsMinimizeRoundtrips(randomBoolean());
         request.setWaitForCompletionTimeout(TimeValue.timeValueMillis(1));
+        if (randomBoolean()) {
+            request.setBatchedReduceSize(randomIntBetween(2, 256));
+        }
         request.setKeepOnCompletion(true);
         // shardId -1 means to throw the Exception on all shards, so should result in complete search failure
         ThrowingQueryBuilder queryBuilder = new ThrowingQueryBuilder(randomLong(), new IllegalStateException("index corrupted"), -1);
@@ -493,6 +502,9 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
         request.setCcsMinimizeRoundtrips(randomBoolean());
         request.setWaitForCompletionTimeout(TimeValue.timeValueMillis(1));
         request.setKeepOnCompletion(true);
+        if (randomBoolean()) {
+            request.setBatchedReduceSize(randomIntBetween(2, 256));
+        }
         // shardId 0 means to throw the Exception only on shard 0; all others should work
         ThrowingQueryBuilder queryBuilder = new ThrowingQueryBuilder(randomLong(), new IllegalStateException("index corrupted"), 0);
         request.getSearchRequest().source(new SearchSourceBuilder().query(queryBuilder).size(10));
@@ -605,6 +617,10 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
         request.setCcsMinimizeRoundtrips(randomBoolean());
         request.setWaitForCompletionTimeout(TimeValue.timeValueMillis(1));
         request.setKeepOnCompletion(true);
+        if (randomBoolean()) {
+            request.setBatchedReduceSize(randomIntBetween(2, 256));
+        }
+
         // throw Exception of all shards of remoteIndex, but against localIndex
         ThrowingQueryBuilder queryBuilder = new ThrowingQueryBuilder(
             randomLong(),
@@ -733,10 +749,13 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
 
         // search only the remote cluster
         SubmitAsyncSearchRequest request = new SubmitAsyncSearchRequest(REMOTE_CLUSTER + ":" + remoteIndex);
-        request.setCcsMinimizeRoundtrips(true);
+        request.setCcsMinimizeRoundtrips(randomBoolean());
         request.setWaitForCompletionTimeout(TimeValue.timeValueMillis(1));
         request.setKeepOnCompletion(true);
-        request.getSearchRequest().source(new SearchSourceBuilder().query(new MatchAllQueryBuilder()).size(1000));
+        if (randomBoolean()) {
+            request.setBatchedReduceSize(randomIntBetween(2, 256));
+        }
+        request.getSearchRequest().source(new SearchSourceBuilder().query(new MatchAllQueryBuilder()).size(10));
 
         AsyncSearchResponse response = submitAsyncSearch(request);
         assertNotNull(response.getSearchResponse());
@@ -803,16 +822,18 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
         int remoteNumShards = (Integer) testClusterInfo.get("remote.num_shards");
 
         SubmitAsyncSearchRequest request = new SubmitAsyncSearchRequest(REMOTE_CLUSTER + ":" + remoteIndex);
-        request.setCcsMinimizeRoundtrips(true);
+        request.setCcsMinimizeRoundtrips(randomBoolean());
         request.setWaitForCompletionTimeout(TimeValue.timeValueMillis(1));
         request.setKeepOnCompletion(true);
+        if (randomBoolean()) {
+            request.setBatchedReduceSize(randomIntBetween(2, 256));
+        }
         // shardId 0 means to throw the Exception only on shard 0; all others should work
         ThrowingQueryBuilder queryBuilder = new ThrowingQueryBuilder(randomLong(), new IllegalStateException("index corrupted"), 0);
         request.getSearchRequest().source(new SearchSourceBuilder().query(queryBuilder).size(10));
 
         AsyncSearchResponse response = submitAsyncSearch(request);
         assertNotNull(response.getSearchResponse());
-        assertTrue(response.isRunning());
 
         assertBusy(() -> {
             AsyncStatusResponse statusResponse = getAsyncStatus(response.getId());
@@ -873,19 +894,23 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
 
         Map<String, Object> testClusterInfo = setupTwoClusters();
         String remoteIndex = (String) testClusterInfo.get("remote.index");
+        int remoteNumShards = (Integer) testClusterInfo.get("remote.num_shards");
         boolean skipUnavailable = (Boolean) testClusterInfo.get("remote.skip_unavailable");
 
         SubmitAsyncSearchRequest request = new SubmitAsyncSearchRequest(REMOTE_CLUSTER + ":" + remoteIndex);
-        request.setCcsMinimizeRoundtrips(true);
+        request.setCcsMinimizeRoundtrips(randomBoolean());
         request.setWaitForCompletionTimeout(TimeValue.timeValueMillis(1));
         request.setKeepOnCompletion(true);
+        if (randomBoolean()) {
+            request.setBatchedReduceSize(randomIntBetween(2, 256));
+        }
+
         // shardId -1 means to throw the Exception on all shards, so should result in complete search failure
         ThrowingQueryBuilder queryBuilder = new ThrowingQueryBuilder(randomLong(), new IllegalStateException("index corrupted"), -1);
         request.getSearchRequest().source(new SearchSourceBuilder().query(queryBuilder).size(10));
 
         AsyncSearchResponse response = submitAsyncSearch(request);
         assertNotNull(response.getSearchResponse());
-        assertTrue(response.isRunning());
 
         assertBusy(() -> {
             AsyncStatusResponse statusResponse = getAsyncStatus(response.getId());
@@ -909,11 +934,19 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
                 ? SearchResponse.Cluster.Status.SKIPPED
                 : SearchResponse.Cluster.Status.FAILED;
             assertThat(remoteClusterSearchInfo.getStatus(), equalTo(expectedStatus));
-            assertNull(remoteClusterSearchInfo.getTotalShards());
-            assertNull(remoteClusterSearchInfo.getSuccessfulShards());
-            assertNull(remoteClusterSearchInfo.getSkippedShards());
-            assertNull(remoteClusterSearchInfo.getFailedShards());
-            assertThat(remoteClusterSearchInfo.getFailures().size(), equalTo(1));
+            if (clusters.isCcsMinimizeRoundtrips()) {
+                assertNull(remoteClusterSearchInfo.getTotalShards());
+                assertNull(remoteClusterSearchInfo.getSuccessfulShards());
+                assertNull(remoteClusterSearchInfo.getSkippedShards());
+                assertNull(remoteClusterSearchInfo.getFailedShards());
+                assertThat(remoteClusterSearchInfo.getFailures().size(), equalTo(1));
+            } else {
+                assertThat(remoteClusterSearchInfo.getTotalShards(), equalTo(remoteNumShards));
+                assertThat(remoteClusterSearchInfo.getSuccessfulShards(), equalTo(0));
+                assertThat(remoteClusterSearchInfo.getSkippedShards(), equalTo(0));
+                assertThat(remoteClusterSearchInfo.getFailedShards(), equalTo(remoteNumShards));
+                assertThat(remoteClusterSearchInfo.getFailures().size(), equalTo(remoteNumShards));
+            }
             assertNull(remoteClusterSearchInfo.getTook());
             assertFalse(remoteClusterSearchInfo.isTimedOut());
             ShardSearchFailure remoteShardSearchFailure = remoteClusterSearchInfo.getFailures().get(0);
@@ -935,11 +968,19 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
                 ? SearchResponse.Cluster.Status.SKIPPED
                 : SearchResponse.Cluster.Status.FAILED;
             assertThat(remoteClusterSearchInfo.getStatus(), equalTo(expectedStatus));
-            assertNull(remoteClusterSearchInfo.getTotalShards());
-            assertNull(remoteClusterSearchInfo.getSuccessfulShards());
-            assertNull(remoteClusterSearchInfo.getSkippedShards());
-            assertNull(remoteClusterSearchInfo.getFailedShards());
-            assertThat(remoteClusterSearchInfo.getFailures().size(), equalTo(1));
+            if (clusters.isCcsMinimizeRoundtrips()) {
+                assertNull(remoteClusterSearchInfo.getTotalShards());
+                assertNull(remoteClusterSearchInfo.getSuccessfulShards());
+                assertNull(remoteClusterSearchInfo.getSkippedShards());
+                assertNull(remoteClusterSearchInfo.getFailedShards());
+                assertThat(remoteClusterSearchInfo.getFailures().size(), equalTo(1));
+            } else {
+                assertThat(remoteClusterSearchInfo.getTotalShards(), equalTo(remoteNumShards));
+                assertThat(remoteClusterSearchInfo.getSuccessfulShards(), equalTo(0));
+                assertThat(remoteClusterSearchInfo.getSkippedShards(), equalTo(0));
+                assertThat(remoteClusterSearchInfo.getFailedShards(), equalTo(remoteNumShards));
+                assertThat(remoteClusterSearchInfo.getFailures().size(), equalTo(remoteNumShards));
+            }
             assertNull(remoteClusterSearchInfo.getTook());
             assertFalse(remoteClusterSearchInfo.isTimedOut());
             ShardSearchFailure remoteShardSearchFailure = remoteClusterSearchInfo.getFailures().get(0);
@@ -958,8 +999,11 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
         request.setCcsMinimizeRoundtrips(randomBoolean());
         request.setWaitForCompletionTimeout(TimeValue.timeValueMillis(1));
         request.setKeepOnCompletion(true);
+        if (randomBoolean()) {
+            request.setBatchedReduceSize(randomIntBetween(2, 256));
+        }
         request.getSearchRequest().allowPartialSearchResults(false);
-        request.getSearchRequest().source(new SearchSourceBuilder().query(new MatchAllQueryBuilder()).size(1000));
+        request.getSearchRequest().source(new SearchSourceBuilder().query(new MatchAllQueryBuilder()).size(10));
 
         AsyncSearchResponse response = submitAsyncSearch(request);
         assertNotNull(response.getSearchResponse());
@@ -1088,8 +1132,11 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
         request.setCcsMinimizeRoundtrips(randomBoolean());
         request.setWaitForCompletionTimeout(TimeValue.timeValueMillis(1));
         request.setKeepOnCompletion(true);
+        if (randomBoolean()) {
+            request.setBatchedReduceSize(randomIntBetween(2, 256));
+        }
         request.getSearchRequest().allowPartialSearchResults(false);
-        request.getSearchRequest().source(new SearchSourceBuilder().query(new MatchAllQueryBuilder()).size(1000));
+        request.getSearchRequest().source(new SearchSourceBuilder().query(new MatchAllQueryBuilder()).size(10));
 
         AsyncSearchResponse response = submitAsyncSearch(request);
         assertNotNull(response.getSearchResponse());
@@ -1191,6 +1238,9 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
         SubmitAsyncSearchRequest request = new SubmitAsyncSearchRequest(localIndex, REMOTE_CLUSTER + ":" + remoteIndex);
         request.setCcsMinimizeRoundtrips(randomBoolean());
         request.getSearchRequest().source(sourceBuilder);
+        if (randomBoolean()) {
+            request.setBatchedReduceSize(randomIntBetween(2, 256));
+        }
         request.setWaitForCompletionTimeout(TimeValue.timeValueMillis(1));
         request.getSearchRequest().allowPartialSearchResults(false);
         request.setWaitForCompletionTimeout(TimeValue.timeValueMillis(1));
@@ -1290,8 +1340,8 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
 
     private Map<String, Object> setupTwoClusters() {
         String localIndex = "demo";
-        int numShardsLocal = randomIntBetween(3, 6);
-        Settings localSettings = indexSettings(numShardsLocal, 0).build();
+        int numShardsLocal = randomIntBetween(5, 20);
+        Settings localSettings = indexSettings(numShardsLocal, randomIntBetween(0, 1)).build();
         assertAcked(
             client(LOCAL_CLUSTER).admin()
                 .indices()
@@ -1302,17 +1352,18 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
         indexDocs(client(LOCAL_CLUSTER), localIndex);
 
         String remoteIndex = "prod";
-        int numShardsRemote = randomIntBetween(3, 6);
+        int numShardsRemote = randomIntBetween(5, 20);
         final InternalTestCluster remoteCluster = cluster(REMOTE_CLUSTER);
         remoteCluster.ensureAtLeastNumDataNodes(randomIntBetween(1, 3));
         final Settings.Builder remoteSettings = Settings.builder();
         remoteSettings.put(IndexMetadata.SETTING_NUMBER_OF_SHARDS, numShardsRemote);
+        remoteSettings.put(IndexMetadata.SETTING_NUMBER_OF_REPLICAS, randomIntBetween(0, 1));
 
         assertAcked(
             client(REMOTE_CLUSTER).admin()
                 .indices()
                 .prepareCreate(remoteIndex)
-                .setSettings(Settings.builder().put(remoteSettings.build()).put(IndexMetadata.SETTING_NUMBER_OF_REPLICAS, 0))
+                .setSettings(Settings.builder().put(remoteSettings.build()))
                 .setMapping("@timestamp", "type=date", "f", "type=text")
         );
         assertFalse(
@@ -1342,7 +1393,7 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
     }
 
     private int indexDocs(Client client, String index) {
-        int numDocs = between(50, 100);
+        int numDocs = between(500, 1200);
         for (int i = 0; i < numDocs; i++) {
             long ts = EARLIEST_TIMESTAMP + i;
             if (i == numDocs - 1) {

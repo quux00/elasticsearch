@@ -96,10 +96,13 @@ public class CrossClusterSearchIT extends AbstractMultiClustersTestCase {
         PlainActionFuture<SearchResponse> queryFuture = new PlainActionFuture<>();
         SearchRequest searchRequest = new SearchRequest(localIndex, REMOTE_CLUSTER + ":" + remoteIndex);
         searchRequest.allowPartialSearchResults(false);
-        boolean minimizeRoundtrips = randomBoolean();  // TODO: change to randomBoolean()
+        if (randomBoolean()) {
+            searchRequest.setBatchedReduceSize(randomIntBetween(3, 20));
+        }
+        boolean minimizeRoundtrips = randomBoolean();
         searchRequest.setCcsMinimizeRoundtrips(minimizeRoundtrips);
 
-        searchRequest.source(new SearchSourceBuilder().query(new MatchAllQueryBuilder()).size(1000));
+        searchRequest.source(new SearchSourceBuilder().query(new MatchAllQueryBuilder()).size(10));
         client(LOCAL_CLUSTER).search(searchRequest, queryFuture);
 
         SearchResponse searchResponse = queryFuture.get();
@@ -146,8 +149,11 @@ public class CrossClusterSearchIT extends AbstractMultiClustersTestCase {
         PlainActionFuture<SearchResponse> queryFuture = new PlainActionFuture<>();
         SearchRequest searchRequest = new SearchRequest(localIndex, REMOTE_CLUSTER + ":" + remoteIndex);
         searchRequest.allowPartialSearchResults(false);
-        boolean minimizeRoundtrips = randomBoolean(); // TODO support MRT=false
+        boolean minimizeRoundtrips = randomBoolean();
         searchRequest.setCcsMinimizeRoundtrips(minimizeRoundtrips);
+        if (randomBoolean()) {
+            searchRequest.setBatchedReduceSize(randomIntBetween(3, 20));
+        }
         searchRequest.setPreFilterShardSize(1);
         RangeQueryBuilder rangeQueryBuilder = new RangeQueryBuilder("@timestamp").from(EARLIEST_TIMESTAMP - 2000)
             .to(EARLIEST_TIMESTAMP - 1000);
@@ -203,8 +209,11 @@ public class CrossClusterSearchIT extends AbstractMultiClustersTestCase {
         PlainActionFuture<SearchResponse> queryFuture = new PlainActionFuture<>();
         SearchRequest searchRequest = new SearchRequest(localIndex, REMOTE_CLUSTER + ":" + remoteIndex);
         searchRequest.allowPartialSearchResults(true);
-        boolean minimizeRoundtrips = randomBoolean(); // TODO support MRT=false
+        boolean minimizeRoundtrips = randomBoolean();
         searchRequest.setCcsMinimizeRoundtrips(minimizeRoundtrips);
+        if (randomBoolean()) {
+            searchRequest.setBatchedReduceSize(randomIntBetween(3, 20));
+        }
 
         // shardId 0 means to throw the Exception only on shard 0; all others should work
         ThrowingQueryBuilder queryBuilder = new ThrowingQueryBuilder(randomLong(), new IllegalStateException("index corrupted"), 0);
@@ -259,6 +268,9 @@ public class CrossClusterSearchIT extends AbstractMultiClustersTestCase {
         searchRequest.allowPartialSearchResults(true);
         boolean minimizeRoundtrips = randomBoolean();
         searchRequest.setCcsMinimizeRoundtrips(minimizeRoundtrips);
+        if (randomBoolean()) {
+            searchRequest.setBatchedReduceSize(randomIntBetween(3, 20));
+        }
 
         // throw Exception on all shards of remoteIndex, but not against localIndex
         ThrowingQueryBuilder queryBuilder = new ThrowingQueryBuilder(
@@ -337,7 +349,10 @@ public class CrossClusterSearchIT extends AbstractMultiClustersTestCase {
         searchRequest.allowPartialSearchResults(false);
         boolean minimizeRoundtrips = randomBoolean();
         searchRequest.setCcsMinimizeRoundtrips(minimizeRoundtrips);
-        searchRequest.source(new SearchSourceBuilder().query(new MatchAllQueryBuilder()).size(1000));
+        if (randomBoolean()) {
+            searchRequest.setBatchedReduceSize(randomIntBetween(3, 20));
+        }
+        searchRequest.source(new SearchSourceBuilder().query(new MatchAllQueryBuilder()).size(10));
         client(LOCAL_CLUSTER).search(searchRequest, queryFuture);
 
         assertBusy(() -> assertTrue(queryFuture.isDone()));
@@ -372,8 +387,11 @@ public class CrossClusterSearchIT extends AbstractMultiClustersTestCase {
         PlainActionFuture<SearchResponse> queryFuture = new PlainActionFuture<>();
         SearchRequest searchRequest = new SearchRequest(REMOTE_CLUSTER + ":" + remoteIndex);
         searchRequest.allowPartialSearchResults(true);
-        boolean minimizeRoundtrips = randomBoolean(); // TODO support MRT=false
+        boolean minimizeRoundtrips = randomBoolean();
         searchRequest.setCcsMinimizeRoundtrips(minimizeRoundtrips);
+        if (randomBoolean()) {
+            searchRequest.setBatchedReduceSize(randomIntBetween(3, 20));
+        }
 
         // shardId 0 means to throw the Exception only on shard 0; all others should work
         ThrowingQueryBuilder queryBuilder = new ThrowingQueryBuilder(randomLong(), new IllegalStateException("index corrupted"), 0);
@@ -415,6 +433,9 @@ public class CrossClusterSearchIT extends AbstractMultiClustersTestCase {
         searchRequest.allowPartialSearchResults(true);
         boolean minimizeRoundtrips = randomBoolean();
         searchRequest.setCcsMinimizeRoundtrips(minimizeRoundtrips);
+        if (randomBoolean()) {
+            searchRequest.setBatchedReduceSize(randomIntBetween(3, 20));
+        }
 
         // shardId -1 means to throw the Exception on all shards, so should result in complete search failure
         ThrowingQueryBuilder queryBuilder = new ThrowingQueryBuilder(randomLong(), new IllegalStateException("index corrupted"), -1);
@@ -458,8 +479,8 @@ public class CrossClusterSearchIT extends AbstractMultiClustersTestCase {
 
     private Map<String, Object> setupTwoClusters() {
         String localIndex = "demo";
-        int numShardsLocal = randomIntBetween(3, 6);
-        Settings localSettings = indexSettings(numShardsLocal, 0).build();
+        int numShardsLocal = randomIntBetween(5, 30);
+        Settings localSettings = indexSettings(numShardsLocal, randomIntBetween(0, 1)).build();
         assertAcked(
             client(LOCAL_CLUSTER).admin()
                 .indices()
@@ -470,17 +491,18 @@ public class CrossClusterSearchIT extends AbstractMultiClustersTestCase {
         indexDocs(client(LOCAL_CLUSTER), localIndex);
 
         String remoteIndex = "prod";
-        int numShardsRemote = randomIntBetween(3, 6);
+        int numShardsRemote = randomIntBetween(5, 30);
         final InternalTestCluster remoteCluster = cluster(REMOTE_CLUSTER);
         remoteCluster.ensureAtLeastNumDataNodes(randomIntBetween(1, 3));
         final Settings.Builder remoteSettings = Settings.builder();
         remoteSettings.put(IndexMetadata.SETTING_NUMBER_OF_SHARDS, numShardsRemote);
+        remoteSettings.put(IndexMetadata.SETTING_NUMBER_OF_REPLICAS, randomIntBetween(0, 1));
 
         assertAcked(
             client(REMOTE_CLUSTER).admin()
                 .indices()
                 .prepareCreate(remoteIndex)
-                .setSettings(Settings.builder().put(remoteSettings.build()).put(IndexMetadata.SETTING_NUMBER_OF_REPLICAS, 0))
+                .setSettings(Settings.builder().put(remoteSettings.build()))
                 .setMapping("@timestamp", "type=date", "f", "type=text")
         );
         assertFalse(
@@ -510,7 +532,7 @@ public class CrossClusterSearchIT extends AbstractMultiClustersTestCase {
     }
 
     private int indexDocs(Client client, String index) {
-        int numDocs = between(50, 100);
+        int numDocs = between(500, 1200);
         for (int i = 0; i < numDocs; i++) {
             long ts = EARLIEST_TIMESTAMP + i;
             if (i == numDocs - 1) {
