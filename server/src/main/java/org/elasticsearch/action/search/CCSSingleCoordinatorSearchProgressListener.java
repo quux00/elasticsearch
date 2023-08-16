@@ -8,6 +8,8 @@
 
 package org.elasticsearch.action.search;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.search.TotalHits;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.search.SearchShardTarget;
@@ -18,7 +20,9 @@ import org.elasticsearch.transport.RemoteClusterAware;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -28,11 +32,28 @@ import java.util.stream.Stream;
  * It updates state in the SearchResponse.Clusters object as the search
  * progresses so that the metadata required for the _clusters/details
  * section in the SearchResponse is accurate.
+ *
+ * A Consumer function that cancels the search when called can optionally
+ * be passed in. This is needed during synchronous searches. Async searches
+ * have another mechanism for cancelling the search. See the onQueryFailure
+ * method javadoc for details.
  */
 public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressListener {
+    private static final Logger logger = LogManager.getLogger(CCSSingleCoordinatorSearchProgressListener.class);
 
+    // function that will cancel the search task, accepting a "reason" message to send to the cancellation service
+    private final Consumer<String> cancellationAction;
+    private AtomicBoolean cancelled = new AtomicBoolean(false);
     private SearchResponse.Clusters clusters;
     private TransportSearchAction.SearchTimeProvider timeProvider;
+
+    public CCSSingleCoordinatorSearchProgressListener() {
+        this(null);
+    }
+
+    public CCSSingleCoordinatorSearchProgressListener(Consumer<String> cancellationAction) {
+        this.cancellationAction = cancellationAction;
+    }
 
     /**
      * Executed when shards are ready to be queried (after can-match)
@@ -60,6 +81,7 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
             String clusterAlias = shard.clusterAlias();
             return clusterAlias != null ? clusterAlias : RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
         }, Collectors.reducing(0, e -> 1, Integer::sum)));
+
         Map<String, Integer> skippedByClusterAlias = skipped.stream().collect(Collectors.groupingBy(shard -> {
             String clusterAlias = shard.clusterAlias();
             return clusterAlias != null ? clusterAlias : RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
@@ -82,10 +104,13 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
                 SearchResponse.Cluster curr = clusterRef.get();
                 SearchResponse.Cluster.Status status = curr.getStatus();
                 assert status == SearchResponse.Cluster.Status.RUNNING : "should have RUNNING status during onListShards but has " + status;
+
+                // if all shards are marked as skipped, the search is done - mark as SUCCESSFUL
                 if (skippedCount != null && skippedCount == totalCount) {
                     took = new TimeValue(timeProvider.buildTookInMillis());
                     status = SearchResponse.Cluster.Status.SUCCESSFUL;
                 }
+
                 SearchResponse.Cluster updated = new SearchResponse.Cluster(
                     curr.getClusterAlias(),
                     curr.getIndexExpression(),
@@ -108,11 +133,15 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
     /**
      * Executed when a shard returns a query result.
      *
-     * @param shardIndex  The index of the shard in the list provided by {@link SearchProgressListener#onListShards} )}.
+     * @param shardIndex  The index of the shard in the list provided by {@link SearchProgressListener#onListShards}.
      * @param queryResult QuerySearchResult holding the result for a SearchShardTarget
      */
     @Override
     public void onQueryResult(int shardIndex, QuerySearchResult queryResult) {
+        // we only need to update Cluster state here if the search has timed out, since:
+        // 1) this is the only callback that gets search timedOut info and
+        // 2) the onFinalReduce will get all these shards again so the final accounting can be done there
+        // for queries that did not time out
         if (queryResult.searchTimedOut() && clusters.hasClusterObjects()) {
             SearchShardTarget shardTarget = queryResult.getSearchShardTarget();
             String clusterAlias = shardTarget.getClusterAlias();
@@ -124,7 +153,7 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
             do {
                 SearchResponse.Cluster curr = clusterRef.get();
                 if (curr.isTimedOut()) {
-                    break; // already marked as timed out on some other shard
+                    break; // cluster has already been marked as timed out on some other shard
                 }
                 if (curr.getStatus() == SearchResponse.Cluster.Status.FAILED || curr.getStatus() == SearchResponse.Cluster.Status.SKIPPED) {
                     break; // safety check to make sure it hasn't hit a terminal FAILED/SKIPPED state where timeouts don't matter
@@ -140,7 +169,7 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
                     curr.getFailedShards(),
                     curr.getFailures(),
                     curr.getTook(),
-                    true
+                    true  // set timedOut flag to true
                 );
                 swapped = clusterRef.compareAndSet(curr, updated);
             } while (swapped == false);
@@ -148,7 +177,13 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
     }
 
     /**
-     * Executed when a shard reports a query failure.
+     * Executed when a shard reports a query failure. If all shards on a cluster have failed,
+     * the SearchResponse.Cluster object for that cluster will have its status changed to either
+     * SKIPPED (skip_unavailable=true) or FAILED ((skip_unavailable=true).
+     *
+     * If a cluster search has FAILED, the cancellationAction function will be called
+     * if it is not null. If it is null, a FatalCCSException is thrown to let the caller
+     * handle it and do the search cancellation.
      *
      * @param shardIndex The index of the shard in the list provided by {@link SearchProgressListener#onListShards})}.
      * @param shardTarget The last shard target that thrown an exception.
@@ -165,10 +200,15 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
         }
         AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
         boolean swapped;
+        SearchResponse.Cluster.Status status;
         do {
             TimeValue took = null;
             SearchResponse.Cluster curr = clusterRef.get();
-            SearchResponse.Cluster.Status status = SearchResponse.Cluster.Status.RUNNING;
+            if (curr.getStatus() == SearchResponse.Cluster.Status.CANCELLED) {
+                // do nothing since the search is being cancelled
+                return;
+            }
+            status = SearchResponse.Cluster.Status.RUNNING;
             int numFailedShards = curr.getFailedShards() == null ? 1 : curr.getFailedShards() + 1;
 
             assert curr.getTotalShards() != null : "total shards should be set on the Cluster but not for " + clusterAlias;
@@ -177,7 +217,6 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
                     status = SearchResponse.Cluster.Status.SKIPPED;
                 } else {
                     status = SearchResponse.Cluster.Status.FAILED;
-                    // TODO in the fail-fast ticket, should we throw an exception here to stop the search?
                 }
             } else if (curr.getTotalShards() == numFailedShards + curr.getSuccessfulShards()) {
                 status = SearchResponse.Cluster.Status.PARTIAL;
@@ -202,11 +241,34 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
             );
             swapped = clusterRef.compareAndSet(curr, updated);
         } while (swapped == false);
+
+        if (status == SearchResponse.Cluster.Status.FAILED) {
+            logger.warn("SSS CCSProgList onQueryFailure FAILED status");
+            // ensure we only cancel the task once
+            if (cancelled.compareAndSet(false, true)) {
+                String reason = "search on cluster [" + clusterAlias + "] has failed and it is skip_unavailable=false";
+                // cancel either via action passed in (sync searches)
+                // or throw an Exception for the AsyncSearchTask.Listener to handle/cancel
+                if (cancellationAction != null) {
+                    logger.warn("SSS CCSProgList onQueryFailure calling cancellationAction");
+                    clusters.notifySearchCancelled();
+                    cancellationAction.accept(reason);
+                } else {
+                    logger.warn("SSS CCSProgList onQueryFailure throwing FatalCCSException (NOT REALLY THIS TIME");
+                    throw new FatalCCSException(clusterAlias, new RuntimeException(reason));
+                }
+            }
+        }
     }
 
     /**
      * Executed when a partial reduce is created. The number of partial reduce can be controlled via
      * {@link SearchRequest#setBatchedReduceSize(int)}.
+     *
+     * Note that onPartialReduce and onFinalReduce are called with cumulative data so far.
+     * For example if the first call to onPartialReduce has 5 shards, the second call will
+     * have those same 5 shards plus the new batch. onFinalReduce will see all those
+     * shards one final time.
      *
      * @param shards The list of shards that are part of this reduce.
      * @param totalHits The total number of hits in this reduce.
@@ -262,6 +324,9 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
 
     /**
      * Executed once when the final reduce is created.
+     *
+     * Note that his will see all the shards, even if they have been passed to the onPartialReduce
+     * method already.
      *
      * @param shards The list of shards that are part of this reduce.
      * @param totalHits The total number of hits in this reduce.
@@ -344,4 +409,45 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
      */
     @Override
     public void onFetchFailure(int shardIndex, SearchShardTarget shardTarget, Exception exc) {}
+
+    /**
+     * Changes the status of any Cluster objects with RUNNING status to CANCELLED.
+     */
+    @Override
+    public void onSearchCancelled() {
+        for (String clusterAlias : clusters.getClusterAliases()) {
+            AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
+            boolean retry;
+            do {
+                retry = false;
+                SearchResponse.Cluster curr = clusterRef.get();
+                System.err.println(
+                    "Clusters.notifySearchCancelled: cluster '" + curr.getClusterAlias() + "' status BEFORE: " + curr.getStatus()
+                );
+                if (curr.getStatus() == SearchResponse.Cluster.Status.RUNNING) {
+                    SearchResponse.Cluster cancelledCluster = new SearchResponse.Cluster(
+                        curr.getClusterAlias(),
+                        curr.getIndexExpression(),
+                        curr.isSkipUnavailable(),
+                        SearchResponse.Cluster.Status.CANCELLED,
+                        curr.getTotalShards(),
+                        curr.getSuccessfulShards(),
+                        curr.getSkippedShards(),
+                        curr.getFailedShards(),
+                        curr.getFailures(),
+                        curr.getTook(),
+                        curr.isTimedOut()
+                    );
+                    retry = clusterRef.compareAndSet(curr, cancelledCluster) == false;
+                    logger.warn(
+                        "JJJ onSearchCancelled = swap on {} : retry: {} ; new status: {}",
+                        curr.getClusterAlias(),
+                        retry,
+                        clusterRef.get().getStatus()
+                    );
+                }
+            } while (retry);
+            System.err.println("JJJ onSearchCancelled: cluster status AFTER: " + clusterRef.get().getStatus());
+        }
+    }
 }

@@ -6,6 +6,8 @@
  */
 package org.elasticsearch.xpack.search;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.search.TotalHits;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.ElasticsearchStatusException;
@@ -14,6 +16,7 @@ import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.admin.cluster.node.tasks.cancel.CancelTasksRequest;
 import org.elasticsearch.action.admin.cluster.node.tasks.cancel.CancelTasksResponse;
 import org.elasticsearch.action.search.CCSSingleCoordinatorSearchProgressListener;
+import org.elasticsearch.action.search.FatalCCSException;
 import org.elasticsearch.action.search.SearchProgressActionListener;
 import org.elasticsearch.action.search.SearchRequest;
 import org.elasticsearch.action.search.SearchResponse;
@@ -23,6 +26,7 @@ import org.elasticsearch.action.search.SearchTask;
 import org.elasticsearch.action.search.ShardSearchFailure;
 import org.elasticsearch.action.search.TransportSearchAction;
 import org.elasticsearch.client.internal.Client;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.search.SearchShardTarget;
 import org.elasticsearch.search.aggregations.AggregationReduceContext;
@@ -32,6 +36,8 @@ import org.elasticsearch.tasks.TaskId;
 import org.elasticsearch.tasks.TaskManager;
 import org.elasticsearch.threadpool.Scheduler.Cancellable;
 import org.elasticsearch.threadpool.ThreadPool;
+import org.elasticsearch.transport.RemoteClusterAware;
+import org.elasticsearch.transport.RemoteTransportException;
 import org.elasticsearch.xpack.core.async.AsyncExecutionId;
 import org.elasticsearch.xpack.core.async.AsyncTask;
 import org.elasticsearch.xpack.core.search.action.AsyncSearchResponse;
@@ -53,6 +59,7 @@ import static java.util.Collections.singletonList;
  * Task that tracks the progress of a currently running {@link SearchRequest}.
  */
 final class AsyncSearchTask extends SearchTask implements AsyncTask {
+    private static final Logger logger = LogManager.getLogger(AsyncSearchTask.class);
     private final AsyncExecutionId searchId;
     private final Client client;
     private final ThreadPool threadPool;
@@ -61,7 +68,6 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask {
 
     private final Map<String, String> originHeaders;
 
-    private boolean ccsMinimizeRoundtrips;
     private boolean hasInitialized;
     private boolean hasCompleted;
     private long completionId;
@@ -310,7 +316,6 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask {
         for (Consumer<AsyncSearchResponse> consumer : completionsListenersCopy.values()) {
             consumer.accept(finalResponse);
         }
-
     }
 
     /**
@@ -372,6 +377,7 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask {
 
         // needed when there's a single coordinator for all CCS search phases (minimize_roundtrips=false)
         private CCSSingleCoordinatorSearchProgressListener delegate;
+        private Clusters clusters;
 
         @Override
         protected void onQueryResult(int shardIndex, QuerySearchResult queryResult) {
@@ -391,17 +397,28 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask {
 
         @Override
         protected void onQueryFailure(int shardIndex, SearchShardTarget shardTarget, Exception exc) {
+            logger.warn("JJJ Listener.onQueryFailure exc: {}", exc.getMessage());
             // best effort to cancel expired tasks
             checkCancellation();
-            if (delegate != null) {
-                delegate.onQueryFailure(shardIndex, shardTarget, exc);
-            }
             searchResponse.get()
                 .addQueryFailure(
                     shardIndex,
                     // the nodeId is null if all replicas of this shard failed
                     new ShardSearchFailure(exc, shardTarget.getNodeId() != null ? shardTarget : null)
                 );
+            if (delegate != null) {
+                try {
+                    delegate.onQueryFailure(shardIndex, shardTarget, exc);
+                } catch (FatalCCSException e) {
+                    logger.warn("JJJ AsyncSearchTask Listener caught FatalCCSException from delete.onQueryFailure. Calling onFailure");
+                    onFailure(e);
+                    // boolean throwq = ThreadLocalRandom.current().nextBoolean();
+                    // logger.warn("JJJ AsyncSearchTask is throwing exception after cancelling tasks? yes/no: {}", throwq);
+                    // if (throwq) {
+                    // throw e; /// MP TODO: need to re-throw here?
+                    // }
+                }
+            }
         }
 
         @Override
@@ -416,6 +433,11 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask {
             // in which case the final response already includes results as well as shard fetch failures)
         }
 
+        /**
+         * onListShards is guaranteed to be the first SearchProgressListener method called and
+         * the search will not progress until this returns, so this is a safe place to initialize state
+         * that is needed for handling subsequent callbacks.
+         */
         @Override
         protected void onListShards(
             List<SearchShard> shards,
@@ -426,8 +448,8 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask {
         ) {
             // best effort to cancel expired tasks
             checkCancellation();
-            ccsMinimizeRoundtrips = clusters.isCcsMinimizeRoundtrips();
-            if (ccsMinimizeRoundtrips == false && clusters.hasClusterObjects()) {
+            this.clusters = clusters;
+            if (clusters.isCcsMinimizeRoundtrips() == false && clusters.hasClusterObjects()) {
                 delegate = new CCSSingleCoordinatorSearchProgressListener();
                 delegate.onListShards(shards, skipped, clusters, fetchPhase, timeProvider);
             }
@@ -480,7 +502,7 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask {
 
         @Override
         public void onResponse(SearchResponse response) {
-            searchResponse.get().updateFinalResponse(response, ccsMinimizeRoundtrips);
+            searchResponse.get().updateFinalResponse(response, clusters.isCcsMinimizeRoundtrips());
             executeCompletionListeners();
         }
 
@@ -488,8 +510,42 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask {
         public void onFailure(Exception exc) {
             // if the failure occurred before calling onListShards
             searchResponse.compareAndSet(null, new MutableSearchResponse(-1, -1, null, threadPool.getThreadContext()));
-            searchResponse.get()
-                .updateWithFailure(new ElasticsearchStatusException("error while executing search", ExceptionsHelper.status(exc), exc));
+
+            Throwable throwable = exc;
+            boolean failImmediately = false;
+            String clusterAlias = null;
+
+            if (throwable instanceof FatalCCSException ccsException) {
+                if (isCancelled()) {
+                    System.err.println("JJJ AAA onFailure with FatalCCSException: AsyncSearchTask is already cancelled, so not proceeding");
+                    // FatalCCSException signifies that the search should be cancelled abruptly, but if the search
+                    // task has already been cancelled (usually by the user), then just return and let it cancel normally
+                    // return;
+                }
+                failImmediately = true;
+                throwable = ccsException.getCause();  // guaranteed to be non-null by FatalCCSException constructor
+                clusterAlias = ccsException.getClusterAlias();
+                if (clusterAlias.equals(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY)) {
+                    clusterAlias = "(local)";
+                }
+            }
+            if (clusterAlias == null && throwable instanceof RemoteTransportException remoteException) {
+                clusterAlias = remoteException.getClusterAlias();
+            }
+            ElasticsearchStatusException statusExc = new ElasticsearchStatusException(
+                Strings.format(
+                    "error while executing search%s",
+                    clusterAlias == null ? "" : Strings.format(" on cluster [%s]", clusterAlias)
+                ),
+                ExceptionsHelper.status(throwable),
+                throwable
+            );
+
+            if (failImmediately) {  /// MP TODO try doing failImmediately && isCancelled() == false instead?
+                System.err.println(">>> JJJ AsyncSearchTask calling cancelTask");
+                cancelTask(() -> {}, "fatal error has occurred in a cross-cluster search - cancelling the search");
+            }
+            searchResponse.get().updateWithFailure(statusExc, failImmediately);
             executeInitListeners();
             executeCompletionListeners();
         }
