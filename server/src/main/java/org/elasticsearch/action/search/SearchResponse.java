@@ -888,7 +888,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             }
             this.timedOut = in.readBoolean();
             this.failures = Collections.unmodifiableList(in.readList(ShardSearchFailure::readShardSearchFailure));
-            if (in.getTransportVersion().onOrAfter(TransportVersion.V_8_500_060)) {
+            if (in.getTransportVersion().onOrAfter(TransportVersion.V_8_500_062)) {
                 this.skipUnavailable = in.readBoolean();
             } else {
                 this.skipUnavailable = false;
@@ -907,7 +907,7 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
             out.writeOptionalLong(took == null ? null : took.millis());
             out.writeBoolean(timedOut);
             out.writeList(failures);
-            if (out.getTransportVersion().onOrAfter(TransportVersion.V_8_500_060)) {
+            if (out.getTransportVersion().onOrAfter(TransportVersion.V_8_500_062)) {
                 out.writeBoolean(skipUnavailable);
             }
         }
