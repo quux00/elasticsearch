@@ -104,6 +104,12 @@ public abstract class SearchProgressListener {
      */
     protected void onFetchFailure(int shardIndex, SearchShardTarget shardTarget, Exception exc) {}
 
+    /**
+     * Called when the search has been cancelled
+     */
+    /// MP TODO do we need to somehow hook this into the SearchTask cancellation framework?
+    protected void onSearchCancelled() {}
+
     final void notifyListShards(
         List<SearchShard> shards,
         List<SearchShard> skippedShards,
@@ -164,6 +170,17 @@ public abstract class SearchProgressListener {
             onFetchFailure(shardIndex, shardTarget, exc);
         } catch (Exception e) {
             logger.warn(() -> "[" + shards.get(shardIndex) + "] Failed to execute progress listener on fetch failure", e);
+        }
+    }
+
+    /**
+     * Changes the status of any Cluster objects with RUNNING status to CANCELLED.
+     */
+    public void notifySearchCancelled() {
+        try {
+            onSearchCancelled();
+        } catch (Exception e) {
+            logger.warn("onSearchCancelled failed", e);
         }
     }
 

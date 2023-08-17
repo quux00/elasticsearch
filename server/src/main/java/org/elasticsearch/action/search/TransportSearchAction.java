@@ -1415,7 +1415,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         @Override
         public final void onResponse(Response response) {
             innerOnResponse(response);
-            maybeFinish();
+            maybeFinish(false);
         }
 
         abstract void innerOnResponse(Response response);
@@ -1428,7 +1428,6 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                 if (cluster != null) {
                     ccsClusterInfoUpdate(f, cluster, skipUnavailable);
                 }
-                // skippedClusters.incrementAndGet();
             } else {
                 if (cluster != null) {
                     ccsClusterInfoUpdate(f, cluster, skipUnavailable);
@@ -1444,13 +1443,29 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     });
                 }
             }
-            maybeFinish();
+            /// MP TODO: maybe the flag should be set that way when passed into CCSActionListener??
+            // the local cluster is hardcoded as skipUnavailable=false
+            boolean failImmediately = (skipUnavailable == false) || clusterAlias.equals(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY);
+            System.err.printf(
+                "TSA onFailure for cluster '%s'; skipUnavailable == %s; failImmediately: %s\n",
+                clusterAlias,
+                skipUnavailable,
+                failImmediately
+            );
+            maybeFinish(failImmediately);
         }
 
-        private void maybeFinish() {
-            if (countDown.countDown()) {
+        /**
+         * Runs the finish code if the CountDown hits zero
+         * or a forceFinish=true flag is passed in.
+         * @param forceFinish if true, finish immediately rather than waiting for all clusters to return results
+         */
+        private void maybeFinish(boolean forceFinish) {
+            if (countDown.countDown() || forceFinish) {
                 Exception exception = exceptions.get();
                 if (exception == null) {
+                    // TODO if we add a global CCS timeout that requires early termination, this invariant is no longer valid
+                    assert forceFinish == false : "if forceFinish=true, an Exception should be set";
                     FinalResponse response;
                     try {
                         response = createFinalResponse();
@@ -1460,7 +1475,10 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     }
                     originalListener.onResponse(response);
                 } else {
-                    originalListener.onFailure(exceptions.get());
+                    if (forceFinish) {
+                        exception = new FatalCCSException(clusterAlias, exception);
+                    }
+                    originalListener.onFailure(exception);
                 }
             }
         }
@@ -1493,7 +1511,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
     }
 
     private static RemoteTransportException wrapRemoteClusterFailure(String clusterAlias, Exception e) {
-        return new RemoteTransportException("error while communicating with remote cluster [" + clusterAlias + "]", e);
+        return new RemoteTransportException("error while communicating with remote cluster [" + clusterAlias + "]", e, clusterAlias);
     }
 
     static Map<String, OriginalIndices> getIndicesFromSearchContexts(SearchContextId searchContext, IndicesOptions indicesOptions) {

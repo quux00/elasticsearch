@@ -6,6 +6,8 @@
  */
 package org.elasticsearch.xpack.search;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.search.TotalHits;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.ExceptionsHelper;
@@ -36,6 +38,7 @@ import static org.elasticsearch.xpack.core.async.AsyncTaskIndexService.restoreRe
  * run concurrently to 1 and ensures that we pause the search progress when an {@link AsyncSearchResponse} is built.
  */
 class MutableSearchResponse {
+    private static final Logger logger = LogManager.getLogger(MutableSearchResponse.class);
     private static final TotalHits EMPTY_TOTAL_HITS = new TotalHits(0L, TotalHits.Relation.GREATER_THAN_OR_EQUAL_TO);
     private final int totalShards;
     private final int skippedShards;
@@ -62,7 +65,19 @@ class MutableSearchResponse {
     private ElasticsearchException failure;
     private Map<String, List<String>> responseHeaders;
 
-    private boolean frozen;
+    /**
+     * Flag to determine whether search is still running and whether
+     * after getting final results, whether it should throw an Exception
+     * upon receiving any late arriving data from cluster searches or
+     * just ignore it (in the case where the search was cancelled).
+     */
+    private State frozen;
+
+    private enum State {
+        UNFROZEN,           // search running, expecting data to still be coming in
+        FROZEN_NORMAL,      // search finished, no more cluster responses expected
+        FROZEN_RETURN_EARLY // search aborted early, ignore any other responses coming in from searches still running/cancelled
+    }
 
     /**
      * Creates a new mutable search response.
@@ -81,6 +96,7 @@ class MutableSearchResponse {
         this.isPartial = true;
         this.threadContext = threadContext;
         this.totalHits = EMPTY_TOTAL_HITS;
+        this.frozen = State.UNFROZEN;
     }
 
     /**
@@ -120,7 +136,7 @@ class MutableSearchResponse {
         this.responseHeaders = threadContext.getResponseHeaders();
         this.finalResponse = response;
         this.isPartial = isPartialResponse(response);
-        this.frozen = true;
+        this.frozen = State.FROZEN_NORMAL;
     }
 
     private boolean isPartialResponse(SearchResponse response) {
@@ -134,15 +150,26 @@ class MutableSearchResponse {
      * Updates the response with a fatal failure. This method preserves the partial response
      * received from previous updates
      */
-    synchronized void updateWithFailure(ElasticsearchException exc) {
+    synchronized void updateWithFailure(ElasticsearchException exc, boolean failImmediately) {
         failIfFrozen();
+        logger.warn(
+            "JJJ MSR updateWithFailure: failImmediately: {}; exc: {} : {}",
+            failImmediately,
+            exc.getClass().getSimpleName(),
+            exc.getMessage()
+        );
         // copy the response headers from the current context
         this.responseHeaders = threadContext.getResponseHeaders();
         // note that when search fails, we may have gotten partial results before the failure. In that case async
         // search will return an error plus the last partial results that were collected.
         this.isPartial = true;
         this.failure = exc;
-        this.frozen = true;
+        this.frozen = failImmediately ? State.FROZEN_RETURN_EARLY : State.FROZEN_NORMAL;
+        logger.warn("JJJ MSR updateWithFailure: frozen state at end is: {}", frozen);
+        if (failImmediately && clusters != null) {
+            System.err.println("JJJ MutableSearchResponse updateWithFailure: notifySearchCancelled");
+            clusters.notifySearchCancelled();
+        }
     }
 
     /**
@@ -212,7 +239,7 @@ class MutableSearchResponse {
             searchResponse,
             failure,
             isPartial,
-            frozen == false,
+            frozen == State.UNFROZEN,
             task.getStartTime(),
             expirationTime
         );
@@ -293,14 +320,14 @@ class MutableSearchResponse {
             buildResponse(task.getStartTimeNanos(), null),
             reduceException,
             isPartial,
-            frozen == false,
+            frozen == State.UNFROZEN,
             task.getStartTime(),
             expirationTime
         );
     }
 
     private void failIfFrozen() {
-        if (frozen) {
+        if (frozen == State.FROZEN_NORMAL) {
             throw new IllegalStateException("invalid update received after the completion of the request");
         }
     }

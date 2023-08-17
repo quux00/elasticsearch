@@ -8,6 +8,8 @@
 
 package org.elasticsearch.action.search;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.search.TotalHits;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.search.SearchShardTarget;
@@ -30,6 +32,7 @@ import java.util.stream.Stream;
  * section in the SearchResponse is accurate.
  */
 public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressListener {
+    private static final Logger logger = LogManager.getLogger(CCSSingleCoordinatorSearchProgressListener.class);
 
     private SearchResponse.Clusters clusters;
     private TransportSearchAction.SearchTimeProvider timeProvider;
@@ -360,4 +363,45 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
      */
     @Override
     public void onFetchFailure(int shardIndex, SearchShardTarget shardTarget, Exception exc) {}
+
+    /**
+     * Changes the status of any Cluster objects with RUNNING status to CANCELLED.
+     */
+    @Override
+    public void onSearchCancelled() {
+        for (String clusterAlias : clusters.getClusterAliases()) {
+            AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
+            boolean retry;
+            do {
+                retry = false;
+                SearchResponse.Cluster curr = clusterRef.get();
+                System.err.println(
+                    "Clusters.notifySearchCancelled: cluster '" + curr.getClusterAlias() + "' status BEFORE: " + curr.getStatus()
+                );
+                if (curr.getStatus() == SearchResponse.Cluster.Status.RUNNING) {
+                    SearchResponse.Cluster cancelledCluster = new SearchResponse.Cluster(
+                        curr.getClusterAlias(),
+                        curr.getIndexExpression(),
+                        curr.isSkipUnavailable(),
+                        SearchResponse.Cluster.Status.CANCELLED,
+                        curr.getTotalShards(),
+                        curr.getSuccessfulShards(),
+                        curr.getSkippedShards(),
+                        curr.getFailedShards(),
+                        curr.getFailures(),
+                        curr.getTook(),
+                        curr.isTimedOut()
+                    );
+                    retry = clusterRef.compareAndSet(curr, cancelledCluster) == false;
+                    logger.warn(
+                        "JJJ onSearchCancelled = swap on {} : retry: {} ; new status: {}",
+                        curr.getClusterAlias(),
+                        retry,
+                        clusterRef.get().getStatus()
+                    );
+                }
+            } while (retry);
+            System.err.println("JJJ onSearchCancelled: cluster status AFTER: " + clusterRef.get().getStatus());
+        }
+    }
 }
