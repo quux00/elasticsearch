@@ -151,13 +151,6 @@ class MutableSearchResponse {
      * received from previous updates
      */
     synchronized void updateWithFailure(ElasticsearchException exc, boolean failImmediately) {
-        try {
-            throw new RuntimeException(
-                "JJJ updateWithFailure called with exc: " + exc.getMessage() + " and failImmediately=" + failImmediately
-            );
-        } catch (RuntimeException e) {
-            logger.warn(e.getMessage() + ";; stack trace ", e);
-        }
         failIfFrozen();
         if (frozen == State.FROZEN_RETURN_EARLY) {
             // already frozen due to early return/cancellation, so take no further action

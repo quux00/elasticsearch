@@ -20,7 +20,9 @@ import org.elasticsearch.transport.RemoteClusterAware;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.stream.Stream;
 
@@ -30,12 +32,28 @@ import java.util.stream.Stream;
  * It updates state in the SearchResponse.Clusters object as the search
  * progresses so that the metadata required for the _clusters/details
  * section in the SearchResponse is accurate.
+ *
+ * A Consumer function that cancels the search when called can optionally
+ * be passed in. This is needed during synchronous searches. Async searches
+ * have another mechanism for cancelling the search. See the onQueryFailure
+ * method javadoc for details.
  */
 public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressListener {
     private static final Logger logger = LogManager.getLogger(CCSSingleCoordinatorSearchProgressListener.class);
 
+    // function that will cancel the search task, accepting a "reason" message to send to the cancellation service
+    private final Consumer<String> cancellationAction;
+    private AtomicBoolean cancelled = new AtomicBoolean(false);
     private SearchResponse.Clusters clusters;
     private TransportSearchAction.SearchTimeProvider timeProvider;
+
+    public CCSSingleCoordinatorSearchProgressListener() {
+        this(null);
+    }
+
+    public CCSSingleCoordinatorSearchProgressListener(Consumer<String> cancellationAction) {
+        this.cancellationAction = cancellationAction;
+    }
 
     /**
      * Executed when shards are ready to be queried (after can-match)
@@ -159,7 +177,13 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
     }
 
     /**
-     * Executed when a shard reports a query failure.
+     * Executed when a shard reports a query failure. If all shards on a cluster have failed,
+     * the SearchResponse.Cluster object for that cluster will have its status changed to either
+     * SKIPPED (skip_unavailable=true) or FAILED ((skip_unavailable=true).
+     *
+     * If a cluster search has FAILED, the cancellationAction function will be called
+     * if it is not null. If it is null, a FatalCCSException is thrown to let the caller
+     * handle it and do the search cancellation.
      *
      * @param shardIndex The index of the shard in the list provided by {@link SearchProgressListener#onListShards})}.
      * @param shardTarget The last shard target that thrown an exception.
@@ -218,13 +242,22 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
             swapped = clusterRef.compareAndSet(curr, updated);
         } while (swapped == false);
 
-        // throw an exception here to stop the search
-        // MP TODO: where should we call Clusters.CANCELLED? where are they going to get cancelled?
         if (status == SearchResponse.Cluster.Status.FAILED) {
-            throw new FatalCCSException(
-                clusterAlias,
-                new RuntimeException("search on cluster [" + clusterAlias + "] has failed and it is skip_unavailable=false")
-            );
+            logger.warn("SSS CCSProgList onQueryFailure FAILED status");
+            // ensure we only cancel the task once
+            if (cancelled.compareAndSet(false, true)) {
+                String reason = "search on cluster [" + clusterAlias + "] has failed and it is skip_unavailable=false";
+                // cancel either via action passed in (sync searches)
+                // or throw an Exception for the AsyncSearchTask.Listener to handle/cancel
+                if (cancellationAction != null) {
+                    logger.warn("SSS CCSProgList onQueryFailure calling cancellationAction");
+                    clusters.notifySearchCancelled();
+                    cancellationAction.accept(reason);
+                } else {
+                    logger.warn("SSS CCSProgList onQueryFailure throwing FatalCCSException");
+                    throw new FatalCCSException(clusterAlias, new RuntimeException(reason));
+                }
+            }
         }
     }
 

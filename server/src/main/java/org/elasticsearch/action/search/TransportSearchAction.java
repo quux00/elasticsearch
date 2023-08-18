@@ -94,6 +94,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.BiConsumer;
 import java.util.function.BiFunction;
 import java.util.function.BooleanSupplier;
+import java.util.function.Consumer;
 import java.util.function.Function;
 import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
@@ -1249,7 +1250,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                 if (clusters.isCcsMinimizeRoundtrips() == false
                     && clusters.hasRemoteClusters()
                     && task.getProgressListener() == SearchProgressListener.NOOP) {
-                    task.setProgressListener(new CCSSingleCoordinatorSearchProgressListener());
+                    Consumer<String> cancellationAction = (reason) -> searchTransportService.cancelSearchTask(task, reason);
+                    task.setProgressListener(new CCSSingleCoordinatorSearchProgressListener(cancellationAction));
                 }
                 final QueryPhaseResultConsumer queryResultConsumer = searchPhaseController.newSearchPhaseResults(
                     executor,
