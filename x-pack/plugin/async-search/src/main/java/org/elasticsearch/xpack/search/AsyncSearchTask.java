@@ -6,6 +6,8 @@
  */
 package org.elasticsearch.xpack.search;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.apache.lucene.search.TotalHits;
 import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.ElasticsearchStatusException;
@@ -57,6 +59,7 @@ import static java.util.Collections.singletonList;
  * Task that tracks the progress of a currently running {@link SearchRequest}.
  */
 final class AsyncSearchTask extends SearchTask implements AsyncTask {
+    private static final Logger logger = LogManager.getLogger(AsyncSearchTask.class);
     private final AsyncExecutionId searchId;
     private final Client client;
     private final ThreadPool threadPool;
@@ -394,17 +397,28 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask {
 
         @Override
         protected void onQueryFailure(int shardIndex, SearchShardTarget shardTarget, Exception exc) {
+            logger.warn("JJJ Listener.onQueryFailure exc: {}", exc.getMessage());
             // best effort to cancel expired tasks
             checkCancellation();
-            if (delegate != null) {
-                delegate.onQueryFailure(shardIndex, shardTarget, exc);
-            }
             searchResponse.get()
                 .addQueryFailure(
                     shardIndex,
                     // the nodeId is null if all replicas of this shard failed
                     new ShardSearchFailure(exc, shardTarget.getNodeId() != null ? shardTarget : null)
                 );
+            if (delegate != null) {
+                try {
+                    delegate.onQueryFailure(shardIndex, shardTarget, exc);
+                } catch (FatalCCSException e) {
+                    logger.warn("JJJ AsyncSearchTask Listener caught FatalCCSException from delete.onQueryFailure. Calling onFailure");
+                    onFailure(e);
+                    // boolean throwq = ThreadLocalRandom.current().nextBoolean();
+                    // logger.warn("JJJ AsyncSearchTask is throwing exception after cancelling tasks? yes/no: {}", throwq);
+                    // if (throwq) {
+                    // throw e; /// MP TODO: need to re-throw here?
+                    // }
+                }
+            }
         }
 
         @Override

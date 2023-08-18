@@ -176,10 +176,15 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
         }
         AtomicReference<SearchResponse.Cluster> clusterRef = clusters.getCluster(clusterAlias);
         boolean swapped;
+        SearchResponse.Cluster.Status status;
         do {
             TimeValue took = null;
             SearchResponse.Cluster curr = clusterRef.get();
-            SearchResponse.Cluster.Status status = SearchResponse.Cluster.Status.RUNNING;
+            if (curr.getStatus() == SearchResponse.Cluster.Status.CANCELLED) {
+                // do nothing since the search is being cancelled
+                return;
+            }
+            status = SearchResponse.Cluster.Status.RUNNING;
             int numFailedShards = curr.getFailedShards() == null ? 1 : curr.getFailedShards() + 1;
 
             assert curr.getTotalShards() != null : "total shards should be set on the Cluster but not for " + clusterAlias;
@@ -188,7 +193,6 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
                     status = SearchResponse.Cluster.Status.SKIPPED;
                 } else {
                     status = SearchResponse.Cluster.Status.FAILED;
-                    // TODO in the fail-fast ticket, should we throw an exception here to stop the search?
                 }
             } else if (curr.getTotalShards() == numFailedShards + curr.getSuccessfulShards()) {
                 status = SearchResponse.Cluster.Status.PARTIAL;
@@ -213,6 +217,15 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
             );
             swapped = clusterRef.compareAndSet(curr, updated);
         } while (swapped == false);
+
+        // throw an exception here to stop the search
+        // MP TODO: where should we call Clusters.CANCELLED? where are they going to get cancelled?
+        if (status == SearchResponse.Cluster.Status.FAILED) {
+            throw new FatalCCSException(
+                clusterAlias,
+                new RuntimeException("search on cluster [" + clusterAlias + "] has failed and it is skip_unavailable=false")
+            );
+        }
     }
 
     /**
