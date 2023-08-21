@@ -10,6 +10,7 @@ package org.elasticsearch.action.search;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.TransportVersion;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionListenerResponseHandler;
@@ -66,6 +67,7 @@ import org.elasticsearch.search.internal.SearchContext;
 import org.elasticsearch.search.profile.SearchProfileResults;
 import org.elasticsearch.search.profile.SearchProfileShardResult;
 import org.elasticsearch.tasks.Task;
+import org.elasticsearch.tasks.TaskCancelledException;
 import org.elasticsearch.tasks.TaskId;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.RemoteClusterAware;
@@ -1448,6 +1450,14 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             /// MP TODO: maybe the flag should be set that way when passed into CCSActionListener??
             // the local cluster is hardcoded as skipUnavailable=false
             boolean failImmediately = (skipUnavailable == false) || clusterAlias.equals(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY);
+            if (failImmediately) {
+                Throwable cancellationException = ExceptionsHelper.unwrap(e, TaskCancelledException.class);
+                if (cancellationException != null) {
+                    // don't use the force fail path if the search task is being cancelled - let it cancel naturally
+                    failImmediately = false;
+                }
+            }
+
             System.err.printf(
                 "TSA onFailure for cluster '%s'; skipUnavailable == %s; failImmediately: %s\n",
                 clusterAlias,
