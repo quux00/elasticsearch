@@ -516,6 +516,12 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask {
             String clusterAlias = null;
 
             if (throwable instanceof FatalCCSException ccsException) {
+                if (isCancelled()) {
+                    System.err.println("JJJ AAA onFailure with FatalCCSException: AsyncSearchTask is already cancelled, so not proceeding");
+                    // FatalCCSException signifies that the search should be cancelled abruptly, but if the search
+                    // task has already been cancelled (usually by the user), then just return and let it cancel normally
+                    //return;
+                }
                 failImmediately = true;
                 throwable = ccsException.getCause();  // guaranteed to be non-null by FatalCCSException constructor
                 clusterAlias = ccsException.getClusterAlias();
@@ -532,10 +538,10 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask {
                     clusterAlias == null ? "" : Strings.format(" on cluster [%s]", clusterAlias)
                 ),
                 ExceptionsHelper.status(throwable),
-                throwable.getCause()
+                throwable
             );
 
-            if (failImmediately) {
+            if (failImmediately) {  /// MP TODO try doing failImmediately && isCancelled() == false instead?
                 System.err.println(">>> JJJ AsyncSearchTask calling cancelTask");
                 cancelTask(() -> {}, "fatal error has occurred in a cross-cluster search - cancelling the search");
             }

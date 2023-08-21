@@ -1480,6 +1480,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     if (forceFinish) {
                         exception = new FatalCCSException(clusterAlias, exception);
                     }
+                    logger.warn("JJJ TSA maybeFinish calling origListener.onFailure with: exc: {}; msg: {}",
+                        exception.getClass(), exception.getMessage());
                     originalListener.onFailure(exception);
                 }
             }

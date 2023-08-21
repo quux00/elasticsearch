@@ -254,7 +254,7 @@ public class CCSSingleCoordinatorSearchProgressListener extends SearchProgressLi
                     clusters.notifySearchCancelled();
                     cancellationAction.accept(reason);
                 } else {
-                    logger.warn("SSS CCSProgList onQueryFailure throwing FatalCCSException");
+                    logger.warn("SSS CCSProgList onQueryFailure throwing FatalCCSException (NOT REALLY THIS TIME");
                     throw new FatalCCSException(clusterAlias, new RuntimeException(reason));
                 }
             }
