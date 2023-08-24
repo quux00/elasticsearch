@@ -386,8 +386,10 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
             if (skipUnavailable) {
                 assertThat(localClusterSearchInfo.getStatus(), equalTo(SearchResponse.Cluster.Status.FAILED));
             } else {
-                Set<SearchResponse.Cluster.Status> expectedPossibleStates =
-                    Set.of(SearchResponse.Cluster.Status.FAILED, SearchResponse.Cluster.Status.CANCELLED);
+                Set<SearchResponse.Cluster.Status> expectedPossibleStates = Set.of(
+                    SearchResponse.Cluster.Status.FAILED,
+                    SearchResponse.Cluster.Status.CANCELLED
+                );
                 assertThat(localClusterSearchInfo.getStatus(), in(expectedPossibleStates));
             }
             if (localClusterSearchInfo.getStatus() != SearchResponse.Cluster.Status.CANCELLED) {
@@ -453,8 +455,10 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
             if (skipUnavailable) {
                 assertThat(localClusterSearchInfo.getStatus(), equalTo(SearchResponse.Cluster.Status.FAILED));
             } else {
-                Set<SearchResponse.Cluster.Status> expectedPossibleStates =
-                    Set.of(SearchResponse.Cluster.Status.FAILED, SearchResponse.Cluster.Status.CANCELLED);
+                Set<SearchResponse.Cluster.Status> expectedPossibleStates = Set.of(
+                    SearchResponse.Cluster.Status.FAILED,
+                    SearchResponse.Cluster.Status.CANCELLED
+                );
                 assertThat(localClusterSearchInfo.getStatus(), in(expectedPossibleStates));
             }
             if (localClusterSearchInfo.getStatus() != SearchResponse.Cluster.Status.CANCELLED) {
@@ -677,8 +681,10 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
                 assertThat(clusters.getSuccessful(), equalTo(1));
                 assertThat(clusters.getSkipped(), equalTo(1));
             } else {
-                Set<SearchResponse.Cluster.Status> expectedStates =
-                    Set.of(SearchResponse.Cluster.Status.SUCCESSFUL, SearchResponse.Cluster.Status.CANCELLED);
+                Set<SearchResponse.Cluster.Status> expectedStates = Set.of(
+                    SearchResponse.Cluster.Status.SUCCESSFUL,
+                    SearchResponse.Cluster.Status.CANCELLED
+                );
                 assertThat(localClusterSearchInfo.getStatus(), in(expectedStates));
                 if (localClusterSearchInfo.getStatus() != SearchResponse.Cluster.Status.CANCELLED) {
                     assertThat(clusters.getSuccessful(), equalTo(1));
@@ -733,8 +739,10 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
                 assertThat(clusters.getSuccessful(), equalTo(1));
                 assertThat(clusters.getSkipped(), equalTo(1));
             } else {
-                Set<SearchResponse.Cluster.Status> expectedStates =
-                    Set.of(SearchResponse.Cluster.Status.SUCCESSFUL, SearchResponse.Cluster.Status.CANCELLED);
+                Set<SearchResponse.Cluster.Status> expectedStates = Set.of(
+                    SearchResponse.Cluster.Status.SUCCESSFUL,
+                    SearchResponse.Cluster.Status.CANCELLED
+                );
                 assertThat(localClusterSearchInfo.getStatus(), in(expectedStates));
                 if (localClusterSearchInfo.getStatus() != SearchResponse.Cluster.Status.CANCELLED) {
                     assertThat(clusters.getSuccessful(), equalTo(1));
@@ -1201,7 +1209,6 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
                 assertTrue(taskInfo.description(), taskInfo.cancelled());
             }
 
-
             // check async search status before allowing query to continue but after cancellation
             AsyncSearchResponse searchResponseAfterCancellation = getAsyncSearch(response.getId());
             assertTrue(searchResponseAfterCancellation.isPartial());
@@ -1211,8 +1218,9 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
             assertThat(searchResponseAfterCancellation.getSearchResponse().getFailedShards(), equalTo(0));
 
             System.err.println("skipUnavailable: " + skipUnavailable);
-            System.err.println("minimizeRoundtrips: " +
-                searchResponseAfterCancellation.getSearchResponse().getClusters().isCcsMinimizeRoundtrips());
+            System.err.println(
+                "minimizeRoundtrips: " + searchResponseAfterCancellation.getSearchResponse().getClusters().isCcsMinimizeRoundtrips()
+            );
 
             AsyncStatusResponse statusResponse = getAsyncStatus(response.getId());
             assertTrue(statusResponse.isPartial());
@@ -1436,17 +1444,16 @@ public class CrossClusterAsyncSearchIT extends AbstractMultiClustersTestCase {
         System.err.println("skipUnavailable   : " + skipUnavailable);
         System.err.println("minimizeRoundtrips: " + minimizeRoundtrips);
 
-
         // wait for search tasks to complete and be unregistered
         assertBusy(() -> {
-//            ListTasksResponse listTasksResponse = client(LOCAL_CLUSTER).admin()
-//                .cluster()
-//                .prepareListTasks()
-//                .setActions(SearchAction.INSTANCE.name())
-//                .get();
-//            List<TaskInfo> tasks = listTasksResponse.getTasks();
-//            logger.warn("XXX DEBUG 1: {}", tasks.size());
-//            assertThat(tasks.size(), equalTo(0));
+            // ListTasksResponse listTasksResponse = client(LOCAL_CLUSTER).admin()
+            // .cluster()
+            // .prepareListTasks()
+            // .setActions(SearchAction.INSTANCE.name())
+            // .get();
+            // List<TaskInfo> tasks = listTasksResponse.getTasks();
+            // logger.warn("XXX DEBUG 1: {}", tasks.size());
+            // assertThat(tasks.size(), equalTo(0));
 
             AsyncStatusResponse statusResponse = getAsyncStatus(response.getId());
             assertFalse(statusResponse.isRunning());

@@ -520,7 +520,7 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask {
                     System.err.println("JJJ AAA onFailure with FatalCCSException: AsyncSearchTask is already cancelled, so not proceeding");
                     // FatalCCSException signifies that the search should be cancelled abruptly, but if the search
                     // task has already been cancelled (usually by the user), then just return and let it cancel normally
-                    //return;
+                    // return;
                 }
                 failImmediately = true;
                 throwable = ccsException.getCause();  // guaranteed to be non-null by FatalCCSException constructor

@@ -45,6 +45,7 @@ import org.elasticsearch.common.logging.DeprecationCategory;
 import org.elasticsearch.common.logging.DeprecationLogger;
 import org.elasticsearch.common.settings.Setting;
 import org.elasticsearch.common.settings.Setting.Property;
+import org.elasticsearch.common.util.CollectionUtils;
 import org.elasticsearch.common.util.Maps;
 import org.elasticsearch.common.util.concurrent.CountDown;
 import org.elasticsearch.core.Nullable;
@@ -72,6 +73,7 @@ import org.elasticsearch.tasks.TaskId;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.RemoteClusterAware;
 import org.elasticsearch.transport.RemoteClusterService;
+import org.elasticsearch.transport.RemoteConnectionInfo;
 import org.elasticsearch.transport.RemoteTransportException;
 import org.elasticsearch.transport.Transport;
 import org.elasticsearch.transport.TransportRequestOptions;
@@ -102,6 +104,7 @@ import java.util.function.LongSupplier;
 import java.util.stream.Collectors;
 import java.util.stream.StreamSupport;
 
+import static java.util.stream.Collectors.toList;
 import static org.elasticsearch.action.search.SearchType.DFS_QUERY_THEN_FETCH;
 import static org.elasticsearch.action.search.SearchType.QUERY_THEN_FETCH;
 import static org.elasticsearch.action.search.TransportSearchHelper.checkCCSVersionCompatibility;
@@ -584,6 +587,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     exceptions,
                     searchResponseMerger,
                     clusters,
+                    remoteClusterService,
                     listener
                 );
                 Client remoteClusterClient = remoteClusterService.getRemoteClusterClient(
@@ -601,6 +605,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     exceptions,
                     searchResponseMerger,
                     clusters,
+                    remoteClusterService,
                     listener
                 );
                 SearchRequest ccsLocalSearchRequest = SearchRequest.subSearchRequest(
@@ -669,7 +674,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     skipUnavailable,
                     responsesCountDown,
                     exceptions,
-                    clusters.getCluster(clusterAlias),
+                    clusters,
+                    remoteClusterService,
                     listener
                 ) {
                     @Override
@@ -738,6 +744,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         AtomicReference<Exception> exceptions,
         SearchResponseMerger searchResponseMerger,
         SearchResponse.Clusters clusters,
+        RemoteClusterService remoteClusterService,
         ActionListener<SearchResponse> originalListener
     ) {
         return new CCSActionListener<SearchResponse, SearchResponse>(
@@ -745,7 +752,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             skipUnavailable,
             countDown,
             exceptions,
-            clusters.getCluster(clusterAlias),
+            clusters,
+            remoteClusterService,
             originalListener
         ) {
             @Override
@@ -1393,8 +1401,10 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         private final CountDown countDown;
         private final AtomicReference<Exception> exceptions;
         protected final AtomicReference<SearchResponse.Cluster> cluster;
+        protected final SearchResponse.Clusters clusters;
         private final ActionListener<FinalResponse> originalListener;
         protected final long startTime;
+        private final RemoteClusterService remoteClusterService;
 
         /**
          * Used by both minimize_roundtrips true and false
@@ -1404,15 +1414,18 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             boolean skipUnavailable,
             CountDown countDown,
             AtomicReference<Exception> exceptions,
-            @Nullable AtomicReference<SearchResponse.Cluster> cluster, // null for ccs_minimize_roundtrips=false
+            SearchResponse.Clusters clusters,
+            RemoteClusterService remoteClusterService,
             ActionListener<FinalResponse> originalListener
         ) {
             this.clusterAlias = clusterAlias;
             this.skipUnavailable = skipUnavailable;
             this.countDown = countDown;
             this.exceptions = exceptions;
-            this.cluster = cluster;
+            this.cluster = clusters.getCluster(clusterAlias);
+            this.clusters = clusters;
             this.originalListener = originalListener;
+            this.remoteClusterService = remoteClusterService;
             this.startTime = System.currentTimeMillis();
         }
 
@@ -1435,6 +1448,15 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             } else {
                 if (cluster != null) {
                     ccsClusterInfoUpdate(f, cluster, skipUnavailable);
+                    List<RemoteConnectionInfo> remoteInfoList = remoteClusterService.getRemoteConnectionInfos().collect(toList());
+                    for (RemoteConnectionInfo remoteConxInfo : remoteInfoList) {
+                        boolean connected = remoteConxInfo.getModeInfo().isConnected();
+                        String clusterAlias1 = remoteConxInfo.getClusterAlias();
+                        boolean skipUnavailable1 = remoteClusterService.isSkipUnavailable(clusterAlias1);
+                        if (connected == false && skipUnavailable1 == false) {
+                            markCCSClusterSearchAsFailed(clusters.getCluster(clusterAlias1));
+                        }
+                    }
                 }
                 Exception exception = e;
                 if (RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY.equals(clusterAlias) == false) {
@@ -1468,6 +1490,45 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         }
 
         /**
+         * Force mark a Cluster object as FAILED.
+         * This should only be called when a search on another skip_unavailable=false cluster has failed.
+         * This will make a best guess that other clusters are likely to fail, so the caller can
+         * have the best guess of what clusters to exclude if they want to retry a failed CCS.
+         * @param clusterRef  cluster to mark as failed (if it is still in RUNNING state)
+         */
+        private void markCCSClusterSearchAsFailed(AtomicReference<SearchResponse.Cluster> clusterRef) {
+            boolean swapped;
+            do {
+                SearchResponse.Cluster curr = clusterRef.get();
+                if (curr.getStatus() != SearchResponse.Cluster.Status.RUNNING) {
+                    // only mark it FAILED if it hasn't reached a final state already
+                    return;
+                }
+                List<ShardSearchFailure> failures = CollectionUtils.appendToCopy(
+                    curr.getFailures(),
+                    new ShardSearchFailure(
+                        new RuntimeException("cluster '" + curr.getClusterAlias() + "' is not connected and cannot be searched")
+                    )
+                );
+                SearchResponse.Cluster updated = new SearchResponse.Cluster(
+                    curr.getClusterAlias(),
+                    curr.getIndexExpression(),
+                    curr.isSkipUnavailable(),
+                    SearchResponse.Cluster.Status.FAILED,
+                    curr.getTotalShards(),
+                    curr.getSuccessfulShards(),
+                    curr.getSkippedShards(),
+                    curr.getFailedShards(),
+                    failures,
+                    curr.getTook(),
+                    curr.isTimedOut()
+                );
+                swapped = clusterRef.compareAndSet(curr, updated);
+            } while (swapped == false);
+
+        }
+
+        /**
          * Runs the finish code if the CountDown hits zero
          * or a forceFinish=true flag is passed in.
          * @param forceFinish if true, finish immediately rather than waiting for all clusters to return results
@@ -1490,8 +1551,11 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     if (forceFinish) {
                         exception = new FatalCCSException(clusterAlias, exception);
                     }
-                    logger.warn("JJJ TSA maybeFinish calling origListener.onFailure with: exc: {}; msg: {}",
-                        exception.getClass(), exception.getMessage());
+                    logger.warn(
+                        "JJJ TSA maybeFinish calling origListener.onFailure with: exc: {}; msg: {}",
+                        exception.getClass(),
+                        exception.getMessage()
+                    );
                     originalListener.onFailure(exception);
                 }
             }
