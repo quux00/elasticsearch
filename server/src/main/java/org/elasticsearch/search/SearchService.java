@@ -149,6 +149,9 @@ import static org.elasticsearch.index.seqno.SequenceNumbers.UNASSIGNED_SEQ_NO;
 
 public class SearchService extends AbstractLifecycleComponent implements IndexEventListener {
     private static final Logger logger = LogManager.getLogger(SearchService.class);
+    // logger to be used in search/aggs apis for logging errors that happen when partial results
+    // using HTTP status 2xx are returned to users
+    public static final Logger SEARCH_LOGGER = LogManager.getLogger("search.partial-results.error");
 
     // we can have 5 minutes here, since we make sure to clean with search requests and when shard/index closes
     public static final Setting<TimeValue> DEFAULT_KEEPALIVE_SETTING = Setting.positiveTimeSetting(
