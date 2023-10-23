@@ -10,6 +10,8 @@ package org.elasticsearch.action.search;
 
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
+import org.apache.logging.log4j.util.Supplier;
+import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.TransportVersions;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionListenerResponseHandler;
@@ -82,10 +84,13 @@ import org.elasticsearch.xcontent.XContentFactory;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -104,6 +109,7 @@ import java.util.stream.StreamSupport;
 import static org.elasticsearch.action.search.SearchType.DFS_QUERY_THEN_FETCH;
 import static org.elasticsearch.action.search.SearchType.QUERY_THEN_FETCH;
 import static org.elasticsearch.action.search.TransportSearchHelper.checkCCSVersionCompatibility;
+import static org.elasticsearch.search.SearchService.SEARCH_LOGGER;
 import static org.elasticsearch.search.sort.FieldSortBuilder.hasPrimaryFieldSort;
 import static org.elasticsearch.threadpool.ThreadPool.Names.SYSTEM_CRITICAL_READ;
 import static org.elasticsearch.threadpool.ThreadPool.Names.SYSTEM_READ;
@@ -115,7 +121,9 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
     public static final String FROZEN_INDICES_DEPRECATION_MESSAGE = "Searching frozen indices [{}] is deprecated."
         + " Consider cold or frozen tiers in place of frozen indices. The frozen feature will be removed in a feature release.";
 
-    /** The maximum number of shards for a single search request. */
+    /**
+     * The maximum number of shards for a single search request.
+     */
     public static final Setting<Long> SHARD_COUNT_LIMIT_SETTING = Setting.longSetting(
         "action.search.shard_count.limit",
         Long.MAX_VALUE,
@@ -301,6 +309,29 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
             System::nanoTime
         );
         ActionListener<SearchRequest> rewriteListener = listener.delegateFailureAndWrap((delegate, rewritten) -> {
+            // add a listener in the chain that receives onResponse (successful responses) and logs a count of
+            // shard failures that are being returned to users, using the "partial-results" search logger
+            // and the failure details using the TransportSearchAction logger
+            ActionListener<SearchResponse> loggingListener = delegate.delegateFailure((upstream, searchResponse) -> {
+                List<ShardSearchFailure> failuresToLog = extractShardFailuresToLog(searchResponse);
+                if (failuresToLog.size() > 0) {
+                    Supplier<?> messageSupplier = () -> String.format(
+                        Locale.ROOT,
+                        "Search Exception has [%d] shard failures for request [%s]. See [%s] logger logs for details.",
+                        searchResponse.getShardFailures().length,
+                        original,
+                        this.getClass().getCanonicalName()
+                    );
+                    SEARCH_LOGGER.warn(messageSupplier);
+
+                    messageSupplier = () -> String.format(Locale.ROOT, "Search Exception for request [%s].", original);
+                    for (ShardSearchFailure f : deduplicateByClusterAndCause(failuresToLog)) {
+                        logger.warn(messageSupplier, f);
+                    }
+                }
+                upstream.onResponse(searchResponse);
+            });
+
             final SearchContextId searchContext;
             // key to map is clusterAlias
             final Map<String, OriginalIndices> remoteClusterIndices;
@@ -326,7 +357,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     clusterState,
                     SearchResponse.Clusters.EMPTY,
                     searchContext,
-                    searchPhaseProvider.apply(delegate)
+                    searchPhaseProvider.apply(loggingListener)
                 );
             } else {
                 final TaskId parentTaskId = task.taskInfo(clusterService.localNode().getId(), false).taskId();
@@ -356,7 +387,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                         aggregationReduceContextBuilder,
                         remoteClusterService,
                         threadPool,
-                        delegate,
+                        loggingListener,
                         (r, l) -> executeLocalSearch(
                             task,
                             timeProvider,
@@ -387,7 +418,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                         clusters,
                         timeProvider,
                         transportService,
-                        delegate.delegateFailureAndWrap((finalDelegate, searchShardsResponses) -> {
+                        loggingListener.delegateFailureAndWrap((finalDelegate, searchShardsResponses) -> {
                             final BiFunction<String, String, DiscoveryNode> clusterNodeLookup = getRemoteClusterNodeLookup(
                                 searchShardsResponses
                             );
@@ -430,7 +461,61 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                 }
             }
         });
+
         Rewriteable.rewriteAndFetch(original, searchService.getRewriteContext(timeProvider::absoluteStartMillis), rewriteListener);
+    }
+
+    private Collection<ShardSearchFailure> deduplicateByClusterAndCause(List<ShardSearchFailure> failuresToLog) {
+        Map<String, ShardSearchFailure> dedup = new LinkedHashMap<>();
+        String clusterAlias = "";
+        String causeClass = "";
+        for (ShardSearchFailure f : failuresToLog) {
+            if (f.shard() != null && f.shard().getClusterAlias() != null) {
+                clusterAlias = f.shard().getClusterAlias();
+            }
+            if (f.getCause() != null) {
+                Throwable cause = ExceptionsHelper.unwrapCause(f.getCause());
+                if (cause == null) {
+                    causeClass = f.getCause().getClass().getCanonicalName();
+                } else {
+                    causeClass = cause.getClass().getCanonicalName();
+                }
+            }
+            dedup.put(clusterAlias + causeClass, f);
+        }
+        return dedup.values();
+    }
+
+    private List<ShardSearchFailure> extractShardFailuresToLog(SearchResponse response) {
+        if (response.getClusters() != null && response.getClusters().hasRemoteClusters()) {
+            // for CCS searches, not all shard failures are in the _shards section of the response
+            // so get them from the cluster objects
+            List<ShardSearchFailure> failuresToLog = new ArrayList<>();
+            for (SearchResponse.Cluster cluster : response.getClusters().getClusters()) {
+                if (cluster.getFailures() != null) {
+                    failuresToLog.addAll(
+                        cluster.getFailures()
+                            .stream()
+                            .filter(
+                                f -> ExceptionsHelper.status(f).getStatus() >= 500
+                                    && ExceptionsHelper.isNodeOrShardUnavailableTypeException(f) == false
+                            )
+                            .collect(Collectors.toList())
+                    );
+                }
+            }
+            return failuresToLog;
+
+        } else if (response.getShardFailures() != null) {
+            return Arrays.stream(response.getShardFailures())
+                .filter(
+                    f -> ExceptionsHelper.status(f).getStatus() >= 500 && ExceptionsHelper.isNodeOrShardUnavailableTypeException(f) == false
+                )
+                .collect(Collectors.toList());
+
+        } else {
+            return Collections.emptyList();
+        }
     }
 
     static void adjustSearchType(SearchRequest searchRequest, boolean singleShard) {

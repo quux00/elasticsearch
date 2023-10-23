@@ -42,6 +42,7 @@ import org.elasticsearch.xcontent.XContentParser.Token;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Collections;
 import java.util.Iterator;
 import java.util.List;
@@ -733,6 +734,10 @@ public class SearchResponse extends ActionResponse implements ChunkedToXContentO
          */
         public Cluster getCluster(String clusterAlias) {
             return clusterInfo.get(clusterAlias);
+        }
+
+        public Collection<Cluster> getClusters() {
+            return clusterInfo.values();
         }
 
         /**
