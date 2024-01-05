@@ -27,16 +27,23 @@ import java.util.Map;
 
 public class ResolveClusterActionRequest extends ActionRequest implements IndicesRequest.Replaceable {
 
+    public static final IndicesOptions DEFAULT_INDICES_OPTIONS = IndicesOptions.strictExpandOpen();
+
     private String[] names;
     // tracks whether the user originally requested any local indices
     // this info can be lost when the indices(String... indices) method is called
     // to overwrite the indices array - it can remove local indices when none match
     private boolean localIndicesRequested = false;
-    private IndicesOptions indicesOptions = IndicesOptions.strictExpandOpenAndForbidClosed();
+    private IndicesOptions indicesOptions;
 
     public ResolveClusterActionRequest(String[] names) {
+        this(names, DEFAULT_INDICES_OPTIONS);
+    }
+
+    public ResolveClusterActionRequest(String[] names, IndicesOptions indicesOptions) {
         this.names = names;
         this.localIndicesRequested = localIndicesPresent(names);
+        this.indicesOptions = indicesOptions;
     }
 
     public ResolveClusterActionRequest(StreamInput in) throws IOException {
@@ -50,6 +57,7 @@ public class ResolveClusterActionRequest extends ActionRequest implements Indice
             );
         }
         this.names = in.readStringArray();
+        this.indicesOptions = IndicesOptions.readIndicesOptions(in);
         this.localIndicesRequested = localIndicesPresent(names);
     }
 
@@ -65,6 +73,7 @@ public class ResolveClusterActionRequest extends ActionRequest implements Indice
             );
         }
         out.writeStringArray(names);
+        indicesOptions.writeIndicesOptions(out);
     }
 
     @Override

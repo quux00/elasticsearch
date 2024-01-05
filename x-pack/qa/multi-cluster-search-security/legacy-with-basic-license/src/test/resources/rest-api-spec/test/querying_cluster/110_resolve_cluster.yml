@@ -7,6 +7,7 @@
   - do:
       indices.resolve_cluster:
         name: 'my_remote_cluster:*'
+        expand_wildcards: [all]
 
   - match: {my_remote_cluster.connected: true}
   - match: {my_remote_cluster.skip_unavailable: false}
