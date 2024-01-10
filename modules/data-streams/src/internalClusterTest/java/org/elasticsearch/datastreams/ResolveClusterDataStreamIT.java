@@ -8,6 +8,7 @@
 
 package org.elasticsearch.datastreams;
 
+import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.ActionFuture;
 import org.elasticsearch.action.DocWriteRequest;
 import org.elasticsearch.action.admin.indices.get.GetIndexRequest;
@@ -35,6 +36,7 @@ import org.elasticsearch.common.settings.Setting;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.core.Nullable;
 import org.elasticsearch.core.TimeValue;
+import org.elasticsearch.index.IndexNotFoundException;
 import org.elasticsearch.index.mapper.DateFieldMapper;
 import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.rest.RestStatus;
@@ -112,39 +114,12 @@ public class ResolveClusterDataStreamIT extends AbstractMultiClustersTestCase {
                 REMOTE_CLUSTER_2 + ":" + remoteDataStream1 // does not exist on remote2
             };
             ResolveClusterActionRequest request = new ResolveClusterActionRequest(indexExpressions);
-
-            ActionFuture<ResolveClusterActionResponse> future = client(LOCAL_CLUSTER).admin()
-                .indices()
-                .execute(TransportResolveClusterAction.TYPE, request);
-            ResolveClusterActionResponse response = future.actionGet(10, TimeUnit.SECONDS);
-            assertNotNull(response);
-
-            Map<String, ResolveClusterInfo> clusterInfo = response.getResolveClusterInfo();
-            assertEquals(3, clusterInfo.size());
-            Set<String> expectedClusterNames = Set.of(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY, REMOTE_CLUSTER_1, REMOTE_CLUSTER_2);
-            assertThat(clusterInfo.keySet(), equalTo(expectedClusterNames));
-
-            ResolveClusterInfo remote1 = clusterInfo.get(REMOTE_CLUSTER_1);
-            assertThat(remote1.isConnected(), equalTo(true));
-            assertThat(remote1.getSkipUnavailable(), equalTo(skipUnavailable1));
-            assertThat(remote1.getMatchingIndices(), equalTo(true));
-            assertNotNull(remote1.getBuild().version());
-            assertNull(remote1.getError());
-
-            ResolveClusterInfo remote2 = clusterInfo.get(REMOTE_CLUSTER_2);
-            assertThat(remote2.isConnected(), equalTo(true));
-            assertThat(remote2.getSkipUnavailable(), equalTo(skipUnavailable2));
-            assertNull(remote2.getMatchingIndices());
-            assertNull(remote2.getBuild());
-            assertNotNull(remote2.getError());
-            assertThat(remote2.getError(), containsString("no such index [" + remoteDataStream1 + "]"));
-
-            ResolveClusterInfo local = clusterInfo.get(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY);
-            assertThat(local.isConnected(), equalTo(true));
-            assertThat(local.getSkipUnavailable(), equalTo(false));
-            assertThat(local.getMatchingIndices(), equalTo(true));
-            assertNotNull(local.getBuild().version());
-            assertNull(local.getError());
+            Exception e = expectThrows(
+                ExecutionException.class,
+                () -> client(LOCAL_CLUSTER).admin().indices().execute(TransportResolveClusterAction.TYPE, request).get()
+            );
+            IndexNotFoundException infe = (IndexNotFoundException) ExceptionsHelper.unwrap(e, IndexNotFoundException.class);
+            assertThat(infe.getMessage(), containsString("no such index [" + remoteDataStream1 + ']'));
         }
 
         // test clusters against datastream or indices, such that all should match

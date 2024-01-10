@@ -16,10 +16,15 @@
 
   - do:
       indices.resolve_cluster:
-        name: 'my_remote_cluster:doesnotexist'
+        name: 'my_remote_cluster:doesnotexist*'
 
   - match: {my_remote_cluster.connected: true}
   - match: {my_remote_cluster.skip_unavailable: false}
-  - match: {my_remote_cluster.error: "no such index [doesnotexist]"}
-  - is_false: my_remote_cluster.matching_indices  # should be absent from response
-  - is_false: my_remote_cluster.version           # should be absent from response
+  - match: {my_remote_cluster.matching_indices: false}
+  - exists: my_remote_cluster.version.number
+
+  - do:
+      catch: missing
+      indices.resolve_cluster:
+        name: 'my_remote_cluster:doesnotexist'
+  - match: { error.type: "index_not_found_exception" }

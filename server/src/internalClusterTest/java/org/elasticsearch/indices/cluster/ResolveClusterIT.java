@@ -173,7 +173,7 @@ public class ResolveClusterIT extends AbstractMultiClustersTestCase {
             assertNull(local.getError());
         }
 
-        // only local cluster has matching indices
+        // only local cluster has matching indices, so IndexNotFound should be thrown from remote clusters (since no wildcard used)
         {
             String[] indexExpressions = new String[] {
                 localIndex,
@@ -181,39 +181,12 @@ public class ResolveClusterIT extends AbstractMultiClustersTestCase {
                 REMOTE_CLUSTER_2 + ":" + localIndex };
             ResolveClusterActionRequest request = new ResolveClusterActionRequest(indexExpressions);
 
-            ActionFuture<ResolveClusterActionResponse> future = client(LOCAL_CLUSTER).admin()
-                .indices()
-                .execute(TransportResolveClusterAction.TYPE, request);
-            ResolveClusterActionResponse response = future.actionGet(10, TimeUnit.SECONDS);
-            assertNotNull(response);
-
-            Map<String, ResolveClusterInfo> clusterInfo = response.getResolveClusterInfo();
-            assertEquals(3, clusterInfo.size());
-            Set<String> expectedClusterNames = Set.of(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY, REMOTE_CLUSTER_1, REMOTE_CLUSTER_2);
-            assertThat(clusterInfo.keySet(), equalTo(expectedClusterNames));
-
-            ResolveClusterInfo remote1 = clusterInfo.get(REMOTE_CLUSTER_1);
-            assertThat(remote1.isConnected(), equalTo(true));
-            assertThat(remote1.getSkipUnavailable(), equalTo(skipUnavailable1));
-            assertNull(remote1.getMatchingIndices());
-            assertNull(remote1.getBuild());
-            assertNotNull(remote1.getError());
-            assertThat(remote1.getError(), containsString("no such index [demo]"));
-
-            ResolveClusterInfo remote2 = clusterInfo.get(REMOTE_CLUSTER_2);
-            assertThat(remote2.isConnected(), equalTo(true));
-            assertThat(remote2.getSkipUnavailable(), equalTo(skipUnavailable2));
-            assertNull(remote2.getMatchingIndices());
-            assertNull(remote2.getBuild());
-            assertNotNull(remote2.getError());
-            assertThat(remote2.getError(), containsString("no such index [demo]"));
-
-            ResolveClusterInfo local = clusterInfo.get(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY);
-            assertThat(local.isConnected(), equalTo(true));
-            assertThat(local.getSkipUnavailable(), equalTo(false));
-            assertThat(local.getMatchingIndices(), equalTo(true));
-            assertNotNull(local.getBuild().version());
-            assertNull(local.getError());
+            Exception e = expectThrows(
+                ExecutionException.class,
+                () -> client(LOCAL_CLUSTER).admin().indices().execute(TransportResolveClusterAction.TYPE, request).get()
+            );
+            IndexNotFoundException infe = (IndexNotFoundException) ExceptionsHelper.unwrap(e, IndexNotFoundException.class);
+            assertThat(infe.getMessage(), containsString("no such index [" + localIndex + ']'));
         }
 
         // test with wildcard expressions in the index - all clusters should match
@@ -438,7 +411,6 @@ public class ResolveClusterIT extends AbstractMultiClustersTestCase {
                 REMOTE_CLUSTER_1 + ":" + remoteAlias1,
                 REMOTE_CLUSTER_2 + ":" + remoteAlias2 };
             ResolveClusterActionRequest request = new ResolveClusterActionRequest(indexExpressions);
-
             ActionFuture<ResolveClusterActionResponse> future = client(LOCAL_CLUSTER).admin()
                 .indices()
                 .execute(TransportResolveClusterAction.TYPE, request);
@@ -471,7 +443,7 @@ public class ResolveClusterIT extends AbstractMultiClustersTestCase {
 
         // only local cluster has matching alias; using cluster exclusion for remote2
         {
-            String[] indexExpressions = new String[] { localAlias, "rem*:foo", "-" + REMOTE_CLUSTER_2 + ":*" };
+            String[] indexExpressions = new String[] { localAlias, "rem*:foo*", "-" + REMOTE_CLUSTER_2 + ":*" };
             ResolveClusterActionRequest request = new ResolveClusterActionRequest(indexExpressions);
 
             ActionFuture<ResolveClusterActionResponse> future = client(LOCAL_CLUSTER).admin()
@@ -487,9 +459,8 @@ public class ResolveClusterIT extends AbstractMultiClustersTestCase {
             ResolveClusterInfo remote = clusterInfo.get(REMOTE_CLUSTER_1);
             assertThat(remote.isConnected(), equalTo(true));
             assertThat(remote.getSkipUnavailable(), equalTo(skipUnavailable1));
-            assertNull(remote.getMatchingIndices());
-            assertNull(remote.getBuild());
-            assertThat(remote.getError(), containsString("no such index [foo]"));
+            assertThat(remote.getMatchingIndices(), equalTo(false));
+            assertNotNull(remote.getBuild().version());
 
             ResolveClusterInfo local = clusterInfo.get(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY);
             assertThat(local.isConnected(), equalTo(true));

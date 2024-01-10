@@ -11,6 +11,7 @@ package org.elasticsearch.action.admin.indices.resolve;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.Build;
+import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.ElasticsearchSecurityException;
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.ActionListener;
@@ -45,6 +46,7 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicReference;
 
 import static org.elasticsearch.action.search.TransportSearchHelper.checkCCSVersionCompatibility;
 
@@ -115,6 +117,7 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
         }
 
         final var finishedOrCancelled = new AtomicBoolean();
+        final var fatalRemoteException = new AtomicReference<ElasticsearchException>();
         resolveClusterTask.addListener(() -> {
             if (finishedOrCancelled.compareAndSet(false, true)) {
                 releaseResourcesOnCancel.run();
@@ -126,7 +129,13 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
             if (resolveClusterTask.notifyIfCancelled(listener)) {
                 releaseResourcesOnCancel.run();
             } else {
-                listener.onResponse(new ResolveClusterActionResponse(clusterInfoMap));
+                if (fatalRemoteException.get() == null) {
+                    System.err.println("UUU: SEC EXC IS NULL - calling onResponse");
+                    listener.onResponse(new ResolveClusterActionResponse(clusterInfoMap));
+                } else {
+                    System.err.println("UUU: SEC EXC IS ___NOT____ NULL - calling onFailure");
+                    listener.onFailure(fatalRemoteException.get());
+                }
             }
         })) {
             // make the cross-cluster calls
@@ -176,10 +185,12 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
                             failure,
                             ElasticsearchSecurityException.class
                         ) instanceof ElasticsearchSecurityException ese) {
-                            clusterInfoMap.put(clusterAlias, new ResolveClusterInfo(true, skipUnavailable, ese.getMessage()));
+                            fatalRemoteException.set(ese);
+                            // clusterInfoMap.put(clusterAlias, new ResolveClusterInfo(true, skipUnavailable, ese.getMessage()));
                         } else if (ExceptionsHelper.unwrap(failure, IndexNotFoundException.class) instanceof IndexNotFoundException infe) {
                             System.err.println(">>>> HHH INDEX NOT FOUND!!! <<<<<<<<<<<<<<<");
-                            clusterInfoMap.put(clusterAlias, new ResolveClusterInfo(true, skipUnavailable, infe.getMessage()));
+                            fatalRemoteException.set(infe);
+                            // clusterInfoMap.put(clusterAlias, new ResolveClusterInfo(true, skipUnavailable, infe.getMessage()));
                         } else {
                             Throwable cause = ExceptionsHelper.unwrapCause(failure);
                             // when querying an older cluster that does not have the _resolve/cluster endpoint,

@@ -30,9 +30,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 
 import static org.elasticsearch.action.search.SearchResponse.LOCAL_CLUSTER_NAME_REPRESENTATION;
+import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
-import static org.hamcrest.Matchers.is;
 import static org.hamcrest.Matchers.notNullValue;
 import static org.hamcrest.Matchers.nullValue;
 
@@ -130,165 +130,291 @@ public class RemoteClusterSecurityResolveClusterIT extends AbstractRemoteCluster
     public void testResolveCluster() throws Exception {
         configureRemoteCluster();
 
-        // Query cluster -> add role for test user - do not give any privileges for remote_indices
-        final var putRoleRequest = new Request("PUT", "/_security/role/" + REMOTE_SEARCH_ROLE);
-        putRoleRequest.setJsonEntity("""
-            {
-              "indices": [
+        {
+            // Query cluster -> add role for test user - do not give any privileges for remote_indices
+            final var putRoleRequest = new Request("PUT", "/_security/role/" + REMOTE_SEARCH_ROLE);
+            putRoleRequest.setJsonEntity("""
                 {
-                  "names": ["local_index"],
-                  "privileges": ["read"]
-                }
-              ]
-            }""");
-        assertOK(adminClient().performRequest(putRoleRequest));
+                  "indices": [
+                    {
+                      "names": ["local_index"],
+                      "privileges": ["read"]
+                    }
+                  ]
+                }""");
+            assertOK(adminClient().performRequest(putRoleRequest));
 
-        // Query cluster -> create user and assign role
-        final var putUserRequest = new Request("PUT", "/_security/user/" + REMOTE_SEARCH_USER);
-        putUserRequest.setJsonEntity("""
-            {
-              "password": "x-pack-test-password",
-              "roles" : ["remote_search"]
-            }""");
-        assertOK(adminClient().performRequest(putUserRequest));
-
-        // Query cluster -> create test index
-        final var indexDocRequest = new Request("POST", "/local_index/_doc?refresh=true");
-        indexDocRequest.setJsonEntity("{\"local_foo\": \"local_bar\"}");
-        assertOK(client().performRequest(indexDocRequest));
-
-        // Fulfilling cluster -> create test indices
-        final Request bulkRequest = new Request("POST", "/_bulk?refresh=true");
-        bulkRequest.setJsonEntity(Strings.format("""
-            { "index": { "_index": "index1" } }
-            { "foo": "bar" }
-            { "index": { "_index": "secretindex" } }
-            { "bar": "foo" }
-            """));
-        assertOK(performRequestAgainstFulfillingCluster(bulkRequest));
-
-        // Query cluster -> try to resolve local and remote star patterns (no access to remote cluster)
-        final Request starResolveRequest = new Request("GET", "_resolve/cluster/*,my_remote_cluster:*");
-        Response response = performRequestWithRemoteSearchUser(starResolveRequest);
-        assertOK(response);
-        Map<String, Object> responseMap = responseAsMap(response);
-        System.err.println(">> XXX CASE1 remoteClusterResponse: " + responseMap);
-        assertLocalMatching(responseMap);
-
-        Map<String, ?> remoteClusterResponse = (Map<String, ?>) responseMap.get("my_remote_cluster");
-        assertThat((Boolean) remoteClusterResponse.get("connected"), equalTo(true)); /// MP TODO: change to true
-        assertThat((String) remoteClusterResponse.get("error"), containsString("is unauthorized for user"));
-        assertThat(
-            (String) remoteClusterResponse.get("error"),
-            containsString("no remote indices privileges apply for the target cluster")
-        );
-
-        // Query cluster -> add remote privs to the user role
-        final var updateRoleRequest = new Request("PUT", "/_security/role/" + REMOTE_SEARCH_ROLE);
-        updateRoleRequest.setJsonEntity("""
-            {
-              "indices": [
+            // Query cluster -> create user and assign role
+            final var putUserRequest = new Request("PUT", "/_security/user/" + REMOTE_SEARCH_USER);
+            putUserRequest.setJsonEntity("""
                 {
-                  "names": ["local_index"],
-                  "privileges": ["read"]
-                }
-              ],
-              "remote_indices": [
+                  "password": "x-pack-test-password",
+                  "roles" : ["remote_search"]
+                }""");
+            assertOK(adminClient().performRequest(putUserRequest));
+
+            // Query cluster -> create test index
+            final var indexDocRequest = new Request("POST", "/local_index/_doc?refresh=true");
+            indexDocRequest.setJsonEntity("{\"local_foo\": \"local_bar\"}");
+            assertOK(client().performRequest(indexDocRequest));
+
+            // Fulfilling cluster -> create test indices
+            final Request bulkRequest = new Request("POST", "/_bulk?refresh=true");
+            bulkRequest.setJsonEntity(Strings.format("""
+                { "index": { "_index": "index1" } }
+                { "foo": "bar" }
+                { "index": { "_index": "secretindex" } }
+                { "bar": "foo" }
+                """));
+            assertOK(performRequestAgainstFulfillingCluster(bulkRequest));
+        }
+
+        {
+            // TEST CASE 1: Query cluster -> try to resolve local and remote star patterns (no access to remote cluster)
+            final Request starResolveRequest = new Request("GET", "_resolve/cluster/*,my_remote_cluster:*");
+            final Request startSearchRequest = new Request("GET", "/*,my_remote_cluster:*/_search");
+            startSearchRequest.setJsonEntity("""
                 {
-                  "names": ["index*"],
-                  "privileges": ["read", "read_cross_cluster"],
-                  "clusters": ["my_remote_cluster"]
-                }
-              ]
-            }""");
-        assertOK(adminClient().performRequest(updateRoleRequest));
+                  "query": {
+                    "match_all": {}
+                  }
+                }""");
+            ResponseException exc = expectThrows(ResponseException.class, () -> performRequestWithRemoteSearchUser(starResolveRequest));
+            assertThat(exc.getResponse().getStatusLine().getStatusCode(), is(403));
+            assertThat(
+                exc.getMessage(),
+                containsString(
+                    "action [indices:admin/resolve/cluster] towards remote cluster [my_remote_cluster] "
+                        + "is unauthorized for user [remote_search_user] "
+                )
+            );
 
-        // Query cluster -> resolve local and remote with proper access
-        response = performRequestWithRemoteSearchUser(starResolveRequest);
-        assertOK(response);
-        responseMap = responseAsMap(response);
-        assertLocalMatching(responseMap);
-        assertRemoteMatching(responseMap);
+            // _resolve/cluster should behave the same as _search
+            exc = expectThrows(ResponseException.class, () -> performRequestWithRemoteSearchUser(startSearchRequest));
+            assertThat(exc.getResponse().getStatusLine().getStatusCode(), is(403));
+            assertThat(exc.getMessage(), containsString("unauthorized for user [remote_search_user]"));
 
-        // Query cluster -> resolve local for local index without any local privilege
-        final Request localOnly1 = new Request("GET", "_resolve/cluster/index1");
-        ResponseException exception = expectThrows(ResponseException.class, () -> performRequestWithRemoteSearchUser(localOnly1));
-        assertThat(exception.getResponse().getStatusLine().getStatusCode(), is(403));
-        assertThat(
-            exception.getMessage(),
-            containsString(
-                "action [indices:admin/resolve/cluster] is unauthorized for user "
-                    + "[remote_search_user] with effective roles [remote_search] on indices [index1]"
-            )
-        );
+            // TEST CASE 2: Query cluster -> add remote privs to the user role and try resolve again
+            var updateRoleRequest = new Request("PUT", "/_security/role/" + REMOTE_SEARCH_ROLE);
+            updateRoleRequest.setJsonEntity("""
+                {
+                  "indices": [
+                    {
+                      "names": ["local_index"],
+                      "privileges": ["read"]
+                    }
+                  ],
+                  "remote_indices": [
+                    {
+                      "names": ["index*"],
+                      "privileges": ["read", "read_cross_cluster"],
+                      "clusters": ["my_remote_cluster"]
+                    }
+                  ]
+                }""");
+            assertOK(adminClient().performRequest(updateRoleRequest));
 
-        // Query cluster -> resolve local for local index without any local privilege using wildcard
-        final Request localOnlyWildcard1 = new Request("GET", "_resolve/cluster/index1*");
-        response = performRequestWithRemoteSearchUser(localOnlyWildcard1);
-        responseMap = responseAsMap(response);
-        assertMatching((Map<String, Object>) responseMap.get(LOCAL_CLUSTER_NAME_REPRESENTATION), false);
+            // Query cluster -> resolve local and remote with proper access
+            Response response = performRequestWithRemoteSearchUser(starResolveRequest);
+            assertOK(response);
+            Map<String, Object> responseMap = responseAsMap(response);
+            assertLocalMatching(responseMap);
+            assertRemoteMatching(responseMap);
 
-        // Query cluster -> resolve remote and local without permission where using wildcard 'index1*'
-        final Request localNoPermsRemoteWithPerms = new Request("GET", "_resolve/cluster/index1*,my_remote_cluster:index1");
-        response = performRequestWithRemoteSearchUser(localNoPermsRemoteWithPerms);
-        responseMap = responseAsMap(response);
-        assertMatching((Map<String, Object>) responseMap.get(LOCAL_CLUSTER_NAME_REPRESENTATION), false);
-        assertRemoteMatching(responseMap);
+            response = performRequestWithRemoteSearchUser(startSearchRequest);
+            assertOK(response);
+            responseMap = responseAsMap(response);
+        }
 
-        // Query cluster -> resolve remote only for existing and privileged index
-        final Request remoteOnly1 = new Request("GET", "_resolve/cluster/my_remote_cluster:index1");
-        response = performRequestWithRemoteSearchUser(remoteOnly1);
-        assertOK(response);
-        responseMap = responseAsMap(response);
-        assertThat(responseMap.get(LOCAL_CLUSTER_NAME_REPRESENTATION), nullValue());
-        assertRemoteMatching(responseMap);
+        // TEST CASE 3: Query cluster -> resolve index1 for local index without any local privilege
+        {
+            final Request localOnly1 = new Request("GET", "_resolve/cluster/index1");
+            ResponseException exc = expectThrows(ResponseException.class, () -> performRequestWithRemoteSearchUser(localOnly1));
+            assertThat(exc.getResponse().getStatusLine().getStatusCode(), is(403));
+            assertThat(
+                exc.getMessage(),
+                containsString(
+                    "action [indices:admin/resolve/cluster] is unauthorized for user "
+                        + "[remote_search_user] with effective roles [remote_search] on indices [index1]"
+                )
+            );
 
-        // Query cluster -> resolve remote only for existing but non-privileged index
-        final Request remoteOnly2 = new Request("GET", "_resolve/cluster/my_remote_cluster:secretindex");
-        response = performRequestWithRemoteSearchUser(remoteOnly2);
-        assertOK(response);
-        responseMap = responseAsMap(response);
-        assertThat(responseMap.get(LOCAL_CLUSTER_NAME_REPRESENTATION), nullValue());
-        remoteClusterResponse = (Map<String, ?>) responseMap.get("my_remote_cluster");
-        assertThat((Boolean) remoteClusterResponse.get("connected"), equalTo(true));
-        assertThat((String) remoteClusterResponse.get("error"), containsString("is unauthorized for user"));
-        assertThat((String) remoteClusterResponse.get("error"), containsString("with assigned roles [remote_search]"));
-        assertThat((String) remoteClusterResponse.get("error"), containsString("on indices [secretindex]"));
+            // _resolve/cluster should behave the same as _search
+            final Request localOnlySearch1 = new Request("GET", "/index1/_search");
+            localOnlySearch1.setJsonEntity("""
+                {
+                  "query": {
+                    "match_all": {}
+                  }
+                }""");
+            exc = expectThrows(ResponseException.class, () -> performRequestWithRemoteSearchUser(localOnlySearch1));
+            assertThat(exc.getResponse().getStatusLine().getStatusCode(), is(403));
+            assertThat(exc.getMessage(), containsString("unauthorized for user [remote_search_user]"));
+        }
+        {
+            // TEST CASE 4: Query cluster -> resolve local for local index without any local privilege using wildcard
+            final Request localOnlyWildcard1 = new Request("GET", "_resolve/cluster/index1*");
+            Response response = performRequestWithRemoteSearchUser(localOnlyWildcard1);
+            Map<String, Object> responseMap = responseAsMap(response);
+            assertMatching((Map<String, Object>) responseMap.get(LOCAL_CLUSTER_NAME_REPRESENTATION), false);
 
-        // Query cluster -> resolve remote only for non-existing and non-privileged index
-        final Request remoteOnly3 = new Request("GET", "_resolve/cluster/my_remote_cluster:doesnotexist");
-        response = performRequestWithRemoteSearchUser(remoteOnly3);
-        assertOK(response);
-        responseMap = responseAsMap(response);
-        assertThat(responseMap.get(LOCAL_CLUSTER_NAME_REPRESENTATION), nullValue());
-        remoteClusterResponse = (Map<String, ?>) responseMap.get("my_remote_cluster");
-        assertThat((Boolean) remoteClusterResponse.get("connected"), equalTo(true));
-        assertThat((String) remoteClusterResponse.get("error"), containsString("is unauthorized for user"));
-        assertThat((String) remoteClusterResponse.get("error"), containsString("with assigned roles [remote_search]"));
-        assertThat((String) remoteClusterResponse.get("error"), containsString("on indices [doesnotexist]"));
+            // _resolve/cluster should behave the same as _search
+            final Request localOnlyWildcardSearch1 = new Request("GET", "/index1*/_search");
+            localOnlyWildcardSearch1.setJsonEntity("""
+                {
+                  "query": {
+                    "match_all": {}
+                  }
+                }""");
+            response = performRequestWithRemoteSearchUser(localOnlyWildcardSearch1);
+            assertOK(response);
+            // {_shards={total=0, failed=0, successful=0, skipped=0}, hits={hits=[], total={value=0, relation=eq}, max_score=0.0},
+            // took=0, timed_out=false}
+        }
 
-        // Query cluster -> resolve remote only for non-existing but privileged (by index pattern) index
-        final Request remoteOnly4 = new Request("GET", "_resolve/cluster/my_remote_cluster:index99");
-        response = performRequestWithRemoteSearchUser(remoteOnly4);
-        assertOK(response);
-        responseMap = responseAsMap(response);
-        assertThat(responseMap.get(LOCAL_CLUSTER_NAME_REPRESENTATION), nullValue());
-        assertRemoteNotMatching(responseMap);
+        {
+            // TEST CASE 5: Query cluster -> resolve remote and local without permission where using wildcard 'index1*'
+            final Request localNoPermsRemoteWithPerms = new Request("GET", "_resolve/cluster/index1*,my_remote_cluster:index1");
+            Response response = performRequestWithRemoteSearchUser(localNoPermsRemoteWithPerms);
+            Map<String, Object> responseMap = responseAsMap(response);
+            assertMatching((Map<String, Object>) responseMap.get(LOCAL_CLUSTER_NAME_REPRESENTATION), false);
+            assertRemoteMatching(responseMap);
 
-        // Query cluster -> resolve remote only for some existing/privileged, nonexisting/privileged, existing/nonprivileged
-        final Request remoteOnly5 = new Request(
-            "GET",
-            "_resolve/cluster/my_remote_cluster:index1,my_remote_cluster:secretindex,my_remote_cluster:index99"
-        );
-        response = performRequestWithRemoteSearchUser(remoteOnly5);
-        assertOK(response);
-        responseMap = responseAsMap(response);
-        assertThat(responseMap.get(LOCAL_CLUSTER_NAME_REPRESENTATION), nullValue());
-        remoteClusterResponse = (Map<String, ?>) responseMap.get("my_remote_cluster");
-        assertThat((Boolean) remoteClusterResponse.get("connected"), equalTo(true));
-        assertThat((String) remoteClusterResponse.get("error"), containsString("is unauthorized for user"));
-        assertThat((String) remoteClusterResponse.get("error"), containsString("with assigned roles [remote_search]"));
-        assertThat((String) remoteClusterResponse.get("error"), containsString("on indices [secretindex]"));
+            // _resolve/cluster should behave the same as _search
+            final Request localNoPermsRemoteWithPermsSearch = new Request("GET", "/index1*,my_remote_cluster:index1/_search");
+            localNoPermsRemoteWithPermsSearch.setJsonEntity("""
+                {
+                  "query": {
+                    "match_all": {}
+                  }
+                }""");
+            response = performRequestWithRemoteSearchUser(localNoPermsRemoteWithPermsSearch);
+            assertOK(response);
+        }
+
+        {
+            // TEST CASE 6: Query cluster -> resolve remote only for existing and privileged index
+            final Request remoteOnly1 = new Request("GET", "_resolve/cluster/my_remote_cluster:index1");
+            Response response = performRequestWithRemoteSearchUser(remoteOnly1);
+            assertOK(response);
+            Map<String, Object> responseMap = responseAsMap(response);
+            assertThat(responseMap.get(LOCAL_CLUSTER_NAME_REPRESENTATION), nullValue());
+            assertRemoteMatching(responseMap);
+
+            // _resolve/cluster should behave the same as _search
+            final Request remoteOnlySearch1 = new Request("GET", "/my_remote_cluster:index1/_search");
+            remoteOnlySearch1.setJsonEntity("""
+                {
+                  "query": {
+                    "match_all": {}
+                  }
+                }""");
+            response = performRequestWithRemoteSearchUser(remoteOnlySearch1);
+            assertOK(response);
+        }
+        {
+            // TEST CASE 7: Query cluster -> resolve remote only for existing but non-privileged index
+            final Request remoteOnly2 = new Request("GET", "_resolve/cluster/my_remote_cluster:secretindex");
+            ResponseException exc = expectThrows(ResponseException.class, () -> performRequestWithRemoteSearchUser(remoteOnly2));
+            assertThat(exc.getResponse().getStatusLine().getStatusCode(), is(403));
+            assertThat(
+                exc.getMessage(),
+                containsString(
+                    "action [indices:admin/resolve/cluster] towards remote cluster is unauthorized for user "
+                        + "[remote_search_user] with assigned roles [remote_search]"
+                )
+            );
+
+            // _resolve/cluster should behave the same as _search
+            final Request remoteOnlySearch1 = new Request("GET", "/my_remote_cluster:secretindex/_search");
+            remoteOnlySearch1.setJsonEntity("""
+                {
+                  "query": {
+                    "match_all": {}
+                  }
+                }""");
+            exc = expectThrows(ResponseException.class, () -> performRequestWithRemoteSearchUser(remoteOnlySearch1));
+            assertThat(exc.getResponse().getStatusLine().getStatusCode(), is(403));
+            assertThat(exc.getMessage(), containsString("unauthorized for user [remote_search_user]"));
+        }
+
+        {
+            // TEST CASE 8: Query cluster -> resolve remote only for non-existing and non-privileged index
+            final Request remoteOnly3 = new Request("GET", "_resolve/cluster/my_remote_cluster:doesnotexist");
+            ResponseException exc = expectThrows(ResponseException.class, () -> performRequestWithRemoteSearchUser(remoteOnly3));
+            assertThat(exc.getResponse().getStatusLine().getStatusCode(), is(403));
+            assertThat(
+                exc.getMessage(),
+                containsString(
+                    "action [indices:admin/resolve/cluster] towards remote cluster is unauthorized for user "
+                        + "[remote_search_user] with assigned roles [remote_search]"
+                )
+            );
+
+            // _resolve/cluster should behave the same as _search
+            final Request remoteOnlySearch3 = new Request("GET", "/my_remote_cluster:doesnotexist/_search");
+            remoteOnlySearch3.setJsonEntity("""
+                {
+                  "query": {
+                    "match_all": {}
+                  }
+                }""");
+            exc = expectThrows(ResponseException.class, () -> performRequestWithRemoteSearchUser(remoteOnlySearch3));
+            assertThat(exc.getResponse().getStatusLine().getStatusCode(), is(403));
+            assertThat(exc.getMessage(), containsString("unauthorized for user [remote_search_user]"));
+        }
+
+        {
+            // TEST CASE 9: Query cluster -> resolve remote only for non-existing but privileged (by index pattern) index
+            final Request remoteOnly4 = new Request("GET", "_resolve/cluster/my_remote_cluster:index99");
+            ResponseException exc = expectThrows(ResponseException.class, () -> performRequestWithRemoteSearchUser(remoteOnly4));
+            assertThat(exc.getResponse().getStatusLine().getStatusCode(), is(404)); // index not found
+            assertThat(exc.getMessage(), containsString("no such index [index99]"));
+
+            // _resolve/cluster should behave the same as _search
+            final Request remoteOnlySearch4 = new Request("GET", "/my_remote_cluster:index99/_search");
+            remoteOnlySearch4.setJsonEntity("""
+                {
+                  "query": {
+                    "match_all": {}
+                  }
+                }""");
+            exc = expectThrows(ResponseException.class, () -> performRequestWithRemoteSearchUser(remoteOnlySearch4));
+            assertThat(exc.getResponse().getStatusLine().getStatusCode(), is(404));
+            assertThat(exc.getMessage(), containsString("no such index [index99]"));
+        }
+
+        {
+            // TEST CASE 10: Query cluster -> resolve remote only for some existing/privileged,
+            // non-existing/privileged, existing/non-privileged
+            final Request remoteOnly5 = new Request(
+                "GET",
+                "_resolve/cluster/my_remote_cluster:index1,my_remote_cluster:secretindex,my_remote_cluster:index99"
+            );
+            ResponseException exc = expectThrows(ResponseException.class, () -> performRequestWithRemoteSearchUser(remoteOnly5));
+            assertThat(
+                exc.getMessage(),
+                containsString(
+                    "action [indices:admin/resolve/cluster] towards remote cluster is unauthorized for user "
+                        + "[remote_search_user] with assigned roles [remote_search]"
+                )
+            );
+
+            // _resolve/cluster should behave the same as _search
+            final Request remoteOnlySearch5 = new Request(
+                "GET",
+                "/my_remote_cluster:index1,my_remote_cluster:secretindex,my_remote_cluster:index99/_search"
+            );
+            remoteOnlySearch5.setJsonEntity("""
+                {
+                  "query": {
+                    "match_all": {}
+                  }
+                }""");
+            exc = expectThrows(ResponseException.class, () -> performRequestWithRemoteSearchUser(remoteOnlySearch5));
+            assertThat(exc.getResponse().getStatusLine().getStatusCode(), is(403));
+            assertThat(exc.getMessage(), containsString("unauthorized for user [remote_search_user]"));
+        }
     }
 
     private Response performRequestWithRemoteSearchUser(final Request request) throws IOException {

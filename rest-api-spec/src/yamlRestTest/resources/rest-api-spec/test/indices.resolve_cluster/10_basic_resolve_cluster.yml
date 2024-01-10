@@ -100,6 +100,25 @@ setup:
   - match: {(local).matching_indices: true}  # TODO: this should be false?
   - exists: (local).version.number
 
+  - do:
+      indices.resolve_cluster:
+        name: 'test_index2*'
+        expand_wildcards: [open]
+
+  - match: {(local).connected: true}
+  - match: {(local).skip_unavailable: false}
+  - match: {(local).matching_indices: false}
+  - exists: (local).version.number
+
+  - do:
+      indices.resolve_cluster:
+        name: 'test_index2*'
+        expand_wildcards: [closed]
+
+  - match: {(local).connected: true}
+  - match: {(local).skip_unavailable: false}
+  - match: {(local).matching_indices: true}
+  - exists: (local).version.number
 
 ---
 "Resolve cluster using alias":
