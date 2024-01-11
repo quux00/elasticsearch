@@ -11,7 +11,6 @@ package org.elasticsearch.action.admin.indices.resolve;
 import org.apache.logging.log4j.LogManager;
 import org.apache.logging.log4j.Logger;
 import org.elasticsearch.Build;
-import org.elasticsearch.ElasticsearchException;
 import org.elasticsearch.ElasticsearchSecurityException;
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.ActionListener;
@@ -20,6 +19,7 @@ import org.elasticsearch.action.ActionType;
 import org.elasticsearch.action.OriginalIndices;
 import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.HandledTransportAction;
+import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.action.support.RefCountingRunnable;
 import org.elasticsearch.client.internal.Client;
 import org.elasticsearch.cluster.ClusterState;
@@ -46,13 +46,13 @@ import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.atomic.AtomicReference;
 
 import static org.elasticsearch.action.search.TransportSearchHelper.checkCCSVersionCompatibility;
 
 public class TransportResolveClusterAction extends HandledTransportAction<ResolveClusterActionRequest, ResolveClusterActionResponse> {
 
     private static final Logger logger = LogManager.getLogger(TransportResolveClusterAction.class);
+    private static final String TRANSPORT_VERSION_ERROR_MESSAGE = "ResolveClusterAction requires at least Transport Version";
 
     public static final String NAME = "indices:admin/resolve/cluster";
     public static final ActionType<ResolveClusterActionResponse> TYPE = new ActionType<>(NAME, ResolveClusterActionResponse::new);
@@ -82,18 +82,17 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
 
     @Override
     protected void doExecute(Task task, ResolveClusterActionRequest request, ActionListener<ResolveClusterActionResponse> listener) {
+        if (ccsCheckCompatibility) {
+            checkCCSVersionCompatibility(request);
+        }
         // workaround for https://github.com/elastic/elasticsearch/issues/97916 - TODO remove this when we can
         searchCoordinationExecutor.execute(ActionRunnable.wrap(listener, l -> doExecuteForked(task, request, l)));
     }
 
     protected void doExecuteForked(Task task, ResolveClusterActionRequest request, ActionListener<ResolveClusterActionResponse> listener) {
-        if (ccsCheckCompatibility) {
-            checkCCSVersionCompatibility(request);
-        }
         assert task instanceof CancellableTask;
         final CancellableTask resolveClusterTask = (CancellableTask) task;
         ClusterState clusterState = clusterService.state();
-        System.err.println("JJJ: indicesOptions: " + request.indicesOptions());
         Map<String, OriginalIndices> remoteClusterIndices = remoteClusterService.groupIndices(request.indicesOptions(), request.indices());
         OriginalIndices localIndices = remoteClusterIndices.remove(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY);
 
@@ -105,10 +104,18 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
 
         // add local cluster info if in scope of the index-expression from user
         if (localIndices != null) {
-            clusterInfoMap.put(
-                RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY,
-                new ResolveClusterInfo(true, false, hasMatchingIndices(localIndices, clusterState), Build.current())
-            );
+            try {
+                boolean matchingIndices = hasMatchingIndices(localIndices, request.indicesOptions(), clusterState);
+                clusterInfoMap.put(
+                    RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY,
+                    new ResolveClusterInfo(true, false, matchingIndices, Build.current())
+                );
+            } catch (IndexNotFoundException e) {
+                clusterInfoMap.put(
+                    RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY,
+                    new ResolveClusterInfo(true, false, e.getMessage())
+                );
+            }
         } else if (request.isLocalIndicesRequested()) {
             // the localIndices entry can be null even when the user requested a local index, as the index resolution
             // process can remove them (see RemoteClusterActionRequest for more details), so if we get here, no matching
@@ -117,7 +124,6 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
         }
 
         final var finishedOrCancelled = new AtomicBoolean();
-        final var fatalRemoteException = new AtomicReference<ElasticsearchException>();
         resolveClusterTask.addListener(() -> {
             if (finishedOrCancelled.compareAndSet(false, true)) {
                 releaseResourcesOnCancel.run();
@@ -128,14 +134,6 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
             finishedOrCancelled.set(true);
             if (resolveClusterTask.notifyIfCancelled(listener)) {
                 releaseResourcesOnCancel.run();
-            } else {
-                if (fatalRemoteException.get() == null) {
-                    System.err.println("UUU: SEC EXC IS NULL - calling onResponse");
-                    listener.onResponse(new ResolveClusterActionResponse(clusterInfoMap));
-                } else {
-                    System.err.println("UUU: SEC EXC IS ___NOT____ NULL - calling onFailure");
-                    listener.onFailure(fatalRemoteException.get());
-                }
             }
         })) {
             // make the cross-cluster calls
@@ -149,7 +147,7 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
                     clusterAlias,
                     searchCoordinationExecutor
                 );
-                ResolveClusterActionRequest remoteRequest = new ResolveClusterActionRequest(originalIndices.indices());
+                var remoteRequest = new ResolveClusterActionRequest(originalIndices.indices(), request.indicesOptions());
                 // allow cancellation requests to propagate to remote clusters
                 remoteRequest.setParentTask(clusterService.localNode().getId(), task.getId());
 
@@ -178,26 +176,22 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
                             releaseResourcesOnCancel.run();
                             return;
                         }
-                        System.err.println(">>> HHHHH failure FAILURE: " + failure.getClass() + "; " + failure);
                         if (notConnectedError(failure)) {
                             clusterInfoMap.put(clusterAlias, new ResolveClusterInfo(false, skipUnavailable));
                         } else if (ExceptionsHelper.unwrap(
                             failure,
                             ElasticsearchSecurityException.class
                         ) instanceof ElasticsearchSecurityException ese) {
-                            fatalRemoteException.set(ese);
-                            // clusterInfoMap.put(clusterAlias, new ResolveClusterInfo(true, skipUnavailable, ese.getMessage()));
+                            clusterInfoMap.put(clusterAlias, new ResolveClusterInfo(true, skipUnavailable, ese.getMessage()));
                         } else if (ExceptionsHelper.unwrap(failure, IndexNotFoundException.class) instanceof IndexNotFoundException infe) {
-                            System.err.println(">>>> HHH INDEX NOT FOUND!!! <<<<<<<<<<<<<<<");
-                            fatalRemoteException.set(infe);
-                            // clusterInfoMap.put(clusterAlias, new ResolveClusterInfo(true, skipUnavailable, infe.getMessage()));
+                            clusterInfoMap.put(clusterAlias, new ResolveClusterInfo(true, skipUnavailable, infe.getMessage()));
                         } else {
                             Throwable cause = ExceptionsHelper.unwrapCause(failure);
                             // when querying an older cluster that does not have the _resolve/cluster endpoint,
                             // we will get this error at the Transport layer, since there are version guards
                             // on the Writeables for this Action.
                             if (cause instanceof UnsupportedOperationException
-                                && cause.getMessage().contains("ResolveClusterAction requires at least Transport Version")) {
+                                && cause.getMessage().contains(TRANSPORT_VERSION_ERROR_MESSAGE)) {
                                 // Since this cluster does not have _resolve/cluster, we will call the _resolve/index
                                 // endpoint to fill in the matching_indices field of the response for that cluster
                                 ResolveIndexAction.Request resolveIndexRequest = new ResolveIndexAction.Request(
@@ -277,14 +271,15 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
         return false;
     }
 
-    private boolean hasMatchingIndices(OriginalIndices localIndices, ClusterState clusterState) {
+    private boolean hasMatchingIndices(OriginalIndices localIndices, IndicesOptions indicesOptions, ClusterState clusterState) {
         List<ResolveIndexAction.ResolvedIndex> indices = new ArrayList<>();
         List<ResolveIndexAction.ResolvedAlias> aliases = new ArrayList<>();
         List<ResolveIndexAction.ResolvedDataStream> dataStreams = new ArrayList<>();
 
         // this throws IndexNotFoundException if any (non-wildcard) index in the localIndices list is not present
         ResolveIndexAction.TransportAction.resolveIndices(
-            localIndices,
+            localIndices.indices(),
+            indicesOptions,
             clusterState,
             indexNameExpressionResolver,
             indices,
@@ -292,6 +287,27 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
             dataStreams
         );
 
-        return indices.size() > 0 || aliases.size() > 0 || dataStreams.size() > 0;
+        return hasNonClosedMatchingIndex(indices) || aliases.size() > 0 || dataStreams.size() > 0;
+    }
+
+    static boolean hasNonClosedMatchingIndex(List<ResolveIndexAction.ResolvedIndex> indices) {
+        boolean indexMatches = false;
+        for (ResolveIndexAction.ResolvedIndex index : indices) {
+            String[] attributes = index.getAttributes();
+            if (attributes != null) {
+                for (String attribute : attributes) {
+                    if (attribute.equals("closed")) {
+                        indexMatches = false;
+                        break;
+                    } else {
+                        indexMatches = true;
+                    }
+                }
+            }
+            if (indexMatches) {
+                break;
+            }
+        }
+        return indexMatches;
     }
 }
