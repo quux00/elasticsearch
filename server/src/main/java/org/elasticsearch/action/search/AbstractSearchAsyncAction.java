@@ -398,10 +398,10 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
          * fail. Otherwise we continue to the next phase.
          */
         final long numShardFailures1 = getNumShardFailures();
-        System.err.println("DEBUG 1: " + numShardFailures1);
+        // System.err.println("DEBUG 1: " + numShardFailures1);
         ShardOperationFailedException[] shardSearchFailures = buildShardFailures(); /// MP TODO: change this first
-        System.err.println("DEBUG 2: " + shardSearchFailures.length);
-        assert numShardFailures1 == shardSearchFailures.length : "NO BUENO";
+        // System.err.println("DEBUG 2: " + shardSearchFailures.length);
+        assert numShardFailures1 == shardSearchFailures.length : "NO BUENO: " + numShardFailures1 + "::" + shardSearchFailures.length;
         if (shardSearchFailures.length == getNumShards()) {
             shardSearchFailures = ExceptionsHelper.groupBy(shardSearchFailures);
             Throwable cause = shardSearchFailures.length == 0
@@ -549,15 +549,15 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
         // we don't aggregate shard on failures due to the internal cancellation,
         // but do keep the header counts right
         if ((requestCancelled.get() && isTaskCancelledException(e)) == false) {
-            var shardFailures = this.shardFailuresTuple.get();
+            Tuple<AtomicArray<ShardSearchFailure>, BitSet> shardFailures = this.shardFailuresTuple.get();
             // lazily create shard failures, so we can early build the empty shard failure list in most cases (no failures)
             if (shardFailures == null) { // this is double checked locking but it's fine since SetOnce uses a volatile read internally
                 synchronized (shardFailuresMutex) {
                     shardFailures = this.shardFailuresTuple.get(); // read again otherwise somebody else has created it?
                     if (shardFailures == null) { // still null so we are the first and create a new instance
-                        final AtomicArray<Object> atomicArray = new AtomicArray<>(getNumShards());
+                        final AtomicArray<ShardSearchFailure> atomicArray = new AtomicArray<>(getNumShards());
                         final BitSet bitSet = new BitSet(getNumShards());
-                        shardFailures = new Tuple(atomicArray, bitSet);
+                        shardFailures = new Tuple<>(atomicArray, bitSet);
                         this.shardFailuresTuple.set(shardFailures);
                     }
                 }
@@ -614,6 +614,7 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
             AtomicArray<ShardSearchFailure> shardFailures = this.shardFailuresTuple.get().v1();
             if (shardFailures != null) {  // MP TODO: this goes away?
                 shardFailures.set(result.getShardIndex(), null);
+                atomicArrayBitSetTuple.v2().clear(result.getShardIndex());
             }
         }
         // we need to increment successful ops first before we compare the exit condition otherwise if we
