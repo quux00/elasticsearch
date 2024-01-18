@@ -8,6 +8,8 @@
 
 package org.elasticsearch.action.search;
 
+import com.carrotsearch.hppc.BitSet;
+
 import org.apache.logging.log4j.Logger;
 import org.apache.lucene.util.CollectionUtil;
 import org.apache.lucene.util.SetOnce;
@@ -28,6 +30,7 @@ import org.elasticsearch.common.util.concurrent.AbstractRunnable;
 import org.elasticsearch.common.util.concurrent.AtomicArray;
 import org.elasticsearch.core.Releasable;
 import org.elasticsearch.core.Releasables;
+import org.elasticsearch.core.Tuple;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.search.SearchContextMissingException;
 import org.elasticsearch.search.SearchPhaseResult;
@@ -83,7 +86,7 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
     private final TransportVersion minTransportVersion;
     private final Map<String, AliasFilter> aliasFilter;
     private final Map<String, Float> concreteIndexBoosts;
-    private final SetOnce<AtomicArray<ShardSearchFailure>> shardFailures = new SetOnce<>();
+    private final SetOnce<Tuple<AtomicArray<ShardSearchFailure>, BitSet>> shardFailuresTuple = new SetOnce<>();
     private final Object shardFailuresMutex = new Object();
     private final AtomicBoolean hasShardResponse = new AtomicBoolean(false);
     private final AtomicInteger successfulOps = new AtomicInteger();
@@ -394,7 +397,11 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
          * failed or if there was a failure and partial results are not allowed, then we immediately
          * fail. Otherwise we continue to the next phase.
          */
-        ShardOperationFailedException[] shardSearchFailures = buildShardFailures();
+        final long numShardFailures1 = getNumShardFailures();
+        System.err.println("DEBUG 1: " + numShardFailures1);
+        ShardOperationFailedException[] shardSearchFailures = buildShardFailures(); /// MP TODO: change this first
+        System.err.println("DEBUG 2: " + shardSearchFailures.length);
+        assert numShardFailures1 == shardSearchFailures.length : "NO BUENO";
         if (shardSearchFailures.length == getNumShards()) {
             shardSearchFailures = ExceptionsHelper.groupBy(shardSearchFailures);
             Throwable cause = shardSearchFailures.length == 0
@@ -460,12 +467,20 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
         }
     }
 
+    private long getNumShardFailures() {
+        var shardFailures = this.shardFailuresTuple.get();
+        if (shardFailures == null) {
+            return 0L;
+        }
+        return shardFailures.v2().cardinality();
+    }
+
     private ShardSearchFailure[] buildShardFailures() {
-        AtomicArray<ShardSearchFailure> shardFailures = this.shardFailures.get();
+        var shardFailures = this.shardFailuresTuple.get();
         if (shardFailures == null) {
             return ShardSearchFailure.EMPTY_ARRAY;
         }
-        List<ShardSearchFailure> entries = shardFailures.asList();
+        List<ShardSearchFailure> entries = shardFailures.v1().asList();
         ShardSearchFailure[] failures = new ShardSearchFailure[entries.size()];
         for (int i = 0; i < failures.length; i++) {
             failures[i] = entries.get(i);
@@ -534,25 +549,31 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
         // we don't aggregate shard on failures due to the internal cancellation,
         // but do keep the header counts right
         if ((requestCancelled.get() && isTaskCancelledException(e)) == false) {
-            AtomicArray<ShardSearchFailure> shardFailures = this.shardFailures.get();
+            var shardFailures = this.shardFailuresTuple.get();
             // lazily create shard failures, so we can early build the empty shard failure list in most cases (no failures)
             if (shardFailures == null) { // this is double checked locking but it's fine since SetOnce uses a volatile read internally
                 synchronized (shardFailuresMutex) {
-                    shardFailures = this.shardFailures.get(); // read again otherwise somebody else has created it?
+                    shardFailures = this.shardFailuresTuple.get(); // read again otherwise somebody else has created it?
                     if (shardFailures == null) { // still null so we are the first and create a new instance
-                        shardFailures = new AtomicArray<>(getNumShards());
-                        this.shardFailures.set(shardFailures);
+                        final AtomicArray<Object> atomicArray = new AtomicArray<>(getNumShards());
+                        final BitSet bitSet = new BitSet(getNumShards());
+                        shardFailures = new Tuple(atomicArray, bitSet);
+                        this.shardFailuresTuple.set(shardFailures);
                     }
                 }
             }
-            ShardSearchFailure failure = shardFailures.get(shardIndex);
+            ShardSearchFailure failure = shardFailures.v1().get(shardIndex);
             if (failure == null) {
-                shardFailures.set(shardIndex, new ShardSearchFailure(e, shardTarget));
+                shardFailures.v1().set(shardIndex, new ShardSearchFailure(e, shardTarget));
+                /// MP TODO: add BitSet.set here in syncrhonized block
+                synchronized (shardFailuresMutex) {
+                    shardFailures.v2().set(shardIndex);
+                }
             } else {
                 // the failure is already present, try and not override it with an exception that is less meaningless
                 // for example, getting illegal shard state
                 if (TransportActions.isReadOverrideException(e) && (e instanceof SearchContextMissingException == false)) {
-                    shardFailures.set(shardIndex, new ShardSearchFailure(e, shardTarget));
+                    shardFailures.v1().set(shardIndex, new ShardSearchFailure(e, shardTarget));
                 }
             }
 
@@ -588,9 +609,12 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
         // clean a previous error on this shard group (note, this code will be serialized on the same shardIndex value level
         // so its ok concurrency wise to miss potentially the shard failures being created because of another failure
         // in the #addShardFailure, because by definition, it will happen on *another* shardIndex
-        AtomicArray<ShardSearchFailure> shardFailures = this.shardFailures.get();
-        if (shardFailures != null) {
-            shardFailures.set(result.getShardIndex(), null);
+        final Tuple<AtomicArray<ShardSearchFailure>, BitSet> atomicArrayBitSetTuple = this.shardFailuresTuple.get();
+        if (atomicArrayBitSetTuple != null) {
+            AtomicArray<ShardSearchFailure> shardFailures = this.shardFailuresTuple.get().v1();
+            if (shardFailures != null) {  // MP TODO: this goes away?
+                shardFailures.set(result.getShardIndex(), null);
+            }
         }
         // we need to increment successful ops first before we compare the exit condition otherwise if we
         // are fast we could concurrently update totalOps but then preempt one of the threads which can
