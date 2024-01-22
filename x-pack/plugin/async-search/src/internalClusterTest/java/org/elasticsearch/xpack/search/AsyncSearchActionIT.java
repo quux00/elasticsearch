@@ -442,7 +442,7 @@ public class AsyncSearchActionIT extends AsyncSearchIntegTestCase {
             assertThat(response.getSearchResponse().getSuccessfulShards(), equalTo(0));
             assertThat(response.getSearchResponse().getFailedShards(), equalTo(0));
 
-            AsyncStatusResponse statusResponse = getAsyncStatus(response.getId());
+            AsyncStatusResponse statusResponse = getAsyncStatus(response.getId(), TimeValue.timeValueDays(10));
             assertTrue(statusResponse.isRunning());
             assertTrue(statusResponse.isPartial());
             assertThat(statusResponse.getExpirationTime(), greaterThan(expirationTime));
@@ -456,13 +456,22 @@ public class AsyncSearchActionIT extends AsyncSearchIntegTestCase {
             response.decRef();
         }
 
-        final AsyncSearchResponse response2 = getAsyncSearch(response.getId(), TimeValue.timeValueMillis(1));
-        try {
+        if (false) {
+            final AsyncSearchResponse response2 = getAsyncSearch(response.getId(), TimeValue.timeValueMillis(1));
+            try {
+                assertThat(response2.getExpirationTime(), lessThan(expirationTime));
+                ensureTaskNotRunning(response2.getId());
+                ensureTaskRemoval(response2.getId());
+            } finally {
+                response2.decRef();
+            }
+        } else {
+            AsyncStatusResponse statusResponse = getAsyncStatus(response.getId(), TimeValue.timeValueMillis(1));
+            final AsyncSearchResponse response2 = getAsyncSearch(response.getId(), TimeValue.timeValueMillis(1));
             assertThat(response2.getExpirationTime(), lessThan(expirationTime));
-            ensureTaskNotRunning(response2.getId());
-            ensureTaskRemoval(response2.getId());
-        } finally {
-            response2.decRef();
+            assertThat(statusResponse.getExpirationTime(), lessThan(expirationTime));
+            ensureTaskNotRunning(statusResponse.getId());
+            ensureTaskRemoval(statusResponse.getId());
         }
     }
 
