@@ -65,6 +65,7 @@ public class GetAsyncStatusRequest extends ActionRequest {
      * @return this object
      */
     public GetAsyncStatusRequest setKeepAlive(TimeValue timeValue) {
+        System.err.println("XXX GetAsyncStatusRequest setting timeValue to " + timeValue);
         this.keepAlive = timeValue;
         return this;
     }

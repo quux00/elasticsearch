@@ -337,12 +337,14 @@ class MutableSearchResponse implements Releasable {
      * @return response representing the status of async search
      */
     synchronized AsyncStatusResponse toStatusResponse(String asyncExecutionId, long startTime, long expirationTime) {
+        System.err.println("XXX GGG DEBUG 1");
         SearchResponse.Clusters clustersInStatus = null;
         if (clusters != null && clusters.getTotal() > 0) {
             // include clusters in the status if present and not Clusters.EMPTY (the case for local searches only)
             clustersInStatus = clusters;
         }
         if (finalResponse != null) {
+            System.err.println("XXX GGG DEBUG 2");
             return new AsyncStatusResponse(
                 asyncExecutionId,
                 false,
@@ -359,6 +361,7 @@ class MutableSearchResponse implements Releasable {
             );
         }
         if (failure != null) {
+            System.err.println("XXX GGG DEBUG 3");
             return new AsyncStatusResponse(
                 asyncExecutionId,
                 false,
@@ -374,6 +377,7 @@ class MutableSearchResponse implements Releasable {
                 clustersInStatus
             );
         }
+        System.err.println("XXX GGG DEBUG 4 with expr time: " + expirationTime);
         return new AsyncStatusResponse(
             asyncExecutionId,
             true,

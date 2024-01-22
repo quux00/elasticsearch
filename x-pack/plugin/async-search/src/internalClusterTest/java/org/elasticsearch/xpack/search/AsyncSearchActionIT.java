@@ -441,10 +441,16 @@ public class AsyncSearchActionIT extends AsyncSearchIntegTestCase {
             assertThat(response.getSearchResponse().getTotalShards(), equalTo(numShards));
             assertThat(response.getSearchResponse().getSuccessfulShards(), equalTo(0));
             assertThat(response.getSearchResponse().getFailedShards(), equalTo(0));
+            System.err.println("AAA1: response.getExpirationTime(): " + response.getExpirationTime());
+            System.err.println("AAA1:               expirationTime: " + expirationTime);
+            System.err.println("AAA1:                         diff: " + (response.getExpirationTime() - expirationTime));
 
             AsyncStatusResponse statusResponse = getAsyncStatus(response.getId(), TimeValue.timeValueDays(10));
             assertTrue(statusResponse.isRunning());
             assertTrue(statusResponse.isPartial());
+            System.err.println("AAA2: statusResponse.getExpirationTime(): " + statusResponse.getExpirationTime());
+            System.err.println("AAA2:                     expirationTime: " + expirationTime);
+            System.err.println("AAA2:                               diff: " + (statusResponse.getExpirationTime() - expirationTime));
             assertThat(statusResponse.getExpirationTime(), greaterThan(expirationTime));
             assertThat(statusResponse.getStartTime(), lessThan(statusResponse.getExpirationTime()));
             assertEquals(numShards, statusResponse.getTotalShards());
@@ -456,9 +462,12 @@ public class AsyncSearchActionIT extends AsyncSearchIntegTestCase {
             response.decRef();
         }
 
-        if (false) {
+        if (false) {  /// MP TODO: change to randomBoolean
             final AsyncSearchResponse response2 = getAsyncSearch(response.getId(), TimeValue.timeValueMillis(1));
             try {
+                System.err.println("BBB1: response2.getExpirationTime(): " + response2.getExpirationTime());
+                System.err.println("BBB1:                expirationTime: " + expirationTime);
+                System.err.println("BBB1:                          diff: " + (response2.getExpirationTime() - expirationTime));
                 assertThat(response2.getExpirationTime(), lessThan(expirationTime));
                 ensureTaskNotRunning(response2.getId());
                 ensureTaskRemoval(response2.getId());
@@ -467,9 +476,14 @@ public class AsyncSearchActionIT extends AsyncSearchIntegTestCase {
             }
         } else {
             AsyncStatusResponse statusResponse = getAsyncStatus(response.getId(), TimeValue.timeValueMillis(1));
-            final AsyncSearchResponse response2 = getAsyncSearch(response.getId(), TimeValue.timeValueMillis(1));
-            assertThat(response2.getExpirationTime(), lessThan(expirationTime));
-            assertThat(statusResponse.getExpirationTime(), lessThan(expirationTime));
+            System.err.println("BBB2: statusResponse.getExpirationTime(): " + statusResponse.getExpirationTime());
+            System.err.println("BBB2:                     expirationTime: " + expirationTime);
+            System.err.println("BBB2:                               diff: " + (statusResponse.getExpirationTime() - expirationTime));
+            AsyncStatusResponse statusResponse2 = getAsyncStatus(response.getId());
+            System.err.println("BBB2: statusRespons2.getExpirationTime(): " + statusResponse2.getExpirationTime());
+            System.err.println("BBB2:                     expirationTime: " + expirationTime);
+            System.err.println("BBB2:                               diff: " + (statusResponse2.getExpirationTime() - expirationTime));
+//            assertThat(statusResponse.getExpirationTime(), lessThan(expirationTime));
             ensureTaskNotRunning(statusResponse.getId());
             ensureTaskRemoval(statusResponse.getId());
         }

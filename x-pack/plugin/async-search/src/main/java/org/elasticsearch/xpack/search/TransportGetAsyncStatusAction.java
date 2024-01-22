@@ -25,6 +25,7 @@ import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.xpack.core.XPackPlugin;
 import org.elasticsearch.xpack.core.async.AsyncExecutionId;
+import org.elasticsearch.xpack.core.async.AsyncTask;
 import org.elasticsearch.xpack.core.async.AsyncTaskIndexService;
 import org.elasticsearch.xpack.core.async.GetAsyncStatusRequest;
 import org.elasticsearch.xpack.core.search.action.AsyncSearchResponse;
@@ -75,19 +76,30 @@ public class TransportGetAsyncStatusAction extends HandledTransportAction<GetAsy
         if (node == null || Objects.equals(node, localNode)) {
             if (request.getKeepAlive() != null && request.getKeepAlive().getMillis() > 0) {
                 long expirationTime = System.currentTimeMillis() + request.getKeepAlive().getMillis();
+                System.err.println("XXX TransportGetAsyncStatusAction store.updateExpirationTime to : " + expirationTime);
                 store.updateExpirationTime(
                     searchId.getDocId(),
                     expirationTime,
                     ActionListener.wrap(
-                        p -> store.retrieveStatus(
-                            request,
-                            taskManager,
-                            AsyncSearchTask.class,
-                            AsyncSearchTask::getStatusResponse,
-                            AsyncStatusResponse::getStatusFromStoredSearch,
-                            listener
-                        ),
+                        p -> {
+                            System.err.println("XXX TransportGetAsyncStatusAction updateExprTime callback: success. " +
+                                "Next: task.setExpTime then retrieveStatus");
+                            System.err.println("XXX TransportGetAsyncStatusAction task: " + task.getClass() + "::" +
+                                (task instanceof AsyncSearchTask));
+                            final AsyncSearchTask asyncSearchTask = store.getTaskAndCheckAuthentication(taskManager, searchId, AsyncSearchTask.class);
+                            asyncSearchTask.setExpirationTime(expirationTime);
+                            System.err.println("XXX YYYYY task.setExpirationTime WORKED");
+                            store.retrieveStatus(
+                                request,
+                                taskManager,
+                                AsyncSearchTask.class,
+                                AsyncSearchTask::getStatusResponse,
+                                AsyncStatusResponse::getStatusFromStoredSearch,
+                                listener
+                            );
+                        },
                         exc -> {
+                            System.err.println("XXX TransportGetAsyncStatusAction updateExprTime callback: FAILURE: " + exc);
                             RestStatus status = ExceptionsHelper.status(ExceptionsHelper.unwrapCause(exc));
                             if (status != RestStatus.NOT_FOUND) {
                                 logger.error(

@@ -370,6 +370,7 @@ final class AsyncSearchTask extends SearchTask implements AsyncTask, Releasable 
      * Returns the status from {@link AsyncSearchTask}
      */
     public static AsyncStatusResponse getStatusResponse(AsyncSearchTask asyncTask) {
+        System.err.println("XXX FFF: AsyncStatusResponse.getStatusResponse :: expiration time in task: " + asyncTask.expirationTimeMillis);
         MutableSearchResponse mutableSearchResponse = asyncTask.searchResponse.get();
         assert mutableSearchResponse != null;
         return mutableSearchResponse.toStatusResponse(

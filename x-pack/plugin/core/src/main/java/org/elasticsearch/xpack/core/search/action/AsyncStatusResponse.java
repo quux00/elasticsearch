@@ -81,6 +81,7 @@ public class AsyncStatusResponse extends ActionResponse implements SearchStatusR
         long expirationTimeMillis,
         String id
     ) {
+        System.err.println("XXX AsyncStatusResponse - getStatusFromStoredSearch");
         int totalShards = 0;
         int successfulShards = 0;
         int skippedShards = 0;
