@@ -397,12 +397,10 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
          * failed or if there was a failure and partial results are not allowed, then we immediately
          * fail. Otherwise we continue to the next phase.
          */
-        final long numShardFailures1 = getNumShardFailures();
-        // System.err.println("DEBUG 1: " + numShardFailures1);
-        ShardOperationFailedException[] shardSearchFailures = buildShardFailures(); /// MP TODO: change this first
-        // System.err.println("DEBUG 2: " + shardSearchFailures.length);
-        assert numShardFailures1 == shardSearchFailures.length : "NO BUENO: " + numShardFailures1 + "::" + shardSearchFailures.length;
-        if (shardSearchFailures.length == getNumShards()) {
+        final long numShardFailures = getNumShardFailures();
+        if (numShardFailures == getNumShards()) {
+            ShardOperationFailedException[] shardSearchFailures = buildShardFailures();
+            assert numShardFailures == shardSearchFailures.length : "NO BUENO: " + numShardFailures + "::" + shardSearchFailures.length;
             shardSearchFailures = ExceptionsHelper.groupBy(shardSearchFailures);
             Throwable cause = shardSearchFailures.length == 0
                 ? null
@@ -415,9 +413,11 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
             if (allowPartialResults == false && successfulOps.get() != getNumShards()) {
                 // check if there are actual failures in the atomic array since
                 // successful retries can reset the failures to null
-                if (shardSearchFailures.length > 0) {
+                if (numShardFailures > 0) {
                     if (logger.isDebugEnabled()) {
-                        int numShardFailures = shardSearchFailures.length;
+                        ShardOperationFailedException[] shardSearchFailures = buildShardFailures();
+                        assert numShardFailures == shardSearchFailures.length
+                            : "NO BUENO: " + numShardFailures + "::" + shardSearchFailures.length;
                         shardSearchFailures = ExceptionsHelper.groupBy(shardSearchFailures);
                         Throwable cause = ElasticsearchException.guessRootCauses(shardSearchFailures[0].getCause())[0];
                         logger.debug(() -> format("%s shards failed for phase: [%s]", numShardFailures, currentPhase.getName()), cause);
