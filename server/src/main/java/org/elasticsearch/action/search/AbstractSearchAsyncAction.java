@@ -415,6 +415,9 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
                 // successful retries can reset the failures to null
                 if (numShardFailures > 0) {
                     if (logger.isDebugEnabled()) {
+                        /// MP TODO USAGE: needs 1) grouped by failures; 2) likely root cause ;; does NOT need count or full list
+                        /// MP TODO USAGE so this is a good candidate for a 'buildGroupedShardFailures' method
+                        /// MP TODO USAGE -- BUT only used for logging, so this section is not really important for this ticket
                         ShardOperationFailedException[] shardSearchFailures = buildShardFailures();
                         assert numShardFailures == shardSearchFailures.length
                             : "NO BUENO: " + numShardFailures + "::" + shardSearchFailures.length;
@@ -488,6 +491,22 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
         return failures;
     }
 
+    private ShardSearchFailure[] buildShardFailures(int max) {
+        var shardFailures = this.shardFailuresTuple.get();
+        if (shardFailures == null) {
+            return ShardSearchFailure.EMPTY_ARRAY;
+        }
+        List<ShardSearchFailure> entries = shardFailures.v1().asList();
+        int size = Math.min(max, entries.size());
+        System.err.printf(">>> buildShardFailure returning %d; actual count: %d: truncated?: %s\n",
+            size, entries.size(), (size < entries.size()));
+        ShardSearchFailure[] failures = new ShardSearchFailure[size];
+        for (int i = 0; i < size; i++) {
+            failures[i] = entries.get(i);
+        }
+        return failures;
+    }
+
     private void onShardFailure(final int shardIndex, SearchShardTarget shard, final SearchShardIterator shardIt, Exception e) {
         // we always add the shard failure for a specific shard instance
         // we do make sure to clean it on a successful response from a shard
@@ -513,7 +532,7 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
         } else if (totalOps > expectedTotalOps) {
             throw new AssertionError(
                 "unexpected higher total ops [" + totalOps + "] compared to expected [" + expectedTotalOps + "]",
-                new SearchPhaseExecutionException(getName(), "Shard failures", null, buildShardFailures())
+                new SearchPhaseExecutionException(getName(), "Shard failures", null, buildShardFailures(3)) //MP TODO change to max=10
             );
         } else {
             if (lastShard == false) {
@@ -642,7 +661,7 @@ abstract class AbstractSearchAsyncAction<Result extends SearchPhaseResult> exten
         } else if (xTotalOps > expectedTotalOps) {
             throw new AssertionError(
                 "unexpected higher total ops [" + xTotalOps + "] compared to expected [" + expectedTotalOps + "]",
-                new SearchPhaseExecutionException(getName(), "Shard failures", null, buildShardFailures())
+                new SearchPhaseExecutionException(getName(), "Shard failures", null, buildShardFailures(3)) //MP TODO: -> max=10
             );
         }
     }
