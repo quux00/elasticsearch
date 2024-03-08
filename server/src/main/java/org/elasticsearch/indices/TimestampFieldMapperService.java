@@ -54,7 +54,7 @@ public class TimestampFieldMapperService extends AbstractLifecycleComponent impl
      * The type of the {@code @timestamp} field keyed by index. Futures may be completed with {@code null} to indicate that there is
      * no usable {@code @timestamp} field.
      */
-    private final Map<Index, PlainActionFuture<DateFieldMapper.DateFieldType>> fieldTypesByIndex = ConcurrentCollections.newConcurrentMap();
+    private final Map<Index, PlainActionFuture<DateFieldMapper.DateFieldType>> fieldTypesByIndexx = ConcurrentCollections.newConcurrentMap();
 
     public TimestampFieldMapperService(Settings settings, ThreadPool threadPool, IndicesService indicesService) {
         this.indicesService = indicesService;
@@ -101,6 +101,7 @@ public class TimestampFieldMapperService extends AbstractLifecycleComponent impl
 
             if (hasUsefulTimestampField(indexMetadata) && fieldTypesByIndex.containsKey(index) == false) {
                 logger.trace("computing timestamp mapping for {}", index);
+                /// MP TODO: why do we need a Future here? A: because may be operating on threads that cannot block
                 final PlainActionFuture<DateFieldMapper.DateFieldType> future = new PlainActionFuture<>();
                 fieldTypesByIndex.put(index, future);
 
@@ -141,6 +142,7 @@ public class TimestampFieldMapperService extends AbstractLifecycleComponent impl
             return false;
         }
 
+        /// MP TODO: this looks like a bit of an extension to the timestamp range concept beyond just @timestamp
         if (indexMetadata.hasTimeSeriesTimestampRange()) {
             // Tsdb indices have @timestamp field and index.time_series.start_time / index.time_series.end_time range
             return true;
@@ -151,6 +153,8 @@ public class TimestampFieldMapperService extends AbstractLifecycleComponent impl
     }
 
     private static DateFieldMapper.DateFieldType fromMapperService(MapperService mapperService) {
+        MappedFieldType eventIngestedFieldType = mapperService.fieldType("event.ingested");
+        System.err.println("eventIngestedFieldType: " + eventIngestedFieldType);
         final MappedFieldType mappedFieldType = mapperService.fieldType(DataStream.TIMESTAMP_FIELD_NAME);
         if (mappedFieldType instanceof DateFieldMapper.DateFieldType) {
             return (DateFieldMapper.DateFieldType) mappedFieldType;
@@ -166,6 +170,9 @@ public class TimestampFieldMapperService extends AbstractLifecycleComponent impl
      * - the mapping is not known yet, or
      * - the field is not a timestamp field.
      */
+
+    /// MP TODO: why do we return the timestamp field _type_ here? Why not just the range? Is the field type the same
+    /// MP TODO:   or different between @timestamp and event.ingested?
     @Nullable
     public DateFieldMapper.DateFieldType getTimestampFieldType(Index index) {
         final PlainActionFuture<DateFieldMapper.DateFieldType> future = fieldTypesByIndex.get(index);

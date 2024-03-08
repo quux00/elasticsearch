@@ -32,7 +32,7 @@ public class CoordinatorRewriteContextProvider {
         Client client,
         LongSupplier nowInMillis,
         Supplier<ClusterState> clusterStateSupplier,
-        Function<Index, DateFieldMapper.DateFieldType> mappingSupplier
+        Function<Index, DateFieldMapper.DateFieldType> mappingSupplier  // MP TODO: answers does this index have a DateFieldType (I guess?)
     ) {
         this.parserConfig = parserConfig;
         this.client = client;
@@ -49,18 +49,23 @@ public class CoordinatorRewriteContextProvider {
         if (indexMetadata == null) {
             return null;
         }
-        DateFieldMapper.DateFieldType dateFieldType = mappingSupplier.apply(index);
+        // MP TODO: ask the mappingSupplier if there is a dateFieldType in the TimestampFieldMapperService for the given index
+        // MP TODO: if NO (null), do not return a CoordinatorRewriteContext, since there's no rewrite action to take
+        DateFieldMapper.DateFieldType dateFieldTypex = mappingSupplier.apply(index);
         if (dateFieldType == null) {
             return null;
         }
-        IndexLongFieldRange timestampRange = indexMetadata.getTimestampRange();
+        // MP TODO: if YES, get the timestamp range on that index; then
+        IndexLongFieldRange timestampRange = indexMetadata.getTimestampRange(); // MP TODO: what is this range of?
         if (timestampRange.containsAllShardRanges() == false) {
-            timestampRange = indexMetadata.getTimeSeriesTimestampRange(dateFieldType);
+            /// MP TODO: I think we may need to pass in field name: @timestamp vs. event.ingested
+            timestampRange = indexMetadata.getTimeSeriesTimestampRange(dateFieldType); // MP TODO: why do you need to pass in type here?
             if (timestampRange == null) {
                 return null;
             }
         }
 
+        // MP TODO: does this CoordinatorRewriteContext need to know whether we are searching on @timestamp or event.ingested?
         return new CoordinatorRewriteContext(parserConfig, client, nowInMillis, timestampRange, dateFieldType);
     }
 }

@@ -9,6 +9,8 @@ package org.elasticsearch.index;
 
 import java.time.Instant;
 
+/// MP TODO: this looks to be constrained to work only with @timestamp as DataStreamTimestampFieldMapper uses this
+/// MP TODO: so do we need to create another parallel Bounds class for event.ingested?
 /**
  * Bounds for the {@code @timestamp} field on this index.
  */

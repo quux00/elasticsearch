@@ -1558,6 +1558,7 @@ public final class IndexSettings {
         this.mappingDimensionFieldsLimit = value;
     }
 
+    /// MP TODO: why is there a TimestampBounds in IndexSettings? Why is this not in IndexMetadata?
     /**
      * The bounds for {@code @timestamp} on this index or
      * {@code null} if there are no bounds.

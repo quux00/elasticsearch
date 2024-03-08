@@ -162,11 +162,12 @@ final class CanMatchPreFilterSearchPhase extends SearchPhase {
                 continue;
             }
             boolean canMatch = true;
-            CoordinatorRewriteContext coordinatorRewriteContext = coordinatorRewriteContextProvider.getCoordinatorRewriteContext(
+            CoordinatorRewriteContext coordinatorRewriteContextx = coordinatorRewriteContextProvider.getCoordinatorRewriteContext(
                 request.shardId().getIndex()
             );
             if (coordinatorRewriteContext != null) {
                 try {
+                    // MP TODO: the rewrite must happen down in this method - LEFTOFF
                     canMatch = SearchService.queryStillMatchesAfterRewrite(request, coordinatorRewriteContext);
                 } catch (Exception e) {
                     // treat as if shard is still a potential match

@@ -1827,8 +1827,10 @@ public class IndicesService extends AbstractLifecycleComponent
      * - the field is not found, or
      * - the field is not a timestamp field.
      */
+    // MP: TODO - this only thing this is used for (outside of tests) is by the CoordinatorRewriteContextProvider
     @Nullable
     public DateFieldMapper.DateFieldType getTimestampFieldType(Index index) {
+        // MP TODO: this pulls the data from the CoordinatorRewriteContextProvider future (could be null)
         return timestampFieldMapperService.getTimestampFieldType(index);
     }
 

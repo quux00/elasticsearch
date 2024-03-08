@@ -81,6 +81,7 @@ public enum IndexMode {
             return null;
         }
 
+        /// MP TODO: STANDARD IndexMode does not support timestamp bounds
         @Override
         public TimestampBounds getTimestampBound(IndexMetadata indexMetadata) {
             return null;

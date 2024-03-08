@@ -45,6 +45,7 @@ import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.index.IndexSettings;
 import org.elasticsearch.index.IndexVersion;
 import org.elasticsearch.index.IndexVersions;
+import org.elasticsearch.index.TimestampBounds;
 import org.elasticsearch.index.mapper.DateFieldMapper;
 import org.elasticsearch.index.mapper.MapperService;
 import org.elasticsearch.index.seqno.SequenceNumbers;
@@ -1343,9 +1344,14 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
      * @return the time range this index represents if this index is in time series mode.
      *         Otherwise <code>null</code> is returned.
      */
+    /// MP TODO: looks like you have to pass in the DateFieldType in order to determine the resolution (millis vs. nanos)
+    /// MP TODO: the good news is that this is ONLY called in 1 place - by the CoordinatorRewriteContextProvider, so we can modify
+    /// MP TODO: IDEA: modify, to take in a field name as well, so you know which timestamp bounds to look at
     @Nullable
     public IndexLongFieldRange getTimeSeriesTimestampRange(DateFieldMapper.DateFieldType dateFieldType) {
-        var bounds = indexMode != null ? indexMode.getTimestampBound(this) : null;
+        /// MP TODO: this TimestampBounds class is specific to @timestamp (as it is also used in DataStreamTimestampFieldMapper)
+        /// MP TODO: if indexMode == STANDARD, it returns null; only IndexMode.TIME_SERIES returns a TimestampBounds
+        TimestampBounds bounds = indexMode != null ? indexMode.getTimestampBound(this) : null;
         if (bounds != null) {
             long start = dateFieldType.resolution().convert(Instant.ofEpochMilli(bounds.startTime()));
             long end = dateFieldType.resolution().convert(Instant.ofEpochMilli(bounds.endTime()));

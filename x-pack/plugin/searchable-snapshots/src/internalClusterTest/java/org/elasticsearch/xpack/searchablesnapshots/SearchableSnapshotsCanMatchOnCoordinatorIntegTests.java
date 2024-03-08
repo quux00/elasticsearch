@@ -98,11 +98,11 @@ public class SearchableSnapshotsCanMatchOnCoordinatorIntegTests extends BaseFroz
         final String dataNodeHoldingSearchableSnapshot = internalCluster().startDataOnlyNode();
         final IndicesService indicesService = internalCluster().getInstance(IndicesService.class, dataNodeHoldingSearchableSnapshot);
 
-        final String indexOutsideSearchRange = randomAlphaOfLength(10).toLowerCase(Locale.ROOT);
+        final String indexOutsideSearchRange = "outside_idx"; // randomAlphaOfLength(10).toLowerCase(Locale.ROOT);
         final int indexOutsideSearchRangeShardCount = randomIntBetween(1, 3);
         createIndexWithTimestamp(indexOutsideSearchRange, indexOutsideSearchRangeShardCount, Settings.EMPTY);
 
-        final String indexWithinSearchRange = randomAlphaOfLength(10).toLowerCase(Locale.ROOT);
+        final String indexWithinSearchRange = "within_idx"; // randomAlphaOfLength(10).toLowerCase(Locale.ROOT);
         final int indexWithinSearchRangeShardCount = randomIntBetween(1, 3);
         createIndexWithTimestamp(
             indexWithinSearchRange,
@@ -115,7 +115,7 @@ public class SearchableSnapshotsCanMatchOnCoordinatorIntegTests extends BaseFroz
         final int totalShards = indexOutsideSearchRangeShardCount + indexWithinSearchRangeShardCount;
 
         // Either add data outside of the range, or documents that don't have timestamp data
-        final boolean indexDataWithTimestamp = randomBoolean();
+        final boolean indexDataWithTimestamp = true; // randomBoolean();
         // Add enough documents to have non-metadata segment files in all shards,
         // otherwise the mount operation might go through as the read won't be
         // blocked
@@ -134,13 +134,13 @@ public class SearchableSnapshotsCanMatchOnCoordinatorIntegTests extends BaseFroz
         int numDocsWithinRange = between(100, 1000);
         indexDocumentsWithTimestampWithinDate(indexWithinSearchRange, numDocsWithinRange, TIMESTAMP_TEMPLATE_WITHIN_RANGE);
 
-        final String repositoryName = randomAlphaOfLength(10).toLowerCase(Locale.ROOT);
+        final String repositoryName = "my_repo_123"; // randomAlphaOfLength(10).toLowerCase(Locale.ROOT);
         createRepository(repositoryName, "mock");
 
         final SnapshotId snapshotId = createSnapshot(repositoryName, "snapshot-1", List.of(indexOutsideSearchRange)).snapshotId();
         assertAcked(indicesAdmin().prepareDelete(indexOutsideSearchRange));
 
-        final String searchableSnapshotIndexOutsideSearchRange = randomAlphaOfLength(10).toLowerCase(Locale.ROOT);
+        final String searchableSnapshotIndexOutsideSearchRange = "repo_outside"; // randomAlphaOfLength(10).toLowerCase(Locale.ROOT);
 
         // Block the repository for the node holding the searchable snapshot shards
         // to delay its restore
@@ -169,7 +169,7 @@ public class SearchableSnapshotsCanMatchOnCoordinatorIntegTests extends BaseFroz
         DateFieldMapper.DateFieldType timestampFieldType = indicesService.getTimestampFieldType(indexMetadata.getIndex());
         assertThat(timestampFieldType, nullValue());
 
-        final boolean includeIndexCoveringSearchRangeInSearchRequest = randomBoolean();
+        final boolean includeIndexCoveringSearchRangeInSearchRequest = true; // randomBoolean();
         List<String> indicesToSearch = new ArrayList<>();
         if (includeIndexCoveringSearchRangeInSearchRequest) {
             indicesToSearch.add(indexWithinSearchRange);
@@ -728,10 +728,21 @@ public class SearchableSnapshotsCanMatchOnCoordinatorIntegTests extends BaseFroz
                     XContentFactory.jsonBuilder()
                         .startObject()
                         .startObject("properties")
+
                         .startObject(DataStream.TIMESTAMP_FIELD_NAME)
                         .field("type", randomFrom("date", "date_nanos"))
                         .field("format", "strict_date_optional_time_nanos")
                         .endObject()
+
+                        .startObject("event")
+                        .startObject("properties")
+                        .startObject("ingest")
+                        .field("type", "date")
+                        .field("format", "strict_date_optional_time_nanos")  // TODO: is this OK for event.ingested?
+                        .endObject()
+                        .endObject()
+                        .endObject()
+
                         .endObject()
                         .endObject()
                 )
@@ -740,20 +751,49 @@ public class SearchableSnapshotsCanMatchOnCoordinatorIntegTests extends BaseFroz
         ensureGreen(indexName);
     }
 
+    /*
+{
+  "mappings": {
+    "properties": {
+      "@timestamp": {
+        "type": "date"
+      },
+      "event": {
+        "properties": {
+          "action": {
+            "type": "keyword",
+            "ignore_above": 1024
+          },
+          "created": {
+            "type": "date"
+          },
+          "ingested": {
+            "type": "date"
+          }
+        }
+      }
+    }
+  }
+}
+     */
+
     private void indexDocumentsWithTimestampWithinDate(String indexName, int docCount, String timestampTemplate) throws Exception {
         final List<IndexRequestBuilder> indexRequestBuilders = new ArrayList<>();
         for (int i = 0; i < docCount; i++) {
+            final String timestampData = String.format(
+                Locale.ROOT,
+                timestampTemplate,
+                between(0, 23),
+                between(0, 59),
+                between(0, 59),
+                randomLongBetween(0, 999999999L)
+            );
             indexRequestBuilders.add(
                 prepareIndex(indexName).setSource(
                     DataStream.TIMESTAMP_FIELD_NAME,
-                    String.format(
-                        Locale.ROOT,
-                        timestampTemplate,
-                        between(0, 23),
-                        between(0, 59),
-                        between(0, 59),
-                        randomLongBetween(0, 999999999L)
-                    )
+                    timestampData,
+                    "event.ingested",
+                    timestampData
                 )
             );
         }
