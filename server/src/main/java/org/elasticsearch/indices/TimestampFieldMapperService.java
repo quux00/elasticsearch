@@ -39,6 +39,10 @@ import java.util.concurrent.TimeUnit;
 import static org.elasticsearch.common.util.concurrent.EsExecutors.daemonThreadFactory;
 import static org.elasticsearch.core.Strings.format;
 
+/// MP TODO: who uses this? A: IndicesService creates it and holds a reference - uses it in
+//  MP TODO:    public DateFieldMapper.DateFieldType getTimestampFieldType(Index index) {
+//  MP TODO:    which is the mappingSupplier passed into the CoordinatorRewriteContextProvider
+//  MP TODO: SO can we change this to also handle event.ingested? YES, I THINK SO
 /**
  * Tracks the mapping of the {@code @timestamp} field of immutable indices that expose their timestamp range in their index metadata.
  * Coordinating nodes do not have (easy) access to mappings for all indices, so we extract the type of this one field from the mapping here.
@@ -56,6 +60,7 @@ public class TimestampFieldMapperService extends AbstractLifecycleComponent impl
      */
     private final Map<Index, PlainActionFuture<DateFieldMapper.DateFieldType>> fieldTypesByIndexx = ConcurrentCollections.newConcurrentMap();
 
+    /// MP TODO: only called from the IndicesService ctor
     public TimestampFieldMapperService(Settings settings, ThreadPool threadPool, IndicesService indicesService) {
         this.indicesService = indicesService;
 
@@ -142,13 +147,16 @@ public class TimestampFieldMapperService extends AbstractLifecycleComponent impl
             return false;
         }
 
-        /// MP TODO: this looks like a bit of an extension to the timestamp range concept beyond just @timestamp
+        /// MP TODO: this checks if TimestampBounds != null
         if (indexMetadata.hasTimeSeriesTimestampRange()) {
+            /// MP TODO: the below comment means that both STANDARD and TIME_SERIES specify a non-null TimestampBounds
             // Tsdb indices have @timestamp field and index.time_series.start_time / index.time_series.end_time range
             return true;
         }
 
-        final IndexLongFieldRange timestampRange = indexMetadata.getTimestampRange();
+        /// MP TODO: this fallthrough means that we can still return true if TimestampBounds is not used
+        /// MP TODO    so does that imply that event.ingested does NOT need to be added to TimestampBounds ??
+        final IndexLongFieldRange timestampRange = indexMetadata.getTimestampRange();  /// MP TODO: add getEventIngestedTimestampRange() ?
         return timestampRange.isComplete() && timestampRange != IndexLongFieldRange.UNKNOWN;
     }
 

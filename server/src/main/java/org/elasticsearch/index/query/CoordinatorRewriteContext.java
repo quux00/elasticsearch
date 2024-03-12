@@ -28,7 +28,14 @@ import java.util.function.LongSupplier;
  */
 public class CoordinatorRewriteContext extends QueryRewriteContext {
     private final IndexLongFieldRange indexLongFieldRange;
+    /**
+     * Refers to the @timestamp field
+     */
     private final DateFieldMapper.DateFieldType timestampFieldType;
+    /**
+     * Refers to 'event.ingested' field
+     */
+    private DateFieldMapper.DateFieldType eventIngestedFieldType;  // TODO: make final
 
     public CoordinatorRewriteContext(
         XContentParserConfiguration parserConfig,
@@ -57,10 +64,13 @@ public class CoordinatorRewriteContext extends QueryRewriteContext {
         this.timestampFieldType = timestampFieldType;
     }
 
-    long getMinTimestamp() {
+
+    /// MP TODO: does this need to take a field name (@timestamp vs. event.ingested) or take union of the two?
+    long getMinTimestamp() {  /// MP TODO: this is called only from RangeQueryBuilder.getRelation
         return indexLongFieldRange.getMin();
     }
 
+    /// MPQ TODO: Hmm - this cannot return null. Is that a problem when we have support either @timestamp or event.ingested? One could be null then
     long getMaxTimestamp() {
         return indexLongFieldRange.getMax();
     }
@@ -69,6 +79,7 @@ public class CoordinatorRewriteContext extends QueryRewriteContext {
         return indexLongFieldRange.isComplete() && indexLongFieldRange != IndexLongFieldRange.EMPTY;
     }
 
+    /// MP TODO: GOOD NEWS - this is where we can add support for event.ingested since field name has to be passed in here
     @Nullable
     public MappedFieldType getFieldType(String fieldName) {
         if (fieldName.equals(timestampFieldType.name()) == false) {

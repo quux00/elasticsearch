@@ -1827,7 +1827,10 @@ public class IndicesService extends AbstractLifecycleComponent
      * - the field is not found, or
      * - the field is not a timestamp field.
      */
-    // MP: TODO - this only thing this is used for (outside of tests) is by the CoordinatorRewriteContextProvider
+    // MP: TODO - the only thing this is used for (outside of tests) is by the CoordinatorRewriteContextProvider
+    /// MPQ TODO: I don't understand why we want field _type_ here? Isn't that known a priori? Does this imply
+    /// MP  TODO    that different indexes could have different timestamp fields per index? If yes, why ask for their _type_ ???
+    /// MP  TODO    A: ?Maybe bcs each timestamp field type can use different resolution (and maybe scripts?) see the DateFieldType class?
     @Nullable
     public DateFieldMapper.DateFieldType getTimestampFieldType(Index index) {
         // MP TODO: this pulls the data from the CoordinatorRewriteContextProvider future (could be null)

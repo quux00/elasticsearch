@@ -26,6 +26,12 @@ public class CoordinatorRewriteContextProvider {
     private final LongSupplier nowInMillis;
     private final Supplier<ClusterState> clusterStateSupplier;
     private final Function<Index, DateFieldMapper.DateFieldType> mappingSupplier;
+    /// MP TOOD: this mappingSupplier comes from the IndicesService and is:
+    /*
+        public DateFieldMapper.DateFieldType getTimestampFieldType(Index index) {
+          return timestampFieldMapperService.getTimestampFieldType(index);
+        }
+     */
 
     public CoordinatorRewriteContextProvider(
         XContentParserConfiguration parserConfig,
@@ -41,22 +47,24 @@ public class CoordinatorRewriteContextProvider {
         this.mappingSupplier = mappingSupplier;
     }
 
+    /// MP TODO: called from runCoordinatorRewritePhase
     @Nullable
     public CoordinatorRewriteContext getCoordinatorRewriteContext(Index index) {
         var clusterState = clusterStateSupplier.get();
-        var indexMetadata = clusterState.metadata().index(index);
+        var indexMetadata = clusterState.metadata().index(index); /// MPQ TODO: will this return null for any index without @timestamp?
 
         if (indexMetadata == null) {
             return null;
         }
         // MP TODO: ask the mappingSupplier if there is a dateFieldType in the TimestampFieldMapperService for the given index
-        // MP TODO: if NO (null), do not return a CoordinatorRewriteContext, since there's no rewrite action to take
+        // MP TODO:   if NO (null), return a NULL CoordinatorRewriteContext, since there's no rewrite action to take
         DateFieldMapper.DateFieldType dateFieldTypex = mappingSupplier.apply(index);
         if (dateFieldType == null) {
             return null;
         }
         // MP TODO: if YES, get the timestamp range on that index; then
         IndexLongFieldRange timestampRange = indexMetadata.getTimestampRange(); // MP TODO: what is this range of?
+        /// MPQ TODO I don't understand this containsAllShardRanges() == false logic - explain?
         if (timestampRange.containsAllShardRanges() == false) {
             /// MP TODO: I think we may need to pass in field name: @timestamp vs. event.ingested
             timestampRange = indexMetadata.getTimeSeriesTimestampRange(dateFieldType); // MP TODO: why do you need to pass in type here?

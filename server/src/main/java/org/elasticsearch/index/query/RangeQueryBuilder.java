@@ -432,17 +432,18 @@ public class RangeQueryBuilder extends AbstractQueryBuilder<RangeQueryBuilder> i
         return NAME;
     }
 
+    /// MP TODO: this is only called from RangeQueryBuilder.goCoordinatorRewrite
     // Overridable for testing only
     protected MappedFieldType.Relation getRelation(final CoordinatorRewriteContext coordinatorRewriteContext) {
-        final MappedFieldType fieldType = coordinatorRewriteContext.getFieldType(fieldName);
+        final MappedFieldType fieldType = coordinatorRewriteContext.getFieldType(fieldName); // MP TODO: this is specific to field name
         if (fieldType instanceof final DateFieldMapper.DateFieldType dateFieldType) {
             if (coordinatorRewriteContext.hasTimestampData() == false) {
                 return MappedFieldType.Relation.DISJOINT;
             }
-            long minTimestamp = coordinatorRewriteContext.getMinTimestamp();
+            long minTimestamp = coordinatorRewriteContext.getMinTimestamp();  // MP TODO: so why isn't this specific to fieldname?
             long maxTimestamp = coordinatorRewriteContext.getMaxTimestamp();
             DateMathParser dateMathParser = getForceDateParser();
-            return dateFieldType.isFieldWithinQuery(
+            return dateFieldType.isFieldWithinQuery(  /// MP TODO: this is why we need the dateFieldType - to call this method
                 minTimestamp,
                 maxTimestamp,
                 from,

@@ -594,7 +594,10 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
     private final boolean isSystem;
     private final boolean isHidden;
 
+    // tracks range of the @timestamp field for the Index this IndexMetadata object is for
     private final IndexLongFieldRange timestampRange;
+    // tracks range of the event.ingested field for the Index this IndexMetadata object is for
+    private IndexLongFieldRange eventIngestedRange;  // MP TODO: make final
 
     private final int priority;
 
@@ -658,7 +661,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         final ImmutableOpenMap<String, RolloverInfo> rolloverInfos,
         final boolean isSystem,
         final boolean isHidden,
-        final IndexLongFieldRange timestampRange,
+        final IndexLongFieldRange timestampRange,  // MP TODO: need to pass in the new eventIngestedRange here
         final int priority,
         final long creationDate,
         final boolean ignoreDiskWatermarks,
@@ -1325,6 +1328,7 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         return excludeFilters;
     }
 
+    /// MP TODO: should this method take a field name argument (or maybe enum) specifying either @timestamp, event.ingested or ANY?
     public IndexLongFieldRange getTimestampRange() {
         return timestampRange;
     }
@@ -1481,6 +1485,8 @@ public class IndexMetadata implements Diffable<IndexMetadata>, ToXContentFragmen
         private final Diff<ImmutableOpenMap<String, RolloverInfo>> rolloverInfos;
         private final boolean isSystem;
         private final IndexLongFieldRange timestampRange;
+        // tracks range of the event.ingested field for the Index this IndexMetadata object is for
+        private IndexLongFieldRange eventIngestedRange;  // MP TODO: make final
         private final IndexMetadataStats stats;
         private final Double indexWriteLoadForecast;
         private final Long shardSizeInBytesForecast;
