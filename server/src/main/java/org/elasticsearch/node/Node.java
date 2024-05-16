@@ -57,6 +57,7 @@ import org.elasticsearch.gateway.PersistedClusterStateService;
 import org.elasticsearch.health.HealthPeriodicLogger;
 import org.elasticsearch.http.HttpServerTransport;
 import org.elasticsearch.indices.IndicesService;
+import org.elasticsearch.indices.cluster.EventIngestedRangeClusterStateService;
 import org.elasticsearch.indices.cluster.IndicesClusterStateService;
 import org.elasticsearch.indices.recovery.PeerRecoverySourceService;
 import org.elasticsearch.indices.store.IndicesStore;
@@ -292,6 +293,7 @@ public class Node implements Closeable {
         injector.getInstance(IndicesClusterStateService.class).start();
         injector.getInstance(SnapshotsService.class).start();
         injector.getInstance(SnapshotShardsService.class).start();
+        injector.getInstance(EventIngestedRangeClusterStateService.class).start();
         injector.getInstance(RepositoriesService.class).start();
         injector.getInstance(SearchService.class).start();
         injector.getInstance(FsHealthService.class).start();
@@ -461,6 +463,7 @@ public class Node implements Closeable {
 
         stopIfStarted(SnapshotsService.class);
         stopIfStarted(SnapshotShardsService.class);
+        stopIfStarted(EventIngestedRangeClusterStateService.class);
         stopIfStarted(RepositoriesService.class);
         // stop any changes happening as a result of cluster state changes
         stopIfStarted(IndicesClusterStateService.class);
@@ -520,6 +523,7 @@ public class Node implements Closeable {
         toClose.add(() -> stopWatch.stop().start("snapshot_service"));
         toClose.add(injector.getInstance(SnapshotsService.class));
         toClose.add(injector.getInstance(SnapshotShardsService.class));
+        toClose.add(injector.getInstance(EventIngestedRangeClusterStateService.class));
         toClose.add(injector.getInstance(RepositoriesService.class));
         toClose.add(() -> stopWatch.stop().start("indices_cluster"));
         toClose.add(injector.getInstance(IndicesClusterStateService.class));

@@ -125,6 +125,7 @@ import org.elasticsearch.indices.breaker.CircuitBreakerMetrics;
 import org.elasticsearch.indices.breaker.CircuitBreakerService;
 import org.elasticsearch.indices.breaker.HierarchyCircuitBreakerService;
 import org.elasticsearch.indices.breaker.NoneCircuitBreakerService;
+import org.elasticsearch.indices.cluster.EventIngestedRangeClusterStateService;
 import org.elasticsearch.indices.recovery.PeerRecoverySourceService;
 import org.elasticsearch.indices.recovery.PeerRecoveryTargetService;
 import org.elasticsearch.indices.recovery.RecoverySettings;
@@ -977,6 +978,12 @@ class NodeConstruction {
             indicesService
         );
 
+        EventIngestedRangeClusterStateService eventIngestedClusterStateService = new EventIngestedRangeClusterStateService(
+            settings,
+            clusterService,
+            transportService
+        );
+
         actionModule.getReservedClusterStateService().installStateHandler(new ReservedRepositoryAction(repositoryService));
         actionModule.getReservedClusterStateService().installStateHandler(new ReservedPipelineAction());
 
@@ -1140,6 +1147,7 @@ class NodeConstruction {
             b.bind(RepositoriesService.class).toInstance(repositoryService);
             b.bind(SnapshotsService.class).toInstance(snapshotsService);
             b.bind(SnapshotShardsService.class).toInstance(snapshotShardsService);
+            b.bind(EventIngestedRangeClusterStateService.class).toInstance(eventIngestedClusterStateService);
             b.bind(RestoreService.class).toInstance(restoreService);
             b.bind(RerouteService.class).toInstance(rerouteService);
             b.bind(ShardLimitValidator.class).toInstance(shardLimitValidator);
