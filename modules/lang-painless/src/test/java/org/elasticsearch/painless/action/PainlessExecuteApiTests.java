@@ -515,6 +515,12 @@ public class PainlessExecuteApiTests extends ESSingleNodeTestCase {
         expectThrows(IllegalArgumentException.class, () -> Request.ContextSetup.parseClusterAliasAndIndex("blogs:  "));
         expectThrows(IllegalArgumentException.class, () -> Request.ContextSetup.parseClusterAliasAndIndex("remote1:foo,remote2:bar"));
         expectThrows(IllegalArgumentException.class, () -> Request.ContextSetup.parseClusterAliasAndIndex("a:b,c:d,e:f"));
+
+        // wildcards not allowed in remote cluster name
+        expectThrows(IllegalArgumentException.class, () -> Request.ContextSetup.parseClusterAliasAndIndex("*:myindex"));
+        expectThrows(IllegalArgumentException.class, () -> Request.ContextSetup.parseClusterAliasAndIndex("rem*:myindex"));
+        expectThrows(IllegalArgumentException.class, () -> Request.ContextSetup.parseClusterAliasAndIndex("*ote:myindex"));
+        expectThrows(IllegalArgumentException.class, () -> Request.ContextSetup.parseClusterAliasAndIndex("rem*ote:myindex"));
     }
 
     public void testRemoveClusterAliasFromIndexExpression() {

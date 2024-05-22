@@ -254,6 +254,12 @@ public class PainlessExecuteAction {
                 if (parts.length == 1) {
                     return new Tuple<>(null, parts[0]);
                 } else if (parts.length == 2 && parts[1].contains(sep) == false) {
+                    if (parts[0].contains("*")) {
+                        throw new IllegalArgumentException(
+                            "The remote cluster expression has a wildcard, but painless/execute only supports execution on a single "
+                                + "named remote cluster"
+                        );
+                    }
                     return new Tuple<>(parts[0], parts[1]);
                 } else {
                     throw new IllegalArgumentException(
