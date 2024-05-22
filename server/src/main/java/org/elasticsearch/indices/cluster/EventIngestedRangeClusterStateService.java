@@ -22,6 +22,7 @@ import org.elasticsearch.cluster.ClusterStateApplier;
 import org.elasticsearch.cluster.ClusterStateTaskExecutor;
 import org.elasticsearch.cluster.ClusterStateTaskListener;
 import org.elasticsearch.cluster.block.ClusterBlockException;
+import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.routing.ShardRouting;
@@ -29,21 +30,24 @@ import org.elasticsearch.cluster.routing.allocation.DataTier;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.cluster.service.MasterServiceTaskQueue;
 import org.elasticsearch.common.Priority;
-import org.elasticsearch.common.Randomness;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.inject.Inject;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.concurrent.EsExecutors;
 import org.elasticsearch.core.TimeValue;
+import org.elasticsearch.index.IndexService;
+import org.elasticsearch.index.shard.IndexLongFieldRange;
+import org.elasticsearch.index.shard.ShardLongFieldRange;
+import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.tasks.Task;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportResponseHandler;
 import org.elasticsearch.transport.TransportService;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.Iterator;
 import java.util.List;
-import java.util.Set;
-import java.util.stream.Collectors;
 
 /**
  * TODO: DOCUMENT ME
@@ -53,22 +57,23 @@ import java.util.stream.Collectors;
 // TODO: maybe rename to TimestampRangeClusterStateService ?
 // TODO: other idea: add this functionality to IndicesClusterStateService?
 public class EventIngestedRangeClusterStateService extends AbstractLifecycleComponent implements ClusterStateApplier {
-    private static final Logger logger = LogManager.getLogger(EventIngestedRangeTask.class);
+    private static final Logger logger = LogManager.getLogger(EventIngestedRangeClusterStateService.class);
 
     private final Settings settings;
-    private final ClusterService clusterService;
+    private final ClusterService clusterService; // TODO: is this still needed?
     private final TransportService transportService;
-    private final MasterServiceTaskQueue<EventIngestedRangeClusterStateService.EventIngestedRangeTask> masterServiceTaskQueue;
+    private final IndicesService indicesService;
 
-    public EventIngestedRangeClusterStateService(Settings settings, ClusterService clusterService, TransportService transportService) {
+    public EventIngestedRangeClusterStateService(
+        Settings settings,
+        ClusterService clusterService,
+        TransportService transportService,
+        IndicesService indicesService
+    ) {
         this.settings = settings;
         this.clusterService = clusterService;
         this.transportService = transportService;
-        this.masterServiceTaskQueue = clusterService.createTaskQueue(
-            "event-ingested-range-cluster-state-service",
-            Priority.NORMAL,
-            new TaskExecutor()
-        );
+        this.indicesService = indicesService;
 
         logger.warn("XXX EventIngestedRangeClusterStateService constructor");
     }
@@ -107,145 +112,94 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
     @Override
     protected void doClose() throws IOException {}
 
-    private class TaskExecutor implements ClusterStateTaskExecutor<EventIngestedRangeClusterStateService.EventIngestedRangeTask> {
-        @Override
-        public ClusterState execute(BatchExecutionContext<EventIngestedRangeTask> batchExecutionContext) throws Exception {
-            final ClusterState state = batchExecutionContext.initialState();
-            for (var taskContext : batchExecutionContext.taskContexts()) {
-                EventIngestedRangeTask task = taskContext.getTask();
-                if (task instanceof CreateEventIngestedRangeTask rangeTask) {
-                    logger.warn("XXX is a CreateEventIngestedRangeTask");
-                    ClusterState clusterState = rangeTask.clusterState();
-                    Set<String> indicesInClusterState = clusterState.metadata().indices().keySet();
-                    logger.warn("XXX indicesInClusterState: " + indicesInClusterState);
-                }
-                // do something with task
-                /*
-                 • Look at each shard that is frozen, grabbing the event.ingested min/max
-                 • Compare that value to the min/max already in cluster state for that index (?)
-                 • Collect a list of all min/max values per index (and shard?) that are not present in cluster state
-                 • If that list is non-empty, send a TransportMasterNodeAction (~UpdateEventIngestedRangeAction~)
-                   with a ~UpdateEventIngestedRangeActionRequest~ to do the update
-                 */
-
-                // MP TODO: LEFTOFF
-                UpdateEventIngestedRangeRequest request = new UpdateEventIngestedRangeRequest("index-foo", "[1333-2555]");
-
-                ActionListener<ActionResponse.Empty> execListener = new ActionListener<>() {
-                    @Override
-                    public void onResponse(ActionResponse.Empty response) {
-                        try {
-                            logger.warn(
-                                "XXX YYY EventIngestedRangeClusterStateService.TaskExecutor.ActionListener onResponse: {}",
-                                response
-                            );
-                        } catch (Exception e) {
-                            onFailure(e);
-                        }
-                    }
-
-                    @Override
-                    public void onFailure(Exception e) {
-                        logger.warn("XXX YYY EventIngestedRangeClusterStateService.TaskExecutor.ActionListener onFailure: {}", e);
-                    }
-
-                    @Override
-                    public String toString() {
-                        return "My temp exec listener in EventIngestedRangeClusterStateService.TaskExecutor";
-                    }
-                };
-
-                logger.warn("XXX About to send to Master {}. request: {}", UPDATE_EVENT_INGESTED_RANGE_ACTION_NAME, request);
-                transportService.sendRequest(
-                    transportService.getLocalNode(),
-                    UPDATE_EVENT_INGESTED_RANGE_ACTION_NAME,
-                    request,
-                    new ActionListenerResponseHandler<>(
-                        execListener.safeMap(r -> null),
-                        in -> ActionResponse.Empty.INSTANCE,
-                        TransportResponseHandler.TRANSPORT_WORKER
-                    )
-                );
-
-                // transportService.getLocalNode(),
-                // UPDATE_EVENT_INGESTED_RANGE_ACTION_NAME
-                // request,
-                // new ActionListenerResponseHandler<>(
-                // execListener,
-                // in -> ActionResponse.Empty.INSTANCE,
-                // TransportResponseHandler.TRANSPORT_WORKER
-                // )
-                // );
-
-            }
-            return state;  // TODO: return updated state?
-        }
-
-        @Override
-        public boolean runOnlyOnMaster() {
-            return false;
-        }
-
-        @Override
-        public void clusterStatePublished(ClusterState newClusterState) {
-            // TODO: need this?
-        }
-
-        @Override
-        public String describeTasks(List<EventIngestedRangeTask> tasks) {
-            // TODO: override this or just use the default?
-            return ClusterStateTaskExecutor.super.describeTasks(tasks);
-        }
-    }
-
-    interface EventIngestedRangeTask extends ClusterStateTaskListener {}
-
-    private record CreateEventIngestedRangeTask(ClusterState clusterState) implements EventIngestedRangeTask {
-        @Override
-        public void onFailure(Exception e) {
-            logger.info("Unable to update event.ingested range in cluster state from index/shard XXX due to error: " + e);
-        }
-    }
-
-    // this runs on the data nodes
-    // MP TODO: create a master-only node and ensure this does not run there
+    /**
+     * Runs on data nodes.
+     * If a cluster version upgrade is detected (e.g., moving from 8.15.0 to 8.16.0), then a Task
+     * will be launched to determine whether any searchable snapshot shards "owned" by this
+     * data node need to have their 'event.ingested' min/max range updated in cluster state.
+     */
     @Override
     public void applyClusterState(ClusterChangedEvent event) {
         logger.warn("XXX EventIngestedRangeClusterStateService.applyClusterState DEBUG 1");
         // only run this task when a cluster has upgraded to a new version
         if (clusterVersionUpgrade(event)) {
+            Iterator<ShardRouting> shardRoutingIterator = event.state()
+                .getRoutingNodes()
+                .node(event.state().nodes().getLocalNodeId())
+                .iterator();
 
-            // TODO: placeholder for fetching all ranges from searchable snapshot (frozen) data nodes
-            // TODO: how do I hook up this shard objec to the isFrozenIndex(Settings) method below
-            // event.state().routingTable().allShards().filter(shard -> shard.index().set)
+            logger.warn("XXX EventIngestedRangeClusterStateService.applyClusterState DEBUG 2. Created iterator: {}",
+                shardRoutingIterator.hasNext());
 
-            // MP TODO start ---
-            List<ShardRouting> primaryShards = event.state()
-                .routingTable()
-                .allShards()
-                .filter(shard -> shard.primary())
-                .collect(Collectors.toList());
-            logger.warn("XXX EventIngestedRangeClusterStateService.applyClusterState primaryShards size: {}", primaryShards.size());
-            for (ShardRouting primaryShard : primaryShards) {
-                logger.warn(
-                    "XXX EventIngestedRangeClusterStateService.applyClusterState primaryShard index: {}",
-                    primaryShard.getIndexName()
-                );
+            List<ShardRouting> shardsForLookup = new ArrayList<>();
+            while (shardRoutingIterator.hasNext()) {
+                ShardRouting shardRouting = shardRoutingIterator.next();
+                Settings indexSettings = event.state().metadata().index(shardRouting.index()).getSettings();
+                if (isFrozenIndex(indexSettings)) {
+                    shardsForLookup.add(shardRouting);
+                }
             }
-            // MP TODO end ---
-            boolean submitTask = Randomness.get().nextInt(10) == 4;
-            if (event.nodesChanged()
-                && event.state().nodes().getMinNodeVersion() == event.state().nodes().getMaxNodeVersion()
-                && event.previousState().nodes().getMinNodeVersion() == event.state().nodes().getMinNodeVersion()) {
-                logger.warn("This is the actual logic we would use - won't execute for manual testing");
-            } else if (submitTask || event.nodesChanged()) {
-                logger.warn("XXX Submitting task");
-                masterServiceTaskQueue.submitTask(
-                    "update-event-ingested-in-cluster-state",
-                    new CreateEventIngestedRangeTask(event.state()),
-                    TimeValue.MAX_VALUE
-                );
+
+            logger.warn("XXX EventIngestedRangeClusterStateService.applyClusterState DEBUG 3. shardsForLookup: {}",
+                shardsForLookup.size());
+
+            // TODO: this min/max lookup logic likely needs to be forked to background (how do I do that?)
+
+            // TODO: create new list or map here of shards/indexes and new min/max range to update
+            for (ShardRouting shardRouting : shardsForLookup) {
+                IndexService indexService = indicesService.indexService(shardRouting.index());
+                IndicesClusterStateService.Shard shard = indexService.getShardOrNull(shardRouting.shardId().id());
+                ShardLongFieldRange shardEventIngestedRange = shard.getEventIngestedRange();
+                IndexMetadata indexMetadata = event.state().metadata().index(shardRouting.index());
+                IndexLongFieldRange clusterStateEventIngestedRange = indexMetadata.getEventIngestedRange();
+
+                // TODO: is this the right check for whether to get min/max range from a shard?
+                if (clusterStateEventIngestedRange.containsAllShardRanges()) {
+                    if (shardEventIngestedRange.getMax() > clusterStateEventIngestedRange.getMax()) {
+                        logger.warn("XXX: max in shard > max in cluster state - send update for index {}", shardRouting.index());
+                    } else if (shardEventIngestedRange.getMin() < clusterStateEventIngestedRange.getMin()) {
+                        logger.warn("XXX: min in shard < min in cluster state - send update for index {}", shardRouting.index());
+                    }
+                }
             }
+
+            // TODO: need to wrap the code below in an if check - only send if any new info to update on master
+
+            // TODO: need proper Writable collection of new per-index ranges to send in the request
+            UpdateEventIngestedRangeRequest request = new UpdateEventIngestedRangeRequest("index-foo", "[1333-2555]");
+
+            ActionListener<ActionResponse.Empty> execListener = new ActionListener<>() {
+                @Override
+                public void onResponse(ActionResponse.Empty response) {
+                    try {
+                        logger.warn("XXX YYY TaskExecutor.ActionListener onResponse: {}", response);
+                    } catch (Exception e) {
+                        onFailure(e);
+                    }
+                }
+
+                @Override
+                public void onFailure(Exception e) {
+                    logger.warn("XXX YYY TaskExecutor.ActionListener onFailure: {}", e);
+                }
+
+                @Override
+                public String toString() {
+                    return "My temp exec listener in TaskExecutor";
+                }
+            };
+
+            logger.warn("XXX About to send to Master {}. request: {}", UPDATE_EVENT_INGESTED_RANGE_ACTION_NAME, request);
+            transportService.sendRequest(
+                transportService.getLocalNode(),
+                UPDATE_EVENT_INGESTED_RANGE_ACTION_NAME,
+                request,
+                new ActionListenerResponseHandler<>(
+                    execListener.safeMap(r -> null),
+                    in -> ActionResponse.Empty.INSTANCE,
+                    TransportResponseHandler.TRANSPORT_WORKER
+                )
+            );
         }
     }
 
@@ -278,7 +232,7 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
         }
     }
 
-    // TODO: move this to top of file
+    // TODO: move this to top of file or to its own class
     public static final String UPDATE_EVENT_INGESTED_RANGE_ACTION_NAME = "internal:cluster/snapshot/update_event_ingested_range";
 
     public static final ActionType<ActionResponse.Empty> TYPE = new ActionType<>(UPDATE_EVENT_INGESTED_RANGE_ACTION_NAME);
@@ -286,9 +240,12 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
     // TODO: move the Action class to its own top level class?
     // transport action to send info about updated min/max 'event.ingested' range info to master
     // modelled after SnapshotsService.UpdateSnapshotStatusAction
+    // TransportMasterNodeAction ensures this will run on the master node
     public static class UpdateEventIngestedRangeAction extends TransportMasterNodeAction<
         UpdateEventIngestedRangeRequest,
         ActionResponse.Empty> {
+
+        private final MasterServiceTaskQueue<EventIngestedRangeTask> masterServiceTaskQueue;
 
         @Inject
         public UpdateEventIngestedRangeAction(
@@ -310,9 +267,18 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
                 in -> ActionResponse.Empty.INSTANCE,
                 EsExecutors.DIRECT_EXECUTOR_SERVICE
             );
+
+            this.masterServiceTaskQueue = clusterService.createTaskQueue(
+                "event-ingested-range-cluster-state-service",
+                Priority.NORMAL,
+                new TaskExecutor()
+            );
+
+            // TODO: Hmm, I'm seeing this created on data-only nodes - is that OK?
             logger.warn("XXX YYY: UpdateEventIngestedRangeAction ctor");
         }
 
+        // MP TODO: why is this method passed ClusterState? what is it allowed to do? Can it update cluster state?
         @Override
         protected void masterOperation(
             Task task,
@@ -320,19 +286,61 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
             ClusterState state,
             ActionListener<ActionResponse.Empty> listener
         ) {
-            logger.warn("XXX YYY UpdateEventIngestedRangeAction.masterOperation would now apply cluster state. Request: {}", request);
-            // innerUpdateSnapshotState(
-            // request.snapshot(),
-            // request.shardId(),
-            // null,
-            // request.status(),
-            // listener.map(v -> ActionResponse.Empty.INSTANCE)
-            // );
+            logger.warn("XXX YYY UpdateEventIngestedRangeAction.masterOperation NOW SUBMITTING TASK. Request: {}", request);
+
+            masterServiceTaskQueue.submitTask(
+                "update-event-ingested-in-cluster-state",
+                new CreateEventIngestedRangeTask(request),
+                TimeValue.MAX_VALUE
+            );
         }
 
         @Override
         protected ClusterBlockException checkBlock(UpdateEventIngestedRangeRequest request, ClusterState state) {
             return null;
+        }
+
+        // runs on the master node only (called from masterOperation of UpdateEventIngestedRangeAction
+        private class TaskExecutor implements ClusterStateTaskExecutor<UpdateEventIngestedRangeAction.EventIngestedRangeTask> {
+            @Override
+            public ClusterState execute(BatchExecutionContext<EventIngestedRangeTask> batchExecutionContext) throws Exception {
+                final ClusterState state = batchExecutionContext.initialState();
+                for (var taskContext : batchExecutionContext.taskContexts()) {
+                    EventIngestedRangeTask task = taskContext.getTask();
+                    if (task instanceof CreateEventIngestedRangeTask rangeTask) {
+                        logger.warn(
+                            "XXX YYY TaskExecutor.execute called would now UPDATE cluster state. Request: {}",
+                            rangeTask.rangeUpdateRequest()
+                        );
+                    }
+                }
+                return state;  // TODO: return updated state?
+            }
+
+            @Override
+            public boolean runOnlyOnMaster() {
+                return true;
+            }
+
+            @Override
+            public void clusterStatePublished(ClusterState newClusterState) {
+                // TODO: need this?
+            }
+
+            @Override
+            public String describeTasks(List<EventIngestedRangeTask> tasks) {
+                // TODO: override this or just use the default?
+                return ClusterStateTaskExecutor.super.describeTasks(tasks);
+            }
+        }
+
+        interface EventIngestedRangeTask extends ClusterStateTaskListener {}
+
+        private record CreateEventIngestedRangeTask(UpdateEventIngestedRangeRequest rangeUpdateRequest) implements EventIngestedRangeTask {
+            @Override
+            public void onFailure(Exception e) {
+                logger.info("Unable to update event.ingested range in cluster state from index/shard XXX due to error: " + e);
+            }
         }
     }
 }

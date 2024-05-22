@@ -981,7 +981,8 @@ class NodeConstruction {
         EventIngestedRangeClusterStateService eventIngestedClusterStateService = new EventIngestedRangeClusterStateService(
             settings,
             clusterService,
-            transportService
+            transportService,
+            indicesService
         );
 
         actionModule.getReservedClusterStateService().installStateHandler(new ReservedRepositoryAction(repositoryService));
