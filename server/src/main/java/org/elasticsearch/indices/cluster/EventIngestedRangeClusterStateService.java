@@ -389,13 +389,14 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
         public static class TaskExecutor implements ClusterStateTaskExecutor<UpdateEventIngestedRangeAction.EventIngestedRangeTask> {
             @Override
             public ClusterState execute(BatchExecutionContext<EventIngestedRangeTask> batchExecutionContext) throws Exception {
+                List<TaskContext<EventIngestedRangeTask>> tasksToBeApplied = new ArrayList<>();
                 ClusterState state = batchExecutionContext.initialState();
                 final Map<Index, IndexLongFieldRange> updatedEventIngestedRanges = new HashMap<>();
                 for (var taskContext : batchExecutionContext.taskContexts()) {
                     EventIngestedRangeTask task = taskContext.getTask();
                     if (task instanceof CreateEventIngestedRangeTask rangeTask) {
                         logger.warn(
-                            "XXX YYY TaskExecutor.execute called would now UPDATE cluster state. Request: {}",
+                            "XXX YYY TaskExecutor.execute called now UPDATE cluster state. Request: {}",
                             rangeTask.rangeUpdateRequest()
                         );
 
@@ -429,7 +430,8 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
                             }
                         }
                     }
-
+                }
+                if (updatedEventIngestedRanges.size() > 0) {
                     Metadata.Builder metadataBuilder = Metadata.builder(state.metadata());
                     for (Map.Entry<Index, IndexLongFieldRange> entry : updatedEventIngestedRanges.entrySet()) {
                         Index index = entry.getKey();
@@ -439,6 +441,10 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
 
                     // MP TODO: Hmm, not sure this should inside the for loop - it is NOT in ShardStateAction.execute :-(
                     state = ClusterState.builder(state).metadata(metadataBuilder).build();
+                }
+
+                for (var taskContext : batchExecutionContext.taskContexts()) {
+                    taskContext.success(() -> {}); // TODO: need an error handler to call taskContext.onFailure() ??
                 }
                 return state;
             }
@@ -472,6 +478,7 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
                         e
                     );
                 }
+
             }
         }
     }
