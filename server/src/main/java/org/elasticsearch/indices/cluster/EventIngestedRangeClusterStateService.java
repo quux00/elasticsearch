@@ -174,6 +174,15 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
 
             logger.warn("XXX EventIngestedRangeClusterStateService.applyClusterState DEBUG 3. shardsForLookup: {}", shardsForLookup.size());
 
+            Map<Index, List<ShardRangeInfo>> eventIngestedRangeMap = new HashMap<>();
+
+            // MP TODO - bogus entry to have something for initial testing -- start
+            Index mpidx = new Index("mpidx", UUID.randomUUID().toString());
+            List<ShardRangeInfo> shardRangeList = new ArrayList<>();
+            shardRangeList.add(new ShardRangeInfo(new ShardId(mpidx, 22), ShardLongFieldRange.UNKNOWN));
+            eventIngestedRangeMap.put(mpidx, shardRangeList);
+            // MP TODO - bogus entry to have something for initial testing -- end
+
             // TODO: this min/max lookup logic likely needs to be forked to background (how do I do that?)
 
             // TODO: create new list or map here of shards/indexes and new min/max range to update
@@ -199,19 +208,8 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
             // TODO: need to wrap the code below in an if check - only send if any new info to update on master
 
             // TODO: need proper Writable collection of new per-index ranges to send in the request
-            // MP TODO: start --
-            Map<Index, List<ShardRangeInfo>> eventIngestedRangeMap = new HashMap<>();
-            Index mpidx = new Index("blogs", UUID.randomUUID().toString());
-            List<ShardRangeInfo> shardRangeList = new ArrayList<>();
-            shardRangeList.add(new ShardRangeInfo(new ShardId(mpidx, 22), ShardLongFieldRange.UNKNOWN));
-            eventIngestedRangeMap.put(mpidx, shardRangeList);
-            // MP TODO: end --
 
-            UpdateEventIngestedRangeRequest request = new UpdateEventIngestedRangeRequest(
-                "index-foo",
-                "[1333-2555]",
-                eventIngestedRangeMap
-            );
+            UpdateEventIngestedRangeRequest request = new UpdateEventIngestedRangeRequest(eventIngestedRangeMap);
 
             ActionListener<ActionResponse.Empty> execListener = new ActionListener<>() {
                 @Override

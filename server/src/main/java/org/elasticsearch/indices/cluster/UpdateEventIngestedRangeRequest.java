@@ -18,7 +18,6 @@ import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.Index;
 
 import java.io.IOException;
-import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -29,42 +28,31 @@ import java.util.Map;
  */
 public class UpdateEventIngestedRangeRequest extends MasterNodeRequest<UpdateEventIngestedRangeRequest> {
     private static final Logger logger = LogManager.getLogger(UpdateEventIngestedRangeRequest.class);
-    private final String index;  // TODO: may want Index class here
-    private final String newRange; // TODO: do we want ShardLongFieldRange or IndexLongFieldRange or ??
 
     private Map<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> eventIngestedRangeMap;
-    private Map<String, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> dummyMap;
 
     // note: neither of the FieldRange classs have index as an instance var, so if use it, it needs to part of some Map -
     // can you send top level maps over the wire (transport layer)?
     // IndexLongFieldRange does implement Writeable
     // ShardLongFieldRange also implements Writeable
 
-    protected UpdateEventIngestedRangeRequest(
-        String index,
-        String newRange,
-        Map<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> rangeMap
-    ) {
+    protected UpdateEventIngestedRangeRequest(Map<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> rangeMap) {
         super(TimeValue.MAX_VALUE); // By default, keep trying to post updates to avoid snapshot processes getting stuck // TODO: this ok?
-        this.index = index;
-        this.newRange = newRange;
         this.eventIngestedRangeMap = rangeMap;
-        this.dummyMap = new HashMap<>();
-        for (Map.Entry<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> entry : rangeMap.entrySet()) {
-            dummyMap.put(entry.getKey().getName(), entry.getValue());
-            logger.warn("LLL CREATED DUMMY MAP CTOR");
-        }
     }
 
     protected UpdateEventIngestedRangeRequest(StreamInput in) throws IOException {
         // TODO: likely need put TransportVersion guards here like we did for _resolve/cluster?
         super(in);
-        this.index = in.readString();
-        this.newRange = in.readString();
         logger.warn("LLL: DEBUG 1 READ from StreamInput of UpdateEventIngestedRangeRequest");
-        // this.eventIngestedRangeMap = in.readMap(Index::new, )
-        this.dummyMap = in.readMapOfLists(EventIngestedRangeClusterStateService.ShardRangeInfo::new);
-        logger.warn("LLL: successfully DEBUG 2 READ from StreamInput of UpdateEventIngestedRangeRequest; dummyMap: {}", dummyMap);
+        this.eventIngestedRangeMap = in.readMap(
+            Index::new,
+            i -> i.readCollectionAsList(EventIngestedRangeClusterStateService.ShardRangeInfo::new)
+        );
+        logger.warn(
+            "LLL: successfully DEBUG 2 READ from StreamInput of UpdateEventIngestedRangeRequest; dummyMap: {}",
+            eventIngestedRangeMap
+        );
     }
 
     public Map<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> getEventIngestedRangeMap() {
@@ -75,14 +63,9 @@ public class UpdateEventIngestedRangeRequest extends MasterNodeRequest<UpdateEve
     public void writeTo(StreamOutput out) throws IOException {
         super.writeTo(out);
         // TODO: likely need put TransportVersion guards here like we did for _resolve/cluster?
-        out.writeString(index);
-        out.writeString(newRange);
         logger.warn("LLL: DEBUG 1 WROTE to StreamOutput of UpdateEventIngestedRangeRequest");
-        out.writeMap(dummyMap, StreamOutput::writeCollection);
-        // out.writeMap(eventIngestedRangeMap);
-        // out.writeMap(eventIngestedRangeMap, Index::writeTo, StreamOutput::writeCollection);
+        out.writeMap(eventIngestedRangeMap, StreamOutput::writeWriteable, StreamOutput::writeCollection);
         logger.warn("LLL: successfully DEBUG 2 WROTE to StreamOutput of UpdateEventIngestedRangeRequest");
-
     }
 
     @Override
@@ -92,11 +75,11 @@ public class UpdateEventIngestedRangeRequest extends MasterNodeRequest<UpdateEve
 
     @Override
     public String getDescription() {
-        return "update event.ingested min/max range request task"; // MP TODO: remove this?
+        return "update event.ingested min/max range request"; // MP TODO: remove this?
     }
 
     @Override
     public String toString() {
-        return "UpdateEventIngestedRangeRequest{" + "index=[" + index + ']' + ", newRange=[" + newRange + ']' + '}';
+        return "UpdateEventIngestedRangeRequest{" + eventIngestedRangeMap + "}";
     }
 }
