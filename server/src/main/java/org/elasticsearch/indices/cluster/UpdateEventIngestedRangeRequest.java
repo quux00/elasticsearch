@@ -13,8 +13,11 @@ import org.elasticsearch.action.support.master.MasterNodeRequest;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.core.TimeValue;
+import org.elasticsearch.index.Index;
 
 import java.io.IOException;
+import java.util.List;
+import java.util.Map;
 
 // modelled after UpdateIndexShardSnapshotStatusRequest
 
@@ -25,6 +28,8 @@ public class UpdateEventIngestedRangeRequest extends MasterNodeRequest<UpdateEve
 
     private final String index;  // TODO: may want Index class here
     private final String newRange; // TODO: do we want ShardLongFieldRange or IndexLongFieldRange or ??
+
+    private Map<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> eventIngestedRangeMap;
 
     // note: neither of the FieldRange classs have index as an instance var, so if use it, it needs to part of some Map -
     // can you send top level maps over the wire (transport layer)?
@@ -42,6 +47,10 @@ public class UpdateEventIngestedRangeRequest extends MasterNodeRequest<UpdateEve
         super(in);
         this.index = in.readString();
         this.newRange = in.readString();
+    }
+
+    public Map<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> getEventIngestedRangeMap() {
+        return eventIngestedRangeMap;
     }
 
     @Override

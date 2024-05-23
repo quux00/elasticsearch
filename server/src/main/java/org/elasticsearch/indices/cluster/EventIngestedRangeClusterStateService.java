@@ -24,30 +24,61 @@ import org.elasticsearch.cluster.ClusterStateTaskListener;
 import org.elasticsearch.cluster.block.ClusterBlockException;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
+import org.elasticsearch.cluster.metadata.Metadata;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.cluster.routing.allocation.DataTier;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.cluster.service.MasterServiceTaskQueue;
 import org.elasticsearch.common.Priority;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.component.AbstractLifecycleComponent;
 import org.elasticsearch.common.inject.Inject;
+import org.elasticsearch.common.io.stream.StreamInput;
+import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.common.util.concurrent.EsExecutors;
 import org.elasticsearch.core.TimeValue;
+import org.elasticsearch.index.Index;
 import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.shard.IndexLongFieldRange;
+import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.index.shard.ShardLongFieldRange;
 import org.elasticsearch.indices.IndicesService;
 import org.elasticsearch.tasks.Task;
 import org.elasticsearch.threadpool.ThreadPool;
+import org.elasticsearch.transport.TransportRequest;
 import org.elasticsearch.transport.TransportResponseHandler;
 import org.elasticsearch.transport.TransportService;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.Iterator;
 import java.util.List;
+import java.util.Map;
+import java.util.Objects;
+
+/**
+ * TODO LIST (Priority Order)
+ *  ✓ Rearrange skeleton to have the Task submission only run on master
+ *  ✓ Change code to properly screen for frozen shards only
+ *  ✓ Determine how to update cluster state with the new index min/max ranges in TaskExecutor.execute
+ *  ¤ Start writing UNIT tests for the above - are there similar unit tests for ShardStateAction.execute?
+ *  ¤ Is there a way I can do manual testing of above?
+ *  ¤
+ *  ¤ Figure out what Writeable data structures need to go into the UpdateEventIngestedRangeRequest - implement that and manual testing
+ *  ¤
+ *  ¤ Design error handling and bwc - what if the master is older and doesn't have the transport action? (or any other TA error occurs)
+ *  ¤ Test with dedicated master (manual)
+ *  ¤ Fork shard min/max range lookups to background on data nodes?
+ *  ¤ Pull TransportUpdateSettingsAction out to separate class file?
+ *  ¤ Any basic unit tests to write? (compare to SnapshotsService and MetadataUpdateSettingsService)
+ *  ¤ Start writing IT tests
+ *  ¤ Deal with isDedicatedFrozenNode in the doStart check - remove this? Better way to detect if you have frozen indices?
+ *  ¤
+ *  ¤
+ */
 
 /**
  * TODO: DOCUMENT ME
@@ -60,7 +91,7 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
     private static final Logger logger = LogManager.getLogger(EventIngestedRangeClusterStateService.class);
 
     private final Settings settings;
-    private final ClusterService clusterService; // TODO: is this still needed?
+    private final ClusterService clusterService;
     private final TransportService transportService;
     private final IndicesService indicesService;
 
@@ -128,8 +159,10 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
                 .node(event.state().nodes().getLocalNodeId())
                 .iterator();
 
-            logger.warn("XXX EventIngestedRangeClusterStateService.applyClusterState DEBUG 2. Created iterator: {}",
-                shardRoutingIterator.hasNext());
+            logger.warn(
+                "XXX EventIngestedRangeClusterStateService.applyClusterState DEBUG 2. Created iterator: {}",
+                shardRoutingIterator.hasNext()
+            );
 
             List<ShardRouting> shardsForLookup = new ArrayList<>();
             while (shardRoutingIterator.hasNext()) {
@@ -140,8 +173,7 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
                 }
             }
 
-            logger.warn("XXX EventIngestedRangeClusterStateService.applyClusterState DEBUG 3. shardsForLookup: {}",
-                shardsForLookup.size());
+            logger.warn("XXX EventIngestedRangeClusterStateService.applyClusterState DEBUG 3. shardsForLookup: {}", shardsForLookup.size());
 
             // TODO: this min/max lookup logic likely needs to be forked to background (how do I do that?)
 
@@ -232,6 +264,51 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
         }
     }
 
+    public static class ShardRangeInfo extends TransportRequest {
+        final ShardId shardId;
+        final ShardLongFieldRange eventIngestedRange;
+
+        ShardRangeInfo(StreamInput in) throws IOException {
+            super(in);
+            this.shardId = new ShardId(in);
+            this.eventIngestedRange = ShardLongFieldRange.readFrom(in);
+        }
+
+        public ShardRangeInfo(ShardId shardId, ShardLongFieldRange eventIngestedRange) {
+            this.shardId = shardId;
+            this.eventIngestedRange = eventIngestedRange;
+        }
+
+        @Override
+        public void writeTo(StreamOutput out) throws IOException {
+            super.writeTo(out);
+            shardId.writeTo(out);
+            eventIngestedRange.writeTo(out);
+        }
+
+        @Override
+        public String toString() {
+            return Strings.format(
+                "EventIngestedRangeService.ShardRangeInfo{shardId [%s], eventIngestedRange [%s]}",
+                shardId,
+                eventIngestedRange
+            );
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (o == null || getClass() != o.getClass()) return false;
+            ShardRangeInfo that = (ShardRangeInfo) o;
+            return shardId.equals(that.shardId) && eventIngestedRange.equals(that.eventIngestedRange);
+        }
+
+        @Override
+        public int hashCode() {
+            return Objects.hash(shardId, eventIngestedRange);
+        }
+    }
+
     // TODO: move this to top of file or to its own class
     public static final String UPDATE_EVENT_INGESTED_RANGE_ACTION_NAME = "internal:cluster/snapshot/update_event_ingested_range";
 
@@ -301,10 +378,11 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
         }
 
         // runs on the master node only (called from masterOperation of UpdateEventIngestedRangeAction
-        private class TaskExecutor implements ClusterStateTaskExecutor<UpdateEventIngestedRangeAction.EventIngestedRangeTask> {
+        public static class TaskExecutor implements ClusterStateTaskExecutor<UpdateEventIngestedRangeAction.EventIngestedRangeTask> {
             @Override
             public ClusterState execute(BatchExecutionContext<EventIngestedRangeTask> batchExecutionContext) throws Exception {
-                final ClusterState state = batchExecutionContext.initialState();
+                ClusterState state = batchExecutionContext.initialState();
+                final Map<Index, IndexLongFieldRange> updatedEventIngestedRanges = new HashMap<>();
                 for (var taskContext : batchExecutionContext.taskContexts()) {
                     EventIngestedRangeTask task = taskContext.getTask();
                     if (task instanceof CreateEventIngestedRangeTask rangeTask) {
@@ -312,9 +390,49 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
                             "XXX YYY TaskExecutor.execute called would now UPDATE cluster state. Request: {}",
                             rangeTask.rangeUpdateRequest()
                         );
+
+                        Map<Index, List<ShardRangeInfo>> rangeMap = rangeTask.rangeUpdateRequest().getEventIngestedRangeMap();
+
+                        for (Map.Entry<Index, List<ShardRangeInfo>> entry : rangeMap.entrySet()) {
+                            Index index = entry.getKey();
+                            List<ShardRangeInfo> shardRangeList = entry.getValue();
+
+                            IndexMetadata indexMetadata = state.getMetadata().index(index);
+                            IndexLongFieldRange currentEventIngestedRange = updatedEventIngestedRanges.get(index);
+                            if (currentEventIngestedRange == null) {
+                                currentEventIngestedRange = indexMetadata.getEventIngestedRange();
+                            }
+                            // is this guaranteed to be not null? - it will be UNKNOWN if not set in cluster state (?), but for safety ...
+                            if (currentEventIngestedRange == null) {
+                                currentEventIngestedRange = IndexLongFieldRange.UNKNOWN;
+                            }
+                            IndexLongFieldRange newEventIngestedRange = currentEventIngestedRange;
+                            for (ShardRangeInfo shardRange : shardRangeList) {
+                                newEventIngestedRange = currentEventIngestedRange.extendWithShardRange(
+                                    shardRange.shardId.id(),
+                                    indexMetadata.getNumberOfShards(),
+                                    shardRange.eventIngestedRange
+                                );
+                            }
+
+                            // TODO: or does this need to use .equals rather than == ??
+                            if (newEventIngestedRange != currentEventIngestedRange) {
+                                updatedEventIngestedRanges.put(index, newEventIngestedRange);
+                            }
+                        }
                     }
+
+                    Metadata.Builder metadataBuilder = Metadata.builder(state.metadata());
+                    for (Map.Entry<Index, IndexLongFieldRange> entry : updatedEventIngestedRanges.entrySet()) {
+                        Index index = entry.getKey();
+                        IndexLongFieldRange range = entry.getValue();
+                        metadataBuilder.put(IndexMetadata.builder(metadataBuilder.getSafe(index)).eventIngestedRange(range));
+                    }
+
+                    // MP TODO: Hmm, not sure this should inside the for loop - it is NOT in ShardStateAction.execute :-(
+                    state = ClusterState.builder(state).metadata(metadataBuilder).build();
                 }
-                return state;  // TODO: return updated state?
+                return state;
             }
 
             @Override
@@ -336,7 +454,7 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
 
         interface EventIngestedRangeTask extends ClusterStateTaskListener {}
 
-        private record CreateEventIngestedRangeTask(UpdateEventIngestedRangeRequest rangeUpdateRequest) implements EventIngestedRangeTask {
+        record CreateEventIngestedRangeTask(UpdateEventIngestedRangeRequest rangeUpdateRequest) implements EventIngestedRangeTask {
             @Override
             public void onFailure(Exception e) {
                 logger.info("Unable to update event.ingested range in cluster state from index/shard XXX due to error: " + e);
