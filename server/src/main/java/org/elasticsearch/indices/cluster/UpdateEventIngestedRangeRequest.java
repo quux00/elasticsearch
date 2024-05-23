@@ -8,6 +8,8 @@
 
 package org.elasticsearch.indices.cluster;
 
+import org.apache.logging.log4j.LogManager;
+import org.apache.logging.log4j.Logger;
 import org.elasticsearch.action.ActionRequestValidationException;
 import org.elasticsearch.action.support.master.MasterNodeRequest;
 import org.elasticsearch.common.io.stream.StreamInput;
@@ -16,6 +18,7 @@ import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.Index;
 
 import java.io.IOException;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -25,21 +28,32 @@ import java.util.Map;
  * Internal request that is used to send changes in event.ingested min/max cluster state ranges (per index) to master
  */
 public class UpdateEventIngestedRangeRequest extends MasterNodeRequest<UpdateEventIngestedRangeRequest> {
-
+    private static final Logger logger = LogManager.getLogger(UpdateEventIngestedRangeRequest.class);
     private final String index;  // TODO: may want Index class here
     private final String newRange; // TODO: do we want ShardLongFieldRange or IndexLongFieldRange or ??
 
     private Map<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> eventIngestedRangeMap;
+    private Map<String, EventIngestedRangeClusterStateService.ShardRangeInfo> dummyMap;
 
     // note: neither of the FieldRange classs have index as an instance var, so if use it, it needs to part of some Map -
     // can you send top level maps over the wire (transport layer)?
     // IndexLongFieldRange does implement Writeable
     // ShardLongFieldRange also implements Writeable
 
-    protected UpdateEventIngestedRangeRequest(String index, String newRange) {
+    protected UpdateEventIngestedRangeRequest(
+        String index,
+        String newRange,
+        Map<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> rangeMap
+    ) {
         super(TimeValue.MAX_VALUE); // By default, keep trying to post updates to avoid snapshot processes getting stuck // TODO: this ok?
         this.index = index;
         this.newRange = newRange;
+        this.eventIngestedRangeMap = rangeMap;
+        this.dummyMap = new HashMap<>();
+        for (Map.Entry<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> entry : rangeMap.entrySet()) {
+            dummyMap.put(entry.getKey().getName(), entry.getValue().get(0));
+            logger.warn("LLL CREATED DUMMY MAP CTOR");
+        }
     }
 
     protected UpdateEventIngestedRangeRequest(StreamInput in) throws IOException {
@@ -47,6 +61,10 @@ public class UpdateEventIngestedRangeRequest extends MasterNodeRequest<UpdateEve
         super(in);
         this.index = in.readString();
         this.newRange = in.readString();
+        logger.warn("LLL: DEBUG 1 READ from StreamInput of UpdateEventIngestedRangeRequest");
+        // this.eventIngestedRangeMap = in.readMap(Index::new, )
+        this.dummyMap = in.readMap(EventIngestedRangeClusterStateService.ShardRangeInfo::new);
+        logger.warn("LLL: successfully DEBUG 2 READ from StreamInput of UpdateEventIngestedRangeRequest; dummyMap: {}", dummyMap);
     }
 
     public Map<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> getEventIngestedRangeMap() {
@@ -59,6 +77,12 @@ public class UpdateEventIngestedRangeRequest extends MasterNodeRequest<UpdateEve
         // TODO: likely need put TransportVersion guards here like we did for _resolve/cluster?
         out.writeString(index);
         out.writeString(newRange);
+        logger.warn("LLL: DEBUG 1 WROTE to StreamOutput of UpdateEventIngestedRangeRequest");
+        out.writeMap(dummyMap, StreamOutput::writeWriteable);
+        // out.writeMap(eventIngestedRangeMap);
+        // out.writeMap(eventIngestedRangeMap, Index::writeTo, StreamOutput::writeCollection);
+        logger.warn("LLL: successfully DEBUG 2 WROTE to StreamOutput of UpdateEventIngestedRangeRequest");
+
     }
 
     @Override

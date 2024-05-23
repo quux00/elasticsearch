@@ -27,7 +27,6 @@ import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.metadata.Metadata;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.routing.ShardRouting;
-import org.elasticsearch.cluster.routing.allocation.DataTier;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.cluster.service.MasterServiceTaskQueue;
 import org.elasticsearch.common.Priority;
@@ -58,6 +57,7 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.UUID;
 
 /**
  * TODO LIST (Priority Order)
@@ -151,7 +151,6 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
      */
     @Override
     public void applyClusterState(ClusterChangedEvent event) {
-        logger.warn("XXX EventIngestedRangeClusterStateService.applyClusterState DEBUG 1");
         // only run this task when a cluster has upgraded to a new version
         if (clusterVersionUpgrade(event)) {
             Iterator<ShardRouting> shardRoutingIterator = event.state()
@@ -183,14 +182,16 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
                 IndicesClusterStateService.Shard shard = indexService.getShardOrNull(shardRouting.shardId().id());
                 ShardLongFieldRange shardEventIngestedRange = shard.getEventIngestedRange();
                 IndexMetadata indexMetadata = event.state().metadata().index(shardRouting.index());
-                IndexLongFieldRange clusterStateEventIngestedRange = indexMetadata.getEventIngestedRange();
+                if (indexMetadata != null) {  // TODO: I don't think we need this null check long term
+                    IndexLongFieldRange clusterStateEventIngestedRange = indexMetadata.getEventIngestedRange();
 
-                // TODO: is this the right check for whether to get min/max range from a shard?
-                if (clusterStateEventIngestedRange.containsAllShardRanges()) {
-                    if (shardEventIngestedRange.getMax() > clusterStateEventIngestedRange.getMax()) {
-                        logger.warn("XXX: max in shard > max in cluster state - send update for index {}", shardRouting.index());
-                    } else if (shardEventIngestedRange.getMin() < clusterStateEventIngestedRange.getMin()) {
-                        logger.warn("XXX: min in shard < min in cluster state - send update for index {}", shardRouting.index());
+                    // MP TODO: is this the right check for whether to get min/max range from a shard?
+                    if (clusterStateEventIngestedRange.containsAllShardRanges()) {
+                        if (shardEventIngestedRange.getMax() > clusterStateEventIngestedRange.getMax()) {
+                            logger.warn("XXX: max in shard > max in cluster state - send update for index {}", shardRouting.index());
+                        } else if (shardEventIngestedRange.getMin() < clusterStateEventIngestedRange.getMin()) {
+                            logger.warn("XXX: min in shard < min in cluster state - send update for index {}", shardRouting.index());
+                        }
                     }
                 }
             }
@@ -198,7 +199,19 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
             // TODO: need to wrap the code below in an if check - only send if any new info to update on master
 
             // TODO: need proper Writable collection of new per-index ranges to send in the request
-            UpdateEventIngestedRangeRequest request = new UpdateEventIngestedRangeRequest("index-foo", "[1333-2555]");
+            // MP TODO: start --
+            Map<Index, List<ShardRangeInfo>> eventIngestedRangeMap = new HashMap<>();
+            Index mpidx = new Index("blogs", UUID.randomUUID().toString());
+            List<ShardRangeInfo> shardRangeList = new ArrayList<>();
+            shardRangeList.add(new ShardRangeInfo(new ShardId(mpidx, 22), ShardLongFieldRange.UNKNOWN));
+            eventIngestedRangeMap.put(mpidx, shardRangeList);
+            // MP TODO: end --
+
+            UpdateEventIngestedRangeRequest request = new UpdateEventIngestedRangeRequest(
+                "index-foo",
+                "[1333-2555]",
+                eventIngestedRangeMap
+            );
 
             ActionListener<ActionResponse.Empty> execListener = new ActionListener<>() {
                 @Override
@@ -242,26 +255,23 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
         logger.warn("XXX clusterVersionUpgrade: event.nodesChanged(): " + event.nodesChanged());
         logger.warn("XXX clusterVersionUpgrade: event.state().nodes().getMinNodeVersion(): " + event.state().nodes().getMinNodeVersion());
         logger.warn("XXX clusterVersionUpgrade: event.state().nodes().getMaxNodeVersion(): " + event.state().nodes().getMaxNodeVersion());
-        logger.warn(
-            "XXX clusterVersionUpgrade: event.previousState().nodes().getMinNodeVersion(): "
-                + event.previousState().nodes().getMinNodeVersion()
-        );
         // return event.nodesChanged() &&
         // event.state().nodes().getMinNodeVersion() == event.state().nodes().getMaxNodeVersion() &&
         // event.previousState().nodes().getMinNodeVersion() == event.state().nodes().getMinNodeVersion();
-        return true;  // MP FIXME
+        return event.nodesChanged() || event.nodesRemoved();  // MP FIXME
     }
 
     // copied from FrozenUtils - should that one move to core/server rather than be in xpack?
     public static boolean isFrozenIndex(Settings indexSettings) {
-        String tierPreference = DataTier.TIER_PREFERENCE_SETTING.get(indexSettings);
-        List<String> preferredTiers = DataTier.parseTierList(tierPreference);
-        if (preferredTiers.isEmpty() == false && preferredTiers.get(0).equals(DataTier.DATA_FROZEN)) {
-            assert preferredTiers.size() == 1 : "frozen tier preference must be frozen only";
-            return true;
-        } else {
-            return false;
-        }
+        return true;  // MP FIXME
+        // String tierPreference = DataTier.TIER_PREFERENCE_SETTING.get(indexSettings);
+        // List<String> preferredTiers = DataTier.parseTierList(tierPreference);
+        // if (preferredTiers.isEmpty() == false && preferredTiers.get(0).equals(DataTier.DATA_FROZEN)) {
+        // assert preferredTiers.size() == 1 : "frozen tier preference must be frozen only";
+        // return true;
+        // } else {
+        // return false;
+        // }
     }
 
     public static class ShardRangeInfo extends TransportRequest {
@@ -399,7 +409,7 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
 
                             IndexMetadata indexMetadata = state.getMetadata().index(index);
                             IndexLongFieldRange currentEventIngestedRange = updatedEventIngestedRanges.get(index);
-                            if (currentEventIngestedRange == null) {
+                            if (currentEventIngestedRange == null && indexMetadata != null) {
                                 currentEventIngestedRange = indexMetadata.getEventIngestedRange();
                             }
                             // is this guaranteed to be not null? - it will be UNKNOWN if not set in cluster state (?), but for safety ...
@@ -410,7 +420,7 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
                             for (ShardRangeInfo shardRange : shardRangeList) {
                                 newEventIngestedRange = currentEventIngestedRange.extendWithShardRange(
                                     shardRange.shardId.id(),
-                                    indexMetadata.getNumberOfShards(),
+                                    1, // indexMetadata.getNumberOfShards(),
                                     shardRange.eventIngestedRange
                                 );
                             }
@@ -457,7 +467,13 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
         record CreateEventIngestedRangeTask(UpdateEventIngestedRangeRequest rangeUpdateRequest) implements EventIngestedRangeTask {
             @Override
             public void onFailure(Exception e) {
-                logger.info("Unable to update event.ingested range in cluster state from index/shard XXX due to error: " + e);
+                if (e != null) {
+                    logger.info(
+                        "Unable to update event.ingested range in cluster state from index/shard XXX due to error: {}: {}",
+                        e.getMessage(),
+                        e
+                    );
+                }
             }
         }
     }
