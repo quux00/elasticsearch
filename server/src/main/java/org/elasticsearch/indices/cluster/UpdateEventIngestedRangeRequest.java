@@ -33,7 +33,7 @@ public class UpdateEventIngestedRangeRequest extends MasterNodeRequest<UpdateEve
     private final String newRange; // TODO: do we want ShardLongFieldRange or IndexLongFieldRange or ??
 
     private Map<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> eventIngestedRangeMap;
-    private Map<String, EventIngestedRangeClusterStateService.ShardRangeInfo> dummyMap;
+    private Map<String, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> dummyMap;
 
     // note: neither of the FieldRange classs have index as an instance var, so if use it, it needs to part of some Map -
     // can you send top level maps over the wire (transport layer)?
@@ -51,7 +51,7 @@ public class UpdateEventIngestedRangeRequest extends MasterNodeRequest<UpdateEve
         this.eventIngestedRangeMap = rangeMap;
         this.dummyMap = new HashMap<>();
         for (Map.Entry<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> entry : rangeMap.entrySet()) {
-            dummyMap.put(entry.getKey().getName(), entry.getValue().get(0));
+            dummyMap.put(entry.getKey().getName(), entry.getValue());
             logger.warn("LLL CREATED DUMMY MAP CTOR");
         }
     }
@@ -63,7 +63,7 @@ public class UpdateEventIngestedRangeRequest extends MasterNodeRequest<UpdateEve
         this.newRange = in.readString();
         logger.warn("LLL: DEBUG 1 READ from StreamInput of UpdateEventIngestedRangeRequest");
         // this.eventIngestedRangeMap = in.readMap(Index::new, )
-        this.dummyMap = in.readMap(EventIngestedRangeClusterStateService.ShardRangeInfo::new);
+        this.dummyMap = in.readMapOfLists(EventIngestedRangeClusterStateService.ShardRangeInfo::new);
         logger.warn("LLL: successfully DEBUG 2 READ from StreamInput of UpdateEventIngestedRangeRequest; dummyMap: {}", dummyMap);
     }
 
@@ -78,7 +78,7 @@ public class UpdateEventIngestedRangeRequest extends MasterNodeRequest<UpdateEve
         out.writeString(index);
         out.writeString(newRange);
         logger.warn("LLL: DEBUG 1 WROTE to StreamOutput of UpdateEventIngestedRangeRequest");
-        out.writeMap(dummyMap, StreamOutput::writeWriteable);
+        out.writeMap(dummyMap, StreamOutput::writeCollection);
         // out.writeMap(eventIngestedRangeMap);
         // out.writeMap(eventIngestedRangeMap, Index::writeTo, StreamOutput::writeCollection);
         logger.warn("LLL: successfully DEBUG 2 WROTE to StreamOutput of UpdateEventIngestedRangeRequest");
