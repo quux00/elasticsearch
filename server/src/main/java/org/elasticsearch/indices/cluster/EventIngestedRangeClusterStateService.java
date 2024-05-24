@@ -413,6 +413,7 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
                             }
                             // is this guaranteed to be not null? - it will be UNKNOWN if not set in cluster state (?), but for safety ...
                             if (currentEventIngestedRange == null) {
+                                // TODO: having unknown here does not work when you do extendWithShardRange - how is this supposed to work?
                                 currentEventIngestedRange = IndexLongFieldRange.UNKNOWN;
                             }
                             IndexLongFieldRange newEventIngestedRange = currentEventIngestedRange;
@@ -439,7 +440,8 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
                         metadataBuilder.put(IndexMetadata.builder(metadataBuilder.getSafe(index)).eventIngestedRange(range));
                     }
 
-                    // MP TODO: Hmm, not sure this should inside the for loop - it is NOT in ShardStateAction.execute :-(
+                    // MP TODO: Hmm, not sure this should be inside the for loop - it is NOT in ShardStateAction.execute :-(
+                    // can you just (re)build state like this iteratively and have it work? // TODO: need to have a test for this
                     state = ClusterState.builder(state).metadata(metadataBuilder).build();
                 }
 
