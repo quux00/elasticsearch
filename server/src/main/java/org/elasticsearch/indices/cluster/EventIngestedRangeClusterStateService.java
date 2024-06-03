@@ -191,16 +191,14 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
                 IndicesClusterStateService.Shard shard = indexService.getShardOrNull(shardRouting.shardId().id());
                 ShardLongFieldRange shardEventIngestedRange = shard.getEventIngestedRange();
                 IndexMetadata indexMetadata = event.state().metadata().index(shardRouting.index());
-                if (indexMetadata != null) {  // TODO: I don't think we need this null check long term
-                    IndexLongFieldRange clusterStateEventIngestedRange = indexMetadata.getEventIngestedRange();
+                IndexLongFieldRange clusterStateEventIngestedRange = indexMetadata.getEventIngestedRange();
 
-                    // MP TODO: is this the right check for whether to get min/max range from a shard?
-                    if (clusterStateEventIngestedRange.containsAllShardRanges()) {
-                        if (shardEventIngestedRange.getMax() > clusterStateEventIngestedRange.getMax()) {
-                            logger.warn("XXX: max in shard > max in cluster state - send update for index {}", shardRouting.index());
-                        } else if (shardEventIngestedRange.getMin() < clusterStateEventIngestedRange.getMin()) {
+                // MP TODO: is this the right check for whether to get min/max range from a shard?
+                if (clusterStateEventIngestedRange.containsAllShardRanges()) {
+                    if (shardEventIngestedRange.getMax() > clusterStateEventIngestedRange.getMax()) {
+                        logger.warn("XXX: max in shard > max in cluster state - send update for index {}", shardRouting.index());
+                    } else if (shardEventIngestedRange.getMin() < clusterStateEventIngestedRange.getMin()) {
                             logger.warn("XXX: min in shard < min in cluster state - send update for index {}", shardRouting.index());
-                        }
                     }
                 }
             }
@@ -389,7 +387,6 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
         public static class TaskExecutor implements ClusterStateTaskExecutor<UpdateEventIngestedRangeAction.EventIngestedRangeTask> {
             @Override
             public ClusterState execute(BatchExecutionContext<EventIngestedRangeTask> batchExecutionContext) throws Exception {
-                List<TaskContext<EventIngestedRangeTask>> tasksToBeApplied = new ArrayList<>();
                 ClusterState state = batchExecutionContext.initialState();
                 final Map<Index, IndexLongFieldRange> updatedEventIngestedRanges = new HashMap<>();
                 for (var taskContext : batchExecutionContext.taskContexts()) {
