@@ -112,14 +112,14 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
     @Override
     protected void doStart() {
         logger.warn(
-            "XXX EventIngestedRangeClusterStateService.doStart called: canContainData: {}; dedicated frozen: {}",
+            "XXX EventIngestedRangeClusterStateService.doStart called: canContainData: {}; dedicated frozen: {}; can I get local node:? {}",
             DiscoveryNode.canContainData(settings),
-            DiscoveryNode.isDedicatedFrozenNode(settings)
+            DiscoveryNode.isDedicatedFrozenNode(settings),
+            this.transportService.getLocalNode() != null
         );
 
-        // MP TODO: somewhere I saw an isFrozen(DiscoveryNode node) method but I didn't know how to get the local DiscoveryNode
-        // MP TODO: -> get that from transportService.getLocalNode(); now I don't remember where the isFrozen(DN) method was - look for it
-        // MP TODO: UPDATE: "transportService.getLocalNode().canContainData()" gets NPE since getLocalNode() returns null
+        // MP TODO: There is the method DataTier.isFrozen(DiscoveryNode node) method but I don't know how to get the local DiscoveryNode
+        // MP TODO: can't do "transportService.getLocalNode().canContainData()"; NPE since getLocalNode() returns null
 
         // only run this service on data nodes (for example, master has no frozen shards to access)
         // TODO: is DiscoveryNode.isDedicatedFrozenNode(settings) too restrictive?
@@ -152,6 +152,7 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
     @Override
     public void applyClusterState(ClusterChangedEvent event) {
         // only run this task when a cluster has upgraded to a new version
+        // TODO: how is this going to work in serverless? will event.state().nodes().getMinNodeVersion() return useful info?
         if (clusterVersionUpgrade(event)) {
             Iterator<ShardRouting> shardRoutingIterator = event.state()
                 .getRoutingNodes()
@@ -174,6 +175,7 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
 
             logger.warn("XXX EventIngestedRangeClusterStateService.applyClusterState DEBUG 3. shardsForLookup: {}", shardsForLookup.size());
 
+            // TODO: should the key be String or Index?
             Map<Index, List<ShardRangeInfo>> eventIngestedRangeMap = new HashMap<>();
 
             // MP TODO - bogus entry to have something for initial testing -- start
@@ -189,56 +191,74 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
             for (ShardRouting shardRouting : shardsForLookup) {
                 IndexService indexService = indicesService.indexService(shardRouting.index());
                 IndicesClusterStateService.Shard shard = indexService.getShardOrNull(shardRouting.shardId().id());
-                ShardLongFieldRange shardEventIngestedRange = shard.getEventIngestedRange();
-                IndexMetadata indexMetadata = event.state().metadata().index(shardRouting.index());
-                IndexLongFieldRange clusterStateEventIngestedRange = indexMetadata.getEventIngestedRange();
+                // TODO: the above can return null - what do I do in that case?
+                // TODO: ^^ speaks to the larger issue of error handling - what if on this pass not all the shards can't be
+                // TODO: inspected for some reason - then the event.ingested range remains unusable until the next version upgrade?
+                if (shard != null) {
+                    // TODO: should I call metadata.index(String) or metadata.index(Index)? The latter doesn't work in my other test
+                    IndexMetadata indexMetadata = event.state().metadata().index(shardRouting.index());
+                    // TODO: is indexMetadata guaranteed to never be null here?
+                    IndexLongFieldRange clusterStateEventIngestedRange = indexMetadata.getEventIngestedRange();
 
-                // MP TODO: is this the right check for whether to get min/max range from a shard?
-                if (clusterStateEventIngestedRange.containsAllShardRanges()) {
-                    if (shardEventIngestedRange.getMax() > clusterStateEventIngestedRange.getMax()) {
-                        logger.warn("XXX: max in shard > max in cluster state - send update for index {}", shardRouting.index());
-                    } else if (shardEventIngestedRange.getMin() < clusterStateEventIngestedRange.getMin()) {
-                        logger.warn("XXX: min in shard < min in cluster state - send update for index {}", shardRouting.index());
+                    // MP TODO: is this the right check for whether to get min/max range from a shard?
+                    if (clusterStateEventIngestedRange.containsAllShardRanges() == false
+                        && shard.getEventIngestedRange() != ShardLongFieldRange.UNKNOWN) {
+                        // MP TODO: it would be nice to be able to call getMax and getMin on the range in cluster state to avoid
+                        // TODO unnecessary network calls,
+                        // TODO but we aren't allowed to call those unless all shards are accounted for (so nothing left to update)
+
+                        List<ShardRangeInfo> rangeInfoList = eventIngestedRangeMap.get(shardRouting.index());
+                        if (rangeInfoList == null) {
+                            rangeInfoList = new ArrayList<>();
+                            eventIngestedRangeMap.put(shardRouting.index(), rangeInfoList);
+                        }
+                        rangeInfoList.add(new ShardRangeInfo(shard.shardId(), shard.getEventIngestedRange()));
                     }
                 }
             }
 
-            // TODO: need to wrap the code below in an if check - only send if any new info to update on master
+            if (eventIngestedRangeMap.isEmpty() == false) {
 
-            UpdateEventIngestedRangeRequest request = new UpdateEventIngestedRangeRequest(eventIngestedRangeMap);
+                UpdateEventIngestedRangeRequest request = new UpdateEventIngestedRangeRequest(eventIngestedRangeMap);
 
-            ActionListener<ActionResponse.Empty> execListener = new ActionListener<>() {
-                @Override
-                public void onResponse(ActionResponse.Empty response) {
-                    try {
-                        logger.warn("XXX YYY TaskExecutor.ActionListener onResponse: {}", response);
-                    } catch (Exception e) {
-                        onFailure(e);
+                ActionListener<ActionResponse.Empty> execListener = new ActionListener<>() {
+                    @Override
+                    public void onResponse(ActionResponse.Empty response) {
+                        try {
+                            logger.warn("XXX YYY TaskExecutor.ActionListener onResponse: {}", response);
+                        } catch (Exception e) {
+                            onFailure(e);
+                        }
                     }
-                }
 
-                @Override
-                public void onFailure(Exception e) {
-                    logger.warn("XXX YYY TaskExecutor.ActionListener onFailure: {}", e.getMessage());
-                }
+                    // TODO: what do we do on failure? Should we set a flag in the service stating that next time
+                    // >>TODO: applyClusterState is called to try again regardless of whether there was a cluster version upgrade?
+                    @Override
+                    public void onFailure(Exception e) {
+                        logger.warn("XXX YYY TaskExecutor.ActionListener onFailure: {}", e.getMessage());
+                    }
 
-                @Override
-                public String toString() {
-                    return "My temp exec listener in TaskExecutor";
-                }
-            };
+                    @Override
+                    public String toString() {
+                        return "My temp exec listener in TaskExecutor";
+                    }
+                };
 
-            logger.warn("XXX About to send to Master {}. request: {}", UPDATE_EVENT_INGESTED_RANGE_ACTION_NAME, request);
-            transportService.sendRequest(
-                transportService.getLocalNode(),
-                UPDATE_EVENT_INGESTED_RANGE_ACTION_NAME,
-                request,
-                new ActionListenerResponseHandler<>(
-                    execListener.safeMap(r -> null),
-                    in -> ActionResponse.Empty.INSTANCE,
-                    TransportResponseHandler.TRANSPORT_WORKER
-                )
-            );
+                logger.warn("XXX About to send to Master {}. request: {}", UPDATE_EVENT_INGESTED_RANGE_ACTION_NAME, request);
+                // MP TODO: need to add tests around the Transport Service
+                transportService.sendRequest(
+                    transportService.getLocalNode(),
+                    UPDATE_EVENT_INGESTED_RANGE_ACTION_NAME,
+                    request,
+                    // TODO: do I need something better than this response handler?
+                    // TODO: is it useful if all I'm getting is an ack that doesn't guarantee that cluster state was updated?
+                    new ActionListenerResponseHandler<>(
+                        execListener.safeMap(r -> null),
+                        in -> ActionResponse.Empty.INSTANCE,
+                        TransportResponseHandler.TRANSPORT_WORKER
+                    )
+                );
+            }
         }
     }
 
@@ -255,7 +275,7 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
         return event.nodesChanged() || event.nodesRemoved();  // MP FIXME
     }
 
-    // copied from FrozenUtils - should that one move to core/server rather than be in xpack?
+    // TODO: copied from FrozenUtils - should that one move to core/server rather than be in xpack?
     public static boolean isFrozenIndex(Settings indexSettings) {
         return true;  // MP FIXME
         // String tierPreference = DataTier.TIER_PREFERENCE_SETTING.get(indexSettings);

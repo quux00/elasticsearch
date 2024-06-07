@@ -65,6 +65,7 @@ public class UpdateEventIngestedRangeActionTaskExecutorTests extends ESTestCase 
         clusterState2 = executeTasks(clusterState1, List.of(createEventIngestedRangeTask));
         assertNotSame(clusterState1, clusterState2);
         IndexLongFieldRange eventIngestedRange = clusterState2.getMetadata().index(blogsIndex.getName()).getEventIngestedRange();
+        // IndexLongFieldRange eventIngestedRange = clusterState2.getMetadata().index(blogsIndex).getEventIngestedRange();
         assertEquals(1000L, eventIngestedRange.getMin());
         assertEquals(2000L, eventIngestedRange.getMax());
     }
