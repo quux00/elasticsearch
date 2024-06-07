@@ -27,6 +27,7 @@ import static org.elasticsearch.action.support.replication.ClusterStateCreationU
 import static org.elasticsearch.action.support.replication.ClusterStateCreationUtils.stateWithNoShard;
 import static org.hamcrest.Matchers.containsString;
 
+// TODO: add tests with failure conditions (onFailure callback) - how will I induce failure?
 public class UpdateEventIngestedRangeTransportActionTaskExecutorTests extends ESTestCase {
 
     private UpdateEventIngestedRangeTransportAction.TaskExecutor executor;
