@@ -94,7 +94,7 @@ public class ClusterStateCreationUtils {
     }
 
     /**
-     * Creates cluster state with and index that has one shard and #(replicaStates) replicas with given roles
+     * Creates cluster state with an index that has one shard and #(replicaStates) replicas with given roles
      *
      * @param index              name of the index
      * @param activePrimaryLocal if active primary should coincide with the local node in the cluster state

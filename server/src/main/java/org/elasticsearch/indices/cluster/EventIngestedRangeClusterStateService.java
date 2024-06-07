@@ -198,14 +198,12 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
                     if (shardEventIngestedRange.getMax() > clusterStateEventIngestedRange.getMax()) {
                         logger.warn("XXX: max in shard > max in cluster state - send update for index {}", shardRouting.index());
                     } else if (shardEventIngestedRange.getMin() < clusterStateEventIngestedRange.getMin()) {
-                            logger.warn("XXX: min in shard < min in cluster state - send update for index {}", shardRouting.index());
+                        logger.warn("XXX: min in shard < min in cluster state - send update for index {}", shardRouting.index());
                     }
                 }
             }
 
             // TODO: need to wrap the code below in an if check - only send if any new info to update on master
-
-            // TODO: need proper Writable collection of new per-index ranges to send in the request
 
             UpdateEventIngestedRangeRequest request = new UpdateEventIngestedRangeRequest(eventIngestedRangeMap);
 
@@ -221,7 +219,7 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
 
                 @Override
                 public void onFailure(Exception e) {
-                    logger.warn("XXX YYY TaskExecutor.ActionListener onFailure: {}", e);
+                    logger.warn("XXX YYY TaskExecutor.ActionListener onFailure: {}", e.getMessage());
                 }
 
                 @Override
@@ -392,37 +390,36 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
                 for (var taskContext : batchExecutionContext.taskContexts()) {
                     EventIngestedRangeTask task = taskContext.getTask();
                     if (task instanceof CreateEventIngestedRangeTask rangeTask) {
-                        logger.warn(
-                            "XXX YYY TaskExecutor.execute called now UPDATE cluster state. Request: {}",
-                            rangeTask.rangeUpdateRequest()
-                        );
-
                         Map<Index, List<ShardRangeInfo>> rangeMap = rangeTask.rangeUpdateRequest().getEventIngestedRangeMap();
 
                         for (Map.Entry<Index, List<ShardRangeInfo>> entry : rangeMap.entrySet()) {
                             Index index = entry.getKey();
                             List<ShardRangeInfo> shardRangeList = entry.getValue();
 
-                            IndexMetadata indexMetadata = state.getMetadata().index(index);
+                            // TODO: why does state.getMetadata().index(index) return null in my tests but
+                            // state.getMetadata().index(index.getName()) does not?
+                            // TODO: is it realistic to assume that IndexMetadata would never be null here?
+                            IndexMetadata indexMetadata = state.getMetadata().index(index.getName());
+
+                            // get the latest EventIngestedRange either from the map outside this loop (first choice) or from cluster state
                             IndexLongFieldRange currentEventIngestedRange = updatedEventIngestedRanges.get(index);
                             if (currentEventIngestedRange == null && indexMetadata != null) {
                                 currentEventIngestedRange = indexMetadata.getEventIngestedRange();
                             }
                             // is this guaranteed to be not null? - it will be UNKNOWN if not set in cluster state (?), but for safety ...
                             if (currentEventIngestedRange == null) {
-                                // TODO: having unknown here does not work when you do extendWithShardRange - how is this supposed to work?
-                                currentEventIngestedRange = IndexLongFieldRange.UNKNOWN;
+                                currentEventIngestedRange = IndexLongFieldRange.NO_SHARDS;
                             }
                             IndexLongFieldRange newEventIngestedRange = currentEventIngestedRange;
                             for (ShardRangeInfo shardRange : shardRangeList) {
-                                newEventIngestedRange = currentEventIngestedRange.extendWithShardRange(
+                                newEventIngestedRange = newEventIngestedRange.extendWithShardRange(
                                     shardRange.shardId.id(),
-                                    1, // indexMetadata.getNumberOfShards(),
+                                    indexMetadata.getNumberOfShards(),
                                     shardRange.eventIngestedRange
                                 );
                             }
 
-                            // TODO: or does this need to use .equals rather than == ??
+                            // TODO: or should we use .equals rather than '==' ?? (the .equals method on this class is very strange IMO)
                             if (newEventIngestedRange != currentEventIngestedRange) {
                                 updatedEventIngestedRanges.put(index, newEventIngestedRange);
                             }
@@ -434,7 +431,10 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
                     for (Map.Entry<Index, IndexLongFieldRange> entry : updatedEventIngestedRanges.entrySet()) {
                         Index index = entry.getKey();
                         IndexLongFieldRange range = entry.getValue();
-                        metadataBuilder.put(IndexMetadata.builder(metadataBuilder.getSafe(index)).eventIngestedRange(range));
+
+                        metadataBuilder.put(IndexMetadata.builder(metadataBuilder.get(index.getName())).eventIngestedRange(range));
+                        // TODO: again, builder.getSafe(index)) returns null, but builder.get(index.getName())) does not - why?
+                        // metadataBuilder.put(IndexMetadata.builder(metadataBuilder.getSafe(index)).eventIngestedRange(range));
                     }
 
                     // MP TODO: Hmm, not sure this should be inside the for loop - it is NOT in ShardStateAction.execute :-(
@@ -443,6 +443,7 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
                 }
 
                 for (var taskContext : batchExecutionContext.taskContexts()) {
+                    // TODO: am I supposed to do something in this success callback?
                     taskContext.success(() -> {}); // TODO: need an error handler to call taskContext.onFailure() ??
                 }
                 return state;
