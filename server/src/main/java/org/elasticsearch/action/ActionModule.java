@@ -239,7 +239,7 @@ import org.elasticsearch.index.seqno.GlobalCheckpointSyncAction;
 import org.elasticsearch.index.seqno.RetentionLeaseActions;
 import org.elasticsearch.indices.SystemIndices;
 import org.elasticsearch.indices.breaker.CircuitBreakerService;
-import org.elasticsearch.indices.cluster.EventIngestedRangeClusterStateService;
+import org.elasticsearch.indices.cluster.UpdateEventIngestedRangeTransportAction;
 import org.elasticsearch.indices.store.TransportNodesListShardStoreMetadata;
 import org.elasticsearch.persistent.CompletionPersistentTaskAction;
 import org.elasticsearch.persistent.RemovePersistentTaskAction;
@@ -728,10 +728,7 @@ public class ActionModule extends AbstractModule {
         actions.register(AutoCreateAction.INSTANCE, AutoCreateAction.TransportAction.class);
         actions.register(ResolveIndexAction.INSTANCE, ResolveIndexAction.TransportAction.class);
         actions.register(TransportResolveClusterAction.TYPE, TransportResolveClusterAction.class);
-        actions.register(
-            EventIngestedRangeClusterStateService.TYPE,
-            EventIngestedRangeClusterStateService.UpdateEventIngestedRangeAction.class
-        );
+        actions.register(UpdateEventIngestedRangeTransportAction.TYPE, UpdateEventIngestedRangeTransportAction.class);
         actions.register(TransportAnalyzeIndexDiskUsageAction.TYPE, TransportAnalyzeIndexDiskUsageAction.class);
         actions.register(FieldUsageStatsAction.INSTANCE, TransportFieldUsageAction.class);
         actions.register(MasterHistoryAction.INSTANCE, MasterHistoryAction.TransportAction.class);

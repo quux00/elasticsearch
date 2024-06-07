@@ -8,8 +8,6 @@
 
 package org.elasticsearch.indices.cluster;
 
-import org.elasticsearch.action.ActionListener;
-import org.elasticsearch.action.support.ActionTestUtils;
 import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.service.ClusterStateTaskExecutorUtils;
 import org.elasticsearch.common.Randomness;
@@ -29,18 +27,18 @@ import static org.elasticsearch.action.support.replication.ClusterStateCreationU
 import static org.elasticsearch.action.support.replication.ClusterStateCreationUtils.stateWithNoShard;
 import static org.hamcrest.Matchers.containsString;
 
-public class UpdateEventIngestedRangeActionTaskExecutorTests extends ESTestCase {
+public class UpdateEventIngestedRangeTransportActionTaskExecutorTests extends ESTestCase {
 
-    private EventIngestedRangeClusterStateService.UpdateEventIngestedRangeAction.TaskExecutor executor;
+    private UpdateEventIngestedRangeTransportAction.TaskExecutor executor;
 
     public void testEmptyTaskListProducesSameClusterState() throws Exception {
-        executor = new EventIngestedRangeClusterStateService.UpdateEventIngestedRangeAction.TaskExecutor();
+        executor = new UpdateEventIngestedRangeTransportAction.TaskExecutor();
         ClusterState stateBefore = stateWithNoShard();
         assertSame(stateBefore, executeTasks(stateBefore, List.of()));
     }
 
     public void testTaskWithSingleIndexAndShard() throws Exception {
-        executor = new EventIngestedRangeClusterStateService.UpdateEventIngestedRangeAction.TaskExecutor();
+        executor = new UpdateEventIngestedRangeTransportAction.TaskExecutor();
 
         ClusterState clusterState1;  // initial cluster state
         ClusterState clusterState2;  // cluster state after first task runs (building on clusterState1)
@@ -59,8 +57,7 @@ public class UpdateEventIngestedRangeActionTaskExecutorTests extends ESTestCase 
         eventIngestedRangeMap.put(blogsIndex, List.of(shardRangeInfo));
 
         UpdateEventIngestedRangeRequest rangeUpdateRequest = new UpdateEventIngestedRangeRequest(eventIngestedRangeMap);
-        var createEventIngestedRangeTask =
-            new EventIngestedRangeClusterStateService.UpdateEventIngestedRangeAction.CreateEventIngestedRangeTask(rangeUpdateRequest);
+        var createEventIngestedRangeTask = new UpdateEventIngestedRangeTransportAction.CreateEventIngestedRangeTask(rangeUpdateRequest);
 
         clusterState2 = executeTasks(clusterState1, List.of(createEventIngestedRangeTask));
         assertNotSame(clusterState1, clusterState2);
@@ -71,7 +68,7 @@ public class UpdateEventIngestedRangeActionTaskExecutorTests extends ESTestCase 
     }
 
     public void testTasksWithSingleIndexAndMultipleShards() throws Exception {
-        executor = new EventIngestedRangeClusterStateService.UpdateEventIngestedRangeAction.TaskExecutor();
+        executor = new UpdateEventIngestedRangeTransportAction.TaskExecutor();
 
         ClusterState clusterState1;  // initial cluster state
         ClusterState clusterState2;  // cluster state after first task batch runs (building on clusterState1)
@@ -95,8 +92,7 @@ public class UpdateEventIngestedRangeActionTaskExecutorTests extends ESTestCase 
             eventIngestedRangeMap.put(blogsIndex, List.of(shardRangeInfo));
 
             UpdateEventIngestedRangeRequest rangeUpdateRequest = new UpdateEventIngestedRangeRequest(eventIngestedRangeMap);
-            var createEventIngestedRangeTask =
-                new EventIngestedRangeClusterStateService.UpdateEventIngestedRangeAction.CreateEventIngestedRangeTask(rangeUpdateRequest);
+            var createEventIngestedRangeTask = new UpdateEventIngestedRangeTransportAction.CreateEventIngestedRangeTask(rangeUpdateRequest);
 
             clusterState2 = executeTasks(clusterState1, List.of(createEventIngestedRangeTask));
             assertNotSame(clusterState1, clusterState2);
@@ -114,8 +110,7 @@ public class UpdateEventIngestedRangeActionTaskExecutorTests extends ESTestCase 
             );
             eventIngestedRangeMap.put(blogsIndex, List.of(shardRangeInfo));
             UpdateEventIngestedRangeRequest rangeUpdateRequest = new UpdateEventIngestedRangeRequest(eventIngestedRangeMap);
-            var createEventIngestedRangeTask =
-                new EventIngestedRangeClusterStateService.UpdateEventIngestedRangeAction.CreateEventIngestedRangeTask(rangeUpdateRequest);
+            var createEventIngestedRangeTask = new UpdateEventIngestedRangeTransportAction.CreateEventIngestedRangeTask(rangeUpdateRequest);
 
             clusterState3 = executeTasks(clusterState2, List.of(createEventIngestedRangeTask));
             assertNotSame(clusterState2, clusterState3);
@@ -142,16 +137,16 @@ public class UpdateEventIngestedRangeActionTaskExecutorTests extends ESTestCase 
 
             eventIngestedRangeMapTask1.put(blogsIndex, shardRangeInfos.subList(0, 2));
             UpdateEventIngestedRangeRequest rangeUpdateRequest = new UpdateEventIngestedRangeRequest(eventIngestedRangeMapTask1);
-            var createEventIngestedRangeTask1 =
-                new EventIngestedRangeClusterStateService.UpdateEventIngestedRangeAction.CreateEventIngestedRangeTask(rangeUpdateRequest);
+            var createEventIngestedRangeTask1 = new UpdateEventIngestedRangeTransportAction.CreateEventIngestedRangeTask(
+                rangeUpdateRequest
+            );
 
             // second task has one shard
             Map<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> eventIngestedRangeMapTask2 = new HashMap<>();
             eventIngestedRangeMapTask2.put(blogsIndex, shardRangeInfos.subList(2, 3));
-            var createEventIngestedRangeTask2 =
-                new EventIngestedRangeClusterStateService.UpdateEventIngestedRangeAction.CreateEventIngestedRangeTask(
-                    new UpdateEventIngestedRangeRequest(eventIngestedRangeMapTask2)
-                );
+            var createEventIngestedRangeTask2 = new UpdateEventIngestedRangeTransportAction.CreateEventIngestedRangeTask(
+                new UpdateEventIngestedRangeRequest(eventIngestedRangeMapTask2)
+            );
 
             clusterState4 = executeTasks(clusterState3, List.of(createEventIngestedRangeTask1, createEventIngestedRangeTask2));
             assertNotSame(clusterState3, clusterState4);
@@ -173,8 +168,7 @@ public class UpdateEventIngestedRangeActionTaskExecutorTests extends ESTestCase 
             );
             eventIngestedRangeMap.put(blogsIndex, List.of(shardRangeInfoA, shardRangeInfoB));
             UpdateEventIngestedRangeRequest rangeUpdateRequest = new UpdateEventIngestedRangeRequest(eventIngestedRangeMap);
-            var createEventIngestedRangeTask =
-                new EventIngestedRangeClusterStateService.UpdateEventIngestedRangeAction.CreateEventIngestedRangeTask(rangeUpdateRequest);
+            var createEventIngestedRangeTask = new UpdateEventIngestedRangeTransportAction.CreateEventIngestedRangeTask(rangeUpdateRequest);
 
             clusterState5 = executeTasks(clusterState4, List.of(createEventIngestedRangeTask));
             IndexLongFieldRange eventIngestedRange = clusterState5.getMetadata().index(blogsIndex.getName()).getEventIngestedRange();
@@ -184,7 +178,7 @@ public class UpdateEventIngestedRangeActionTaskExecutorTests extends ESTestCase 
     }
 
     public void testTasksWithMultipleIndices() throws Exception {
-        executor = new EventIngestedRangeClusterStateService.UpdateEventIngestedRangeAction.TaskExecutor();
+        executor = new UpdateEventIngestedRangeTransportAction.TaskExecutor();
 
         ClusterState clusterState1;  // initial cluster state
         ClusterState clusterState2;  // cluster state after first task batch runs (building on clusterState1)
@@ -215,8 +209,9 @@ public class UpdateEventIngestedRangeActionTaskExecutorTests extends ESTestCase 
             eventIngestedRangeMap1.put(webTrafficIndex, List.of(shardRangeInfoWeb1A));
 
             UpdateEventIngestedRangeRequest rangeUpdateRequest1 = new UpdateEventIngestedRangeRequest(eventIngestedRangeMap1);
-            var createEventIngestedRangeTask1 =
-                new EventIngestedRangeClusterStateService.UpdateEventIngestedRangeAction.CreateEventIngestedRangeTask(rangeUpdateRequest1);
+            var createEventIngestedRangeTask1 = new UpdateEventIngestedRangeTransportAction.CreateEventIngestedRangeTask(
+                rangeUpdateRequest1
+            );
 
             Map<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> eventIngestedRangeMap2 = new HashMap<>();
             var shardRangeInfoBlogs2A = new EventIngestedRangeClusterStateService.ShardRangeInfo(
@@ -234,12 +229,11 @@ public class UpdateEventIngestedRangeActionTaskExecutorTests extends ESTestCase 
             eventIngestedRangeMap2.put(blogsIndex, List.of(shardRangeInfoBlogs2A));
             eventIngestedRangeMap2.put(webTrafficIndex, List.of(shardRangeInfoWeb2A, shardRangeInfoWeb2B));
 
-            var createEventIngestedRangeTask2 =
-                new EventIngestedRangeClusterStateService.UpdateEventIngestedRangeAction.CreateEventIngestedRangeTask(
-                    new UpdateEventIngestedRangeRequest(eventIngestedRangeMap2)
-                );
+            var createEventIngestedRangeTask2 = new UpdateEventIngestedRangeTransportAction.CreateEventIngestedRangeTask(
+                new UpdateEventIngestedRangeRequest(eventIngestedRangeMap2)
+            );
 
-            var taskList = new ArrayList<EventIngestedRangeClusterStateService.UpdateEventIngestedRangeAction.EventIngestedRangeTask>();
+            var taskList = new ArrayList<UpdateEventIngestedRangeTransportAction.EventIngestedRangeTask>();
             taskList.add(createEventIngestedRangeTask1);
             taskList.add(createEventIngestedRangeTask2);
             Randomness.shuffle(taskList);
@@ -258,14 +252,8 @@ public class UpdateEventIngestedRangeActionTaskExecutorTests extends ESTestCase 
         }
     }
 
-    private ClusterState executeTasks(
-        ClusterState state,
-        List<EventIngestedRangeClusterStateService.UpdateEventIngestedRangeAction.EventIngestedRangeTask> tasks
-    ) throws Exception {
+    private ClusterState executeTasks(ClusterState state, List<UpdateEventIngestedRangeTransportAction.EventIngestedRangeTask> tasks)
+        throws Exception {
         return ClusterStateTaskExecutorUtils.executeAndAssertSuccessful(state, executor, tasks);
-    }
-
-    private static <T> ActionListener<T> createTestListener() {
-        return ActionTestUtils.assertNoFailureListener(t -> {});
     }
 }
