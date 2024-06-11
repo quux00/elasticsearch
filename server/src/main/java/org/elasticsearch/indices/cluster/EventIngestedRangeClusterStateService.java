@@ -41,7 +41,6 @@ import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.UUID;
 
 /**
  * TODO LIST (Priority Order)
@@ -71,7 +70,9 @@ import java.util.UUID;
  */
 // TODO: maybe rename to TimestampRangeClusterStateService ?
 // TODO: other idea: add this functionality to IndicesClusterStateService?
-public class EventIngestedRangeClusterStateService extends AbstractLifecycleComponent implements ClusterStateApplier {
+// TODO: when can we remove this listener? when all frozen indices have complete event.ingested ranges in cluster state
+public class EventIngestedRangeClusterStateService extends AbstractLifecycleComponent implements ClusterStateApplier {  // TODO: move to
+                                                                                                                        // ClusterStateListener
     private static final Logger logger = LogManager.getLogger(EventIngestedRangeClusterStateService.class);
 
     private final Settings settings;
@@ -163,10 +164,10 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
             Map<Index, List<ShardRangeInfo>> eventIngestedRangeMap = new HashMap<>();
 
             // MP TODO - bogus entry to have something for initial testing -- start
-            Index mpidx = new Index("mpidx", UUID.randomUUID().toString());
-            List<ShardRangeInfo> shardRangeList = new ArrayList<>();
-            shardRangeList.add(new ShardRangeInfo(new ShardId(mpidx, 22), ShardLongFieldRange.UNKNOWN));
-            eventIngestedRangeMap.put(mpidx, shardRangeList);
+            // Index mpidx = new Index("mpidx", UUID.randomUUID().toString());
+            // List<ShardRangeInfo> shardRangeList = new ArrayList<>();
+            // shardRangeList.add(new ShardRangeInfo(new ShardId(mpidx, 22), ShardLongFieldRange.UNKNOWN));
+            // eventIngestedRangeMap.put(mpidx, shardRangeList);
             // MP TODO - bogus entry to have something for initial testing -- end
 
             // TODO: this min/max lookup logic likely needs to be forked to background (how do I do that?)
@@ -185,8 +186,8 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
                     IndexLongFieldRange clusterStateEventIngestedRange = indexMetadata.getEventIngestedRange();
 
                     // MP TODO: is this the right check for whether to get min/max range from a shard?
-                    if (clusterStateEventIngestedRange.containsAllShardRanges() == false
-                        && shard.getEventIngestedRange() != ShardLongFieldRange.UNKNOWN) {
+                    if (shard.getEventIngestedRange() != ShardLongFieldRange.UNKNOWN
+                        && clusterStateEventIngestedRange.containsAllShardRanges() == false) {
                         // MP TODO: it would be nice to be able to call getMax and getMin on the range in cluster state to avoid
                         // TODO unnecessary network calls,
                         // TODO but we aren't allowed to call those unless all shards are accounted for (so nothing left to update)

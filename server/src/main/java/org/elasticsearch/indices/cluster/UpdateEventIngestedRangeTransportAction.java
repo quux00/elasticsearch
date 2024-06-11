@@ -135,6 +135,8 @@ public class UpdateEventIngestedRangeTransportAction extends TransportMasterNode
                             currentEventIngestedRange = indexMetadata.getEventIngestedRange();
                         }
                         // is this guaranteed to be not null? - it will be UNKNOWN if not set in cluster state (?), but for safety ...
+                        // TODO: can we remove the null checks and look for UNKNOWN instead; must look for UNKNOWN (?)
+                        // TODO: on prev PR, all shards should be UNKNOWN on mixed clusters - add assertion for that in prev PR
                         if (currentEventIngestedRange == null) {
                             currentEventIngestedRange = IndexLongFieldRange.NO_SHARDS;
                         }
@@ -196,6 +198,7 @@ public class UpdateEventIngestedRangeTransportAction extends TransportMasterNode
 
     interface EventIngestedRangeTask extends ClusterStateTaskListener {}
 
+    // TODO: other things to override
     record CreateEventIngestedRangeTask(UpdateEventIngestedRangeRequest rangeUpdateRequest) implements EventIngestedRangeTask {
         @Override
         public void onFailure(Exception e) {

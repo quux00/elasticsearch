@@ -31,11 +31,6 @@ public class UpdateEventIngestedRangeRequest extends MasterNodeRequest<UpdateEve
 
     private Map<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> eventIngestedRangeMap;
 
-    // note: neither of the FieldRange classs have index as an instance var, so if use it, it needs to part of some Map -
-    // can you send top level maps over the wire (transport layer)?
-    // IndexLongFieldRange does implement Writeable
-    // ShardLongFieldRange also implements Writeable
-
     protected UpdateEventIngestedRangeRequest(Map<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> rangeMap) {
         super(TimeValue.MAX_VALUE); // By default, keep trying to post updates to avoid snapshot processes getting stuck // TODO: this ok?
         this.eventIngestedRangeMap = rangeMap;
