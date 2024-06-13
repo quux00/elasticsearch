@@ -38,21 +38,15 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Transport action to send info about updated min/max 'event.ingested' range info to master node.
+ */
 public class UpdateEventIngestedRangeTransportAction extends TransportMasterNodeAction<
     UpdateEventIngestedRangeRequest,
     ActionResponse.Empty> {
     private static final Logger logger = LogManager.getLogger(UpdateEventIngestedRangeTransportAction.class);
-
-    // TODO: move this to top of file or to its own class
     public static final String UPDATE_EVENT_INGESTED_RANGE_ACTION_NAME = "internal:cluster/snapshot/update_event_ingested_range";
-
     public static final ActionType<ActionResponse.Empty> TYPE = new ActionType<>(UPDATE_EVENT_INGESTED_RANGE_ACTION_NAME);
-
-    // TODO: move the Action class to its own top level class?
-    // transport action to send info about updated min/max 'event.ingested' range info to master
-    // modelled after SnapshotsService.UpdateSnapshotStatusAction
-    // TransportMasterNodeAction ensures this will run on the master node
-
     private final MasterServiceTaskQueue<EventIngestedRangeTask> masterServiceTaskQueue;
 
     @Inject
@@ -61,7 +55,7 @@ public class UpdateEventIngestedRangeTransportAction extends TransportMasterNode
         ClusterService clusterService,
         ThreadPool threadPool,
         ActionFilters actionFilters,
-        IndexNameExpressionResolver indexNameExpressionResolver  // MP TODO: hmm - probably don't need this?
+        IndexNameExpressionResolver indexNameExpressionResolver
     ) {
         super(
             UPDATE_EVENT_INGESTED_RANGE_ACTION_NAME,
@@ -82,7 +76,6 @@ public class UpdateEventIngestedRangeTransportAction extends TransportMasterNode
             new TaskExecutor()
         );
 
-        // TODO: Hmm, I'm seeing this created on data-only nodes - is that OK?
         logger.warn("XXX YYY: UpdateEventIngestedRangeAction ctor");
     }
 
@@ -98,9 +91,10 @@ public class UpdateEventIngestedRangeTransportAction extends TransportMasterNode
 
         masterServiceTaskQueue.submitTask(
             "update-event-ingested-in-cluster-state",
-            new CreateEventIngestedRangeTask(request),
+            new EventIngestedRangeTask(request),
             TimeValue.MAX_VALUE
         );
+        listener.onResponse(ActionResponse.Empty.INSTANCE); // TODO: defer this response until the tasks have finished
     }
 
     @Override
@@ -113,58 +107,49 @@ public class UpdateEventIngestedRangeTransportAction extends TransportMasterNode
         @Override
         public ClusterState execute(BatchExecutionContext<EventIngestedRangeTask> batchExecutionContext) throws Exception {
             ClusterState state = batchExecutionContext.initialState();
-            final Map<Index, IndexLongFieldRange> updatedEventIngestedRanges = new HashMap<>();
+            final Map<Index, IndexLongFieldRange> updatedEventIngestedRangesMap = new HashMap<>();
             for (var taskContext : batchExecutionContext.taskContexts()) {
                 EventIngestedRangeTask task = taskContext.getTask();
-                if (task instanceof CreateEventIngestedRangeTask rangeTask) {
-                    Map<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> rangeMap = rangeTask.rangeUpdateRequest()
-                        .getEventIngestedRangeMap();
+                Map<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> rangeMap = task.rangeUpdateRequest()
+                    .getEventIngestedRangeMap();
 
-                    for (Map.Entry<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> entry : rangeMap.entrySet()) {
-                        Index index = entry.getKey();
-                        List<EventIngestedRangeClusterStateService.ShardRangeInfo> shardRangeList = entry.getValue();
+                for (Map.Entry<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> entry : rangeMap.entrySet()) {
+                    Index index = entry.getKey();
+                    List<EventIngestedRangeClusterStateService.ShardRangeInfo> shardRangeList = entry.getValue();
 
-                        // TODO: why does state.getMetadata().index(index) return null in my tests but
-                        // state.getMetadata().index(index.getName()) does not?
-                        // TODO: is it realistic to assume that IndexMetadata would never be null here?
-                        IndexMetadata indexMetadata = state.getMetadata().index(index.getName());
+                    // TODO: is it realistic to assume that IndexMetadata would never be null here?
+                    IndexMetadata indexMetadata = state.getMetadata().index(index);
 
-                        // get the latest EventIngestedRange either from the map outside this loop (first choice) or from cluster state
-                        IndexLongFieldRange currentEventIngestedRange = updatedEventIngestedRanges.get(index);
-                        if (currentEventIngestedRange == null && indexMetadata != null) {
-                            currentEventIngestedRange = indexMetadata.getEventIngestedRange();
-                        }
-                        // is this guaranteed to be not null? - it will be UNKNOWN if not set in cluster state (?), but for safety ...
-                        // TODO: can we remove the null checks and look for UNKNOWN instead; must look for UNKNOWN (?)
-                        // TODO: on prev PR, all shards should be UNKNOWN on mixed clusters - add assertion for that in prev PR
-                        if (currentEventIngestedRange == null) {
-                            currentEventIngestedRange = IndexLongFieldRange.NO_SHARDS;
-                        }
-                        IndexLongFieldRange newEventIngestedRange = currentEventIngestedRange;
-                        for (EventIngestedRangeClusterStateService.ShardRangeInfo shardRange : shardRangeList) {
-                            newEventIngestedRange = newEventIngestedRange.extendWithShardRange(
-                                shardRange.shardId.id(),
-                                indexMetadata.getNumberOfShards(),
-                                shardRange.eventIngestedRange
-                            );
-                        }
+                    // get the latest EventIngestedRange either from the map outside this loop (first choice) or from cluster state
+                    IndexLongFieldRange currentEventIngestedRange = updatedEventIngestedRangesMap.get(index);
+                    if (currentEventIngestedRange == null && indexMetadata != null) {
+                        currentEventIngestedRange = indexMetadata.getEventIngestedRange();
+                    }
+                    if (currentEventIngestedRange == IndexLongFieldRange.UNKNOWN) {
+                        // UNKNOWN.extendWithShardRange is a no-op, so switch it to NO_SHARDS
+                        currentEventIngestedRange = IndexLongFieldRange.NO_SHARDS;
+                    }
+                    IndexLongFieldRange newEventIngestedRange = currentEventIngestedRange;
+                    for (EventIngestedRangeClusterStateService.ShardRangeInfo shardRange : shardRangeList) {
+                        newEventIngestedRange = newEventIngestedRange.extendWithShardRange(
+                            shardRange.shardId.id(),
+                            indexMetadata.getNumberOfShards(),
+                            shardRange.eventIngestedRange
+                        );
+                    }
 
-                        // TODO: or should we use .equals rather than '==' ?? (the .equals method on this class is very strange IMO)
-                        if (newEventIngestedRange != currentEventIngestedRange) {
-                            updatedEventIngestedRanges.put(index, newEventIngestedRange);
-                        }
+                    // TODO: or should we use .equals rather than '==' ?? (the .equals method on this class is very strange IMO)
+                    if (newEventIngestedRange != currentEventIngestedRange) {
+                        updatedEventIngestedRangesMap.put(index, newEventIngestedRange);
                     }
                 }
             }
-            if (updatedEventIngestedRanges.size() > 0) {
+            if (updatedEventIngestedRangesMap.size() > 0) {
                 Metadata.Builder metadataBuilder = Metadata.builder(state.metadata());
-                for (Map.Entry<Index, IndexLongFieldRange> entry : updatedEventIngestedRanges.entrySet()) {
+                for (Map.Entry<Index, IndexLongFieldRange> entry : updatedEventIngestedRangesMap.entrySet()) {
                     Index index = entry.getKey();
                     IndexLongFieldRange range = entry.getValue();
-
-                    metadataBuilder.put(IndexMetadata.builder(metadataBuilder.get(index.getName())).eventIngestedRange(range));
-                    // TODO: again, builder.getSafe(index)) returns null, but builder.get(index.getName())) does not - why?
-                    // metadataBuilder.put(IndexMetadata.builder(metadataBuilder.getSafe(index)).eventIngestedRange(range));
+                    metadataBuilder.put(IndexMetadata.builder(metadataBuilder.getSafe(index)).eventIngestedRange(range));
                 }
 
                 // MP TODO: Hmm, not sure this should be inside the for loop - it is NOT in ShardStateAction.execute :-(
@@ -196,10 +181,9 @@ public class UpdateEventIngestedRangeTransportAction extends TransportMasterNode
         }
     }
 
-    interface EventIngestedRangeTask extends ClusterStateTaskListener {}
+    // TODO: other things to override?
+    record EventIngestedRangeTask(UpdateEventIngestedRangeRequest rangeUpdateRequest) implements ClusterStateTaskListener {
 
-    // TODO: other things to override
-    record CreateEventIngestedRangeTask(UpdateEventIngestedRangeRequest rangeUpdateRequest) implements EventIngestedRangeTask {
         @Override
         public void onFailure(Exception e) {
             if (e != null) {
@@ -209,7 +193,6 @@ public class UpdateEventIngestedRangeTransportAction extends TransportMasterNode
                     e
                 );
             }
-
         }
     }
 }

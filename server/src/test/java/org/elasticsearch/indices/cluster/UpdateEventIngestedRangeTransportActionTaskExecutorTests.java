@@ -21,7 +21,6 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.UUID;
 
 import static org.elasticsearch.action.support.replication.ClusterStateCreationUtils.state;
 import static org.elasticsearch.action.support.replication.ClusterStateCreationUtils.stateWithNoShard;
@@ -44,11 +43,13 @@ public class UpdateEventIngestedRangeTransportActionTaskExecutorTests extends ES
         ClusterState clusterState1;  // initial cluster state
         ClusterState clusterState2;  // cluster state after first task runs (building on clusterState1)
 
-        Index blogsIndex = new Index("blogs", UUID.randomUUID().toString());
+        String indexName = "blogs";
+        Index blogsIndex;
 
         // TODO: do I need to try other ShardRoutingStates here, like RELOCATING, UNASSIGNED or INITIALIZING?
         // ClusterState clusterState = state(blogsIndex, true, ShardRoutingState.STARTED);
-        clusterState1 = state(1, new String[] { blogsIndex.getName() }, 1);
+        clusterState1 = state(1, new String[] { indexName }, 1);
+        blogsIndex = clusterState1.metadata().index(indexName).getIndex();
 
         Map<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> eventIngestedRangeMap = new HashMap<>();
         EventIngestedRangeClusterStateService.ShardRangeInfo shardRangeInfo = new EventIngestedRangeClusterStateService.ShardRangeInfo(
@@ -58,14 +59,12 @@ public class UpdateEventIngestedRangeTransportActionTaskExecutorTests extends ES
         eventIngestedRangeMap.put(blogsIndex, List.of(shardRangeInfo));
 
         UpdateEventIngestedRangeRequest rangeUpdateRequest = new UpdateEventIngestedRangeRequest(eventIngestedRangeMap);
-        var createEventIngestedRangeTask = new UpdateEventIngestedRangeTransportAction.CreateEventIngestedRangeTask(rangeUpdateRequest);
+        var eventIngestedRangeTask = new UpdateEventIngestedRangeTransportAction.EventIngestedRangeTask(rangeUpdateRequest);
 
-        clusterState2 = executeTasks(clusterState1, List.of(createEventIngestedRangeTask));
+        clusterState2 = executeTasks(clusterState1, List.of(eventIngestedRangeTask));
         assertNotSame(clusterState1, clusterState2);
-        IndexLongFieldRange eventIngestedRange = clusterState2.getMetadata().index(blogsIndex.getName()).getEventIngestedRange();
+        IndexLongFieldRange eventIngestedRange = clusterState2.getMetadata().index(blogsIndex).getEventIngestedRange();
 
-        // TODO: why does the index(Index) return null?
-        // IndexLongFieldRange eventIngestedRange = clusterState2.getMetadata().index(blogsIndex).getEventIngestedRange();
         assertEquals(1000L, eventIngestedRange.getMin());
         assertEquals(2000L, eventIngestedRange.getMax());
     }
@@ -79,13 +78,15 @@ public class UpdateEventIngestedRangeTransportActionTaskExecutorTests extends ES
         ClusterState clusterState4;  // cluster state after third task batch runs (building on clusterState3)
         ClusterState clusterState5;  // cluster state after fourth task batch runs (building on clusterState4)
 
-        Index blogsIndex = new Index("blogs", UUID.randomUUID().toString());
+        String indexName = "blogs";
+        Index blogsIndex;
 
         // first task with eventIngestedRange of NO_SHARDS in IndexMetadata for "blogs" index
         {
             // TODO: do I need to try other ShardRoutingStates here, like RELOCATING, UNASSIGNED or INITIALIZING?
             // ClusterState clusterState = state(blogsIndex, true, ShardRoutingState.STARTED);
-            clusterState1 = state(1, new String[] { blogsIndex.getName() }, 6);
+            clusterState1 = state(1, new String[] { indexName }, 6);
+            blogsIndex = clusterState1.metadata().index(indexName).getIndex();
 
             Map<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> eventIngestedRangeMap = new HashMap<>();
             EventIngestedRangeClusterStateService.ShardRangeInfo shardRangeInfo = new EventIngestedRangeClusterStateService.ShardRangeInfo(
@@ -95,9 +96,9 @@ public class UpdateEventIngestedRangeTransportActionTaskExecutorTests extends ES
             eventIngestedRangeMap.put(blogsIndex, List.of(shardRangeInfo));
 
             UpdateEventIngestedRangeRequest rangeUpdateRequest = new UpdateEventIngestedRangeRequest(eventIngestedRangeMap);
-            var createEventIngestedRangeTask = new UpdateEventIngestedRangeTransportAction.CreateEventIngestedRangeTask(rangeUpdateRequest);
+            var eventIngestedRangeTask = new UpdateEventIngestedRangeTransportAction.EventIngestedRangeTask(rangeUpdateRequest);
 
-            clusterState2 = executeTasks(clusterState1, List.of(createEventIngestedRangeTask));
+            clusterState2 = executeTasks(clusterState1, List.of(eventIngestedRangeTask));
             assertNotSame(clusterState1, clusterState2);
             IndexLongFieldRange eventIngestedRange = clusterState2.getMetadata().index(blogsIndex.getName()).getEventIngestedRange();
             // you can't actually call getMin or getMax right now - those throw errors since not all shards are accounted for
@@ -113,9 +114,9 @@ public class UpdateEventIngestedRangeTransportActionTaskExecutorTests extends ES
             );
             eventIngestedRangeMap.put(blogsIndex, List.of(shardRangeInfo));
             UpdateEventIngestedRangeRequest rangeUpdateRequest = new UpdateEventIngestedRangeRequest(eventIngestedRangeMap);
-            var createEventIngestedRangeTask = new UpdateEventIngestedRangeTransportAction.CreateEventIngestedRangeTask(rangeUpdateRequest);
+            var eventIngestedRangeTask = new UpdateEventIngestedRangeTransportAction.EventIngestedRangeTask(rangeUpdateRequest);
 
-            clusterState3 = executeTasks(clusterState2, List.of(createEventIngestedRangeTask));
+            clusterState3 = executeTasks(clusterState2, List.of(eventIngestedRangeTask));
             assertNotSame(clusterState2, clusterState3);
             IndexLongFieldRange eventIngestedRange = clusterState3.getMetadata().index(blogsIndex.getName()).getEventIngestedRange();
             // you can't actually call getMin or getMax right now - those throw errors since not all shards are accounted for
@@ -140,18 +141,16 @@ public class UpdateEventIngestedRangeTransportActionTaskExecutorTests extends ES
 
             eventIngestedRangeMapTask1.put(blogsIndex, shardRangeInfos.subList(0, 2));
             UpdateEventIngestedRangeRequest rangeUpdateRequest = new UpdateEventIngestedRangeRequest(eventIngestedRangeMapTask1);
-            var createEventIngestedRangeTask1 = new UpdateEventIngestedRangeTransportAction.CreateEventIngestedRangeTask(
-                rangeUpdateRequest
-            );
+            var eventIngestedRangeTask = new UpdateEventIngestedRangeTransportAction.EventIngestedRangeTask(rangeUpdateRequest);
 
             // second task has one shard
             Map<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> eventIngestedRangeMapTask2 = new HashMap<>();
             eventIngestedRangeMapTask2.put(blogsIndex, shardRangeInfos.subList(2, 3));
-            var createEventIngestedRangeTask2 = new UpdateEventIngestedRangeTransportAction.CreateEventIngestedRangeTask(
+            var eventIngestedRangeTask2 = new UpdateEventIngestedRangeTransportAction.EventIngestedRangeTask(
                 new UpdateEventIngestedRangeRequest(eventIngestedRangeMapTask2)
             );
 
-            clusterState4 = executeTasks(clusterState3, List.of(createEventIngestedRangeTask1, createEventIngestedRangeTask2));
+            clusterState4 = executeTasks(clusterState3, List.of(eventIngestedRangeTask, eventIngestedRangeTask2));
             assertNotSame(clusterState3, clusterState4);
             IndexLongFieldRange eventIngestedRange = clusterState4.getMetadata().index(blogsIndex.getName()).getEventIngestedRange();
             // you can't actually call getMin or getMax right now - those throw errors since not all shards are accounted for
@@ -171,9 +170,9 @@ public class UpdateEventIngestedRangeTransportActionTaskExecutorTests extends ES
             );
             eventIngestedRangeMap.put(blogsIndex, List.of(shardRangeInfoA, shardRangeInfoB));
             UpdateEventIngestedRangeRequest rangeUpdateRequest = new UpdateEventIngestedRangeRequest(eventIngestedRangeMap);
-            var createEventIngestedRangeTask = new UpdateEventIngestedRangeTransportAction.CreateEventIngestedRangeTask(rangeUpdateRequest);
+            var eventIngestedRangeTask = new UpdateEventIngestedRangeTransportAction.EventIngestedRangeTask(rangeUpdateRequest);
 
-            clusterState5 = executeTasks(clusterState4, List.of(createEventIngestedRangeTask));
+            clusterState5 = executeTasks(clusterState4, List.of(eventIngestedRangeTask));
             IndexLongFieldRange eventIngestedRange = clusterState5.getMetadata().index(blogsIndex.getName()).getEventIngestedRange();
             assertEquals(500L, eventIngestedRange.getMin());
             assertEquals(4000L, eventIngestedRange.getMax());
@@ -186,14 +185,18 @@ public class UpdateEventIngestedRangeTransportActionTaskExecutorTests extends ES
         ClusterState clusterState1;  // initial cluster state
         ClusterState clusterState2;  // cluster state after first task batch runs (building on clusterState1)
 
-        Index blogsIndex = new Index("blogs", UUID.randomUUID().toString());
-        Index webTrafficIndex = new Index("web_traffic", UUID.randomUUID().toString());
+        String blogsIndexName = "blogs";
+        String webTrafficIndexName = "web_traffic";
+        Index blogsIndex;
+        Index webTrafficIndex;
 
         // first task with eventIngestedRange of NO_SHARDS in IndexMetadata for "blogs" index
         {
             // TODO: do I need to try other ShardRoutingStates here, like RELOCATING, UNASSIGNED or INITIALIZING?
             // ClusterState clusterState = state(blogsIndex, true, ShardRoutingState.STARTED);
-            clusterState1 = state(1, new String[] { blogsIndex.getName(), webTrafficIndex.getName() }, 3);
+            clusterState1 = state(1, new String[] { blogsIndexName, webTrafficIndexName }, 3);
+            blogsIndex = clusterState1.metadata().index(blogsIndexName).getIndex();
+            webTrafficIndex = clusterState1.metadata().index(webTrafficIndexName).getIndex();
 
             Map<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> eventIngestedRangeMap1 = new HashMap<>();
             var shardRangeInfoBlogs1A = new EventIngestedRangeClusterStateService.ShardRangeInfo(
@@ -212,9 +215,7 @@ public class UpdateEventIngestedRangeTransportActionTaskExecutorTests extends ES
             eventIngestedRangeMap1.put(webTrafficIndex, List.of(shardRangeInfoWeb1A));
 
             UpdateEventIngestedRangeRequest rangeUpdateRequest1 = new UpdateEventIngestedRangeRequest(eventIngestedRangeMap1);
-            var createEventIngestedRangeTask1 = new UpdateEventIngestedRangeTransportAction.CreateEventIngestedRangeTask(
-                rangeUpdateRequest1
-            );
+            var eventIngestedRangeTask1 = new UpdateEventIngestedRangeTransportAction.EventIngestedRangeTask(rangeUpdateRequest1);
 
             Map<Index, List<EventIngestedRangeClusterStateService.ShardRangeInfo>> eventIngestedRangeMap2 = new HashMap<>();
             var shardRangeInfoBlogs2A = new EventIngestedRangeClusterStateService.ShardRangeInfo(
@@ -232,13 +233,13 @@ public class UpdateEventIngestedRangeTransportActionTaskExecutorTests extends ES
             eventIngestedRangeMap2.put(blogsIndex, List.of(shardRangeInfoBlogs2A));
             eventIngestedRangeMap2.put(webTrafficIndex, List.of(shardRangeInfoWeb2A, shardRangeInfoWeb2B));
 
-            var createEventIngestedRangeTask2 = new UpdateEventIngestedRangeTransportAction.CreateEventIngestedRangeTask(
+            var eventIngestedRangeTask2 = new UpdateEventIngestedRangeTransportAction.EventIngestedRangeTask(
                 new UpdateEventIngestedRangeRequest(eventIngestedRangeMap2)
             );
 
             var taskList = new ArrayList<UpdateEventIngestedRangeTransportAction.EventIngestedRangeTask>();
-            taskList.add(createEventIngestedRangeTask1);
-            taskList.add(createEventIngestedRangeTask2);
+            taskList.add(eventIngestedRangeTask1);
+            taskList.add(eventIngestedRangeTask2);
             Randomness.shuffle(taskList);
             clusterState2 = executeTasks(clusterState1, taskList);
             assertNotSame(clusterState1, clusterState2);

@@ -14,9 +14,10 @@ import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionListenerResponseHandler;
 import org.elasticsearch.action.ActionResponse;
 import org.elasticsearch.cluster.ClusterChangedEvent;
-import org.elasticsearch.cluster.ClusterStateApplier;
+import org.elasticsearch.cluster.ClusterStateListener;
 import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.cluster.node.DiscoveryNode;
+import org.elasticsearch.cluster.node.DiscoveryNodeRole;
 import org.elasticsearch.cluster.routing.ShardRouting;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.Strings;
@@ -27,6 +28,7 @@ import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.Index;
 import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.shard.IndexLongFieldRange;
+import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.index.shard.ShardId;
 import org.elasticsearch.index.shard.ShardLongFieldRange;
 import org.elasticsearch.indices.IndicesService;
@@ -53,7 +55,6 @@ import java.util.Objects;
  *  ¤ Figure out what Writeable data structures need to go into the UpdateEventIngestedRangeRequest - implement that and manual testing
  *  ¤
  *  ¤ Design error handling and bwc - what if the master is older and doesn't have the transport action? (or any other TA error occurs)
- *  ¤ Test with dedicated master (manual)
  *  ¤ Fork shard min/max range lookups to background on data nodes?
  *  ¤ Pull TransportUpdateSettingsAction out to separate class file?
  *  ¤ Any basic unit tests to write? (compare to SnapshotsService and MetadataUpdateSettingsService)
@@ -71,8 +72,8 @@ import java.util.Objects;
 // TODO: maybe rename to TimestampRangeClusterStateService ?
 // TODO: other idea: add this functionality to IndicesClusterStateService?
 // TODO: when can we remove this listener? when all frozen indices have complete event.ingested ranges in cluster state
-public class EventIngestedRangeClusterStateService extends AbstractLifecycleComponent implements ClusterStateApplier {  // TODO: move to
-                                                                                                                        // ClusterStateListener
+// TODO: move to ClusterStateListener
+public class EventIngestedRangeClusterStateService extends AbstractLifecycleComponent implements ClusterStateListener {
     private static final Logger logger = LogManager.getLogger(EventIngestedRangeClusterStateService.class);
 
     private final Settings settings;
@@ -97,32 +98,27 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
     @Override
     protected void doStart() {
         logger.warn(
-            "XXX EventIngestedRangeClusterStateService.doStart called: canContainData: {}; dedicated frozen: {}; can I get local node:? {}",
+            "XXX EventIngestedRangeClusterStateService.doStart called: canContainData: {}; has frozen role?: {}; has cold role:? {}",
             DiscoveryNode.canContainData(settings),
-            DiscoveryNode.isDedicatedFrozenNode(settings),
-            this.transportService.getLocalNode() != null
+            DiscoveryNode.hasRole(settings, DiscoveryNodeRole.DATA_FROZEN_NODE_ROLE),
+            DiscoveryNode.hasRole(settings, DiscoveryNodeRole.DATA_COLD_NODE_ROLE)
         );
 
-        // MP TODO: There is the method DataTier.isFrozen(DiscoveryNode node) method but I don't know how to get the local DiscoveryNode
-        // MP TODO: can't do "transportService.getLocalNode().canContainData()"; NPE since getLocalNode() returns null
-
-        // only run this service on data nodes (for example, master has no frozen shards to access)
-        // TODO: is DiscoveryNode.isDedicatedFrozenNode(settings) too restrictive?
-        // TODO: what is the best way to limit this to nodes that have a frozen shards?
-        if (DiscoveryNode.canContainData(settings) && DiscoveryNode.isDedicatedFrozenNode(settings)) {
+        // only run this service on data nodes that can have searchable snapshots mounted
+        if (DiscoveryNode.canContainData(settings)
+            && (DiscoveryNode.hasRole(settings, DiscoveryNodeRole.DATA_FROZEN_NODE_ROLE)
+                || DiscoveryNode.hasRole(settings, DiscoveryNodeRole.DATA_COLD_NODE_ROLE))) {
             logger.warn("XXX doStart 1");
-            clusterService.addStateApplier(this);
+            clusterService.addListener(this);
         } else {
             logger.warn("XXX doStart 2");
-            clusterService.addStateApplier(this);  // MP TODO: remove after manual testing done
+            clusterService.addListener(this);  // MP TODO: remove after manual testing done
         }
     }
 
     @Override
     protected void doStop() {
-        if (DiscoveryNode.canContainData(settings)) {
-            clusterService.removeApplier(this);
-        }
+        clusterService.removeListener(this);
     }
 
     @Override
@@ -135,7 +131,25 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
      * data node need to have their 'event.ingested' min/max range updated in cluster state.
      */
     @Override
-    public void applyClusterState(ClusterChangedEvent event) {
+    public void clusterChanged(ClusterChangedEvent event) {
+        /// MP TODO ALT LOOPING MODEL -- start
+        for (Map.Entry<String, IndexMetadata> entry : event.state().getMetadata().indices().entrySet()) {
+            String indexName = entry.getKey();
+            IndexMetadata indexMetadata = entry.getValue();
+            Index index = entry.getValue().getIndex();
+
+            if (isFrozenIndex(indexMetadata.getSettings())) {
+                IndexService indexService = indicesService.indexService(index);
+                for (Integer shardId : indexService.shardIds()) {
+                    IndexShard shard = indexService.getShard(shardId);
+                    ShardLongFieldRange eventIngestedRange = shard.getEventIngestedRange();
+                    // TODO: add this range to map like below if we go this route
+                }
+
+            }
+        }
+        /// MP TODO ALT LOOPING MODEL -- end
+
         // only run this task when a cluster has upgraded to a new version
         // TODO: how is this going to work in serverless? will event.state().nodes().getMinNodeVersion() return useful info?
         if (clusterVersionUpgrade(event)) {
@@ -160,7 +174,6 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
 
             logger.warn("XXX EventIngestedRangeClusterStateService.applyClusterState DEBUG 3. shardsForLookup: {}", shardsForLookup.size());
 
-            // TODO: should the key be String or Index?
             Map<Index, List<ShardRangeInfo>> eventIngestedRangeMap = new HashMap<>();
 
             // MP TODO - bogus entry to have something for initial testing -- start
@@ -170,7 +183,7 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
             // eventIngestedRangeMap.put(mpidx, shardRangeList);
             // MP TODO - bogus entry to have something for initial testing -- end
 
-            // TODO: this min/max lookup logic likely needs to be forked to background (how do I do that?)
+            // TODO: does this min/max lookup logic need to be forked to background (if yes, how do I do that?)
 
             // TODO: create new list or map here of shards/indexes and new min/max range to update
             for (ShardRouting shardRouting : shardsForLookup) {
@@ -180,7 +193,6 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
                 // TODO: ^^ speaks to the larger issue of error handling - what if on this pass not all the shards can't be
                 // TODO: inspected for some reason - then the event.ingested range remains unusable until the next version upgrade?
                 if (shard != null) {
-                    // TODO: should I call metadata.index(String) or metadata.index(Index)? The latter doesn't work in my other test
                     IndexMetadata indexMetadata = event.state().metadata().index(shardRouting.index());
                     // TODO: is indexMetadata guaranteed to never be null here?
                     IndexLongFieldRange clusterStateEventIngestedRange = indexMetadata.getEventIngestedRange();
@@ -217,7 +229,7 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
                     }
 
                     // TODO: what do we do on failure? Should we set a flag in the service stating that next time
-                    // >>TODO: applyClusterState is called to try again regardless of whether there was a cluster version upgrade?
+                    // TODO: clusterChanged is called to try again regardless of whether there was a cluster version upgrade?
                     @Override
                     public void onFailure(Exception e) {
                         logger.warn("XXX YYY TaskExecutor.ActionListener onFailure: {}", e.getMessage());
@@ -243,7 +255,7 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
                     // TODO: is it useful if all I'm getting is an ack that doesn't guarantee that cluster state was updated?
                     new ActionListenerResponseHandler<>(
                         execListener.safeMap(r -> null),
-                        in -> ActionResponse.Empty.INSTANCE,
+                        in -> ActionResponse.Empty.INSTANCE,  // TODO: there is a way to wait for the TaskExecutor to finish
                         TransportResponseHandler.TRANSPORT_WORKER
                     )
                 );
@@ -261,12 +273,12 @@ public class EventIngestedRangeClusterStateService extends AbstractLifecycleComp
         // return event.nodesChanged() &&
         // event.state().nodes().getMinNodeVersion() == event.state().nodes().getMaxNodeVersion() &&
         // event.previousState().nodes().getMinNodeVersion() == event.state().nodes().getMinNodeVersion();
-        return event.nodesChanged() || event.nodesRemoved();  // MP FIXME
+        return event.nodesChanged() || event.nodesRemoved();  // MP FIXME change to commented out logic above
     }
 
     // TODO: copied from FrozenUtils - should that one move to core/server rather than be in xpack?
     public static boolean isFrozenIndex(Settings indexSettings) {
-        return true;  // MP FIXME
+        return true;  // MP FIXME - change to commented out logic below
         // String tierPreference = DataTier.TIER_PREFERENCE_SETTING.get(indexSettings);
         // List<String> preferredTiers = DataTier.parseTierList(tierPreference);
         // if (preferredTiers.isEmpty() == false && preferredTiers.get(0).equals(DataTier.DATA_FROZEN)) {
