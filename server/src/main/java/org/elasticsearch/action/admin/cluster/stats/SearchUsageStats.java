@@ -29,7 +29,7 @@ import static org.elasticsearch.TransportVersions.V_8_12_0;
  * accumulate stats for the entire cluster and return them as part of the {@link ClusterStatsResponse}.
  */
 public final class SearchUsageStats implements Writeable, ToXContentFragment {
-    private long totalSearchCount;
+    private long totalSearchCount; // MP TODO: why does this not need to be AtomicLong or other thread safe variable?
     private final Map<String, Long> queries;
     private final Map<String, Long> rescorers;
     private final Map<String, Long> sections;
