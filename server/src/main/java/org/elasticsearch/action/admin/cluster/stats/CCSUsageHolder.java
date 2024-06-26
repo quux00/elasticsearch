@@ -13,6 +13,7 @@ import org.elasticsearch.telemetry.metric.DoubleHistogram;
 import java.util.HashMap;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.LongAdder;
 
 /**
@@ -22,34 +23,82 @@ import java.util.concurrent.atomic.LongAdder;
  */
 public class CCSUsageHolder {
 
-    private enum CCSTelemetrySearchType {
-        SUCCESSFUL, FAILED,
-    }
-
-    private final LongAdder totalCCSCount;
-    private Map<CCSTelemetrySearchType, CCSTelemetryInfo> telemetryBySearchType;
-    private Map<String, CCSTelemetryInfo> byRemoteCluster;
+    private final LongAdder totalCCSCount;  // TODO: need this? or just sum the successfulSearchTelem and failedSearchTelem ?
+    private AtomicReference<SuccessfulSearchTelemetry> successfulSearchTelem;
+    private AtomicReference<FailedSearchTelemetry> failedSearchTelem;
+    private Map<String, PerRemoteTelemetry> byRemoteCluster;
 
     public CCSUsageHolder() {
         this.totalCCSCount = new LongAdder();
-        this.telemetryBySearchType = new ConcurrentHashMap<>();
-        this.telemetryBySearchType.put(CCSTelemetrySearchType.SUCCESSFUL, new CCSTelemetryInfo());
-        this.telemetryBySearchType.put(CCSTelemetrySearchType.FAILED, new CCSTelemetryInfo());
+        this.successfulSearchTelem = new AtomicReference<>(new SuccessfulSearchTelemetry());
+        this.failedSearchTelem = new AtomicReference<>(new FailedSearchTelemetry());
         this.byRemoteCluster = new ConcurrentHashMap<>();
     }
 
     public void updateUsage(CCSUsage ccsUsage) {
-
+        // TODO: fork this to a background thread? if yes, could just pass in the SearchResponse to parse it off the response thread
+        doUpdate(ccsUsage);
     }
 
-    static class CCSTelemetryInfo {
+    private synchronized void doUpdate(CCSUsage ccsUsage) {
+        totalCCSCount.increment();
+        if (ccsUsage.getFailureType() == null) {
+            // handle successful (or partially successful query)
+            SuccessfulSearchTelemetry ccsTelemetryInfo = successfulSearchTelem.get();
+            ccsTelemetryInfo.update(ccsUsage);
+
+            // process per-remote info
+            // TODO: FILL IN ___ LEFTOFF ___
+
+        } else {
+            // handle failed query
+            FailedSearchTelemetry ccsTelemetryInfo = failedSearchTelem.get();
+            ccsTelemetryInfo.update(ccsUsage);
+        }
+    }
+
+    /**
+     * Telemetry of each remote involved in cross cluster searches
+     */
+    static class PerRemoteTelemetry {
+        private String clusterAlias;
+        private long count;
+        private DoubleHistogram latency;
+
+        PerRemoteTelemetry(String clusterAlias) {
+            this.clusterAlias = clusterAlias;
+            this.count = 0;
+            // TODO: implement DoubleHistogram or DoubleRecorder
+        }
+
+        void update(CCSUsage.RemoteClusterUsage remoteUsage) {
+            count++;
+            latency.record(remoteUsage.getTook());
+        }
+    }
+
+    static class FailedSearchTelemetry {
+        private long count;
+        private Map<String, Integer> causes;
+
+        FailedSearchTelemetry() {
+            causes = new HashMap<>();
+        }
+
+        void update(CCSUsage ccsUsage) {
+            count++;
+            causes.compute(ccsUsage.getFailureType(), (k, v) -> (v == null) ? 1 : v + 1);
+        }
+    }
+
+    static class SuccessfulSearchTelemetry {
         private long count; // total number of searches
         private long countMinimizeRoundtrips;
         private long countSearchesWithSkippedRemotes;
         private long countAsync;
         private DoubleHistogram latency;
 
-        CCSTelemetryInfo() {
+        SuccessfulSearchTelemetry() {
             this.count = 0;
             this.countMinimizeRoundtrips = 0;
             this.countSearchesWithSkippedRemotes = 0;
@@ -69,16 +118,15 @@ public class CCSUsageHolder {
                 public String getName() {
                     return "ccs-latency";
                 }
-            }
+            };
         }
 
-        public void update(boolean minimizeRoundtrips, boolean skippedRemotes, boolean async, long took) {
+        void update(CCSUsage ccsUsage) {
             count++;
-            countMinimizeRoundtrips += minimizeRoundtrips ? 1 : 0;
-            countSearchesWithSkippedRemotes += skippedRemotes ? 1 : 0;
-            countAsync += async ? 1 : 0;
-            latency.record(took);
+            countMinimizeRoundtrips += ccsUsage.isMinimizeRoundTrips() ? 1 : 0;
+            countSearchesWithSkippedRemotes += ccsUsage.getSkippedRemotes() > 0 ? 1 : 0;
+            countAsync += ccsUsage.isAsync() ? 1 : 0;
+            latency.record(ccsUsage.getTook());
         }
-
     }
 }
