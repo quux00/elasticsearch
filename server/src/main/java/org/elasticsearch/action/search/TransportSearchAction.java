@@ -23,6 +23,7 @@ import org.elasticsearch.action.ShardOperationFailedException;
 import org.elasticsearch.action.admin.cluster.shards.ClusterSearchShardsRequest;
 import org.elasticsearch.action.admin.cluster.shards.ClusterSearchShardsResponse;
 import org.elasticsearch.action.admin.cluster.shards.TransportClusterSearchShardsAction;
+import org.elasticsearch.action.admin.cluster.stats.CCSUsage;
 import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.HandledTransportAction;
 import org.elasticsearch.action.support.IndicesOptions;
@@ -80,6 +81,7 @@ import org.elasticsearch.transport.RemoteTransportException;
 import org.elasticsearch.transport.Transport;
 import org.elasticsearch.transport.TransportRequestOptions;
 import org.elasticsearch.transport.TransportService;
+import org.elasticsearch.usage.UsageService;
 import org.elasticsearch.xcontent.ToXContent;
 import org.elasticsearch.xcontent.XContentFactory;
 
@@ -152,6 +154,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
     private final boolean ccsCheckCompatibility;
     private final SearchResponseMetrics searchResponseMetrics;
     private final Client client;
+    private final UsageService usageService;
 
     @Inject
     public TransportSearchAction(
@@ -168,7 +171,8 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         ExecutorSelector executorSelector,
         SearchTransportAPMMetrics searchTransportMetrics,
         SearchResponseMetrics searchResponseMetrics,
-        Client client
+        Client client,
+        UsageService usageService
     ) {
         super(TYPE.name(), transportService, actionFilters, SearchRequest::new, EsExecutors.DIRECT_EXECUTOR_SERVICE);
         this.threadPool = threadPool;
@@ -187,6 +191,7 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
         this.ccsCheckCompatibility = SearchService.CCS_VERSION_CHECK_SETTING.get(clusterService.getSettings());
         this.searchResponseMetrics = searchResponseMetrics;
         this.client = client;
+        this.usageService = usageService;
     }
 
     private Map<String, OriginalIndices> buildPerIndexOriginalIndices(
@@ -318,6 +323,30 @@ public class TransportSearchAction extends HandledTransportAction<SearchRequest,
                     // increment after the delegated onResponse to ensure we don't
                     // record both a success and a failure if there is an exception
                     searchResponseMetrics.incrementResponseCount(responseCountTotalStatus);
+
+                    System.err.println("XXX DEBUG 1: " + searchResponse.getClusters().hasRemoteClusters());
+                    if (searchResponse.getClusters().hasRemoteClusters()) {
+                        // update CCS Usage Telemetry
+                        boolean asyncSearch = true;
+                        if (task instanceof SearchTask searchTask) {
+                            System.err.println("XXX DEBUG 2: " + searchTask.getProgressListener());
+                            System.err.println("XXX DEBUG 2b: " + (searchTask.getProgressListener() == SearchProgressListener.NOOP));
+                            System.err.println(
+                                "XXX DEBUG 2c: " + (searchTask.getProgressListener() instanceof CCSSingleCoordinatorSearchProgressListener)
+                            );
+
+                            asyncSearch = searchTask.getProgressListener() != SearchProgressListener.NOOP
+                                && searchTask.getProgressListener() instanceof CCSSingleCoordinatorSearchProgressListener == false;
+                        }
+
+                        CCSUsage ccsUsage = new CCSUsage.Builder().took(searchResponse.getTookInMillis())
+                            .async(asyncSearch)
+                            .minimizeRoundTrips(searchResponse.getClusters().isCcsMinimizeRoundtrips())
+                            .numSkippedRemotes(searchResponse.getClusters().getClusterStateCount(SearchResponse.Cluster.Status.SKIPPED))
+                            .build();
+                        System.err.println("XXX DEBUG 3 about to add ccsusage");
+                        usageService.getCcsUsageHolder().updateUsage(ccsUsage);
+                    }
                 } catch (Exception e) {
                     onFailure(e);
                 }

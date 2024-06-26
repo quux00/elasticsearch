@@ -8,7 +8,6 @@
 
 package org.elasticsearch.action.admin.cluster.stats;
 
-import java.util.List;
 import java.util.Map;
 
 /**
@@ -17,16 +16,75 @@ import java.util.Map;
  */
 // TODO: should this class be called CCSTelemetry and the long term "holder" use the term Usage?
 public class CCSUsage {
-    private long took;
-    private List<String> clusterAliases;  // TODO: this likely needs to be a Map<String, SearchClusterTelemetry> or something like that
-    private String failureType;  // TODO: enum?
-    private boolean minimizeRoundTrips;
-    private boolean async;
-    private int skippedRemotes;
+    private final long took;
+    private final String failureType;  // TODO: enum?
+    private final boolean minimizeRoundTrips;
+    private final boolean async;
+    private final int skippedRemotes;
 
-    private Map<String, RemoteClusterUsage> perClusterUsage;
+    private final Map<String, RemoteClusterUsage> perClusterUsage;
 
     // TODO: probably need a builder class
+
+    public static class Builder {
+        private long took;
+        private String failureType;  // TODO: enum?
+        private boolean minimizeRoundTrips;
+        private boolean async;
+        private int skippedRemotes;
+        private Map<String, RemoteClusterUsage> perClusterUsage;
+
+        public Builder took(long took) {
+            this.took = took;
+            return this;
+        }
+
+        public Builder failureType(String failureType) {
+            this.failureType = failureType;
+            return this;
+        }
+
+        public Builder minimizeRoundTrips(boolean minimizeRoundTrips) {
+            this.minimizeRoundTrips = minimizeRoundTrips;
+            return this;
+        }
+
+        public Builder async(boolean async) {
+            this.async = async;
+            return this;
+        }
+
+        public Builder numSkippedRemotes(int skippedRemotes) {
+            this.skippedRemotes = skippedRemotes;
+            return this;
+        }
+
+        // TODO: this should probably be a per cluster add - change later
+        public Builder perClusterUsage(Map<String, RemoteClusterUsage> perClusterUsage) {
+            this.perClusterUsage = perClusterUsage;
+            return this;
+        }
+
+        public CCSUsage build() {
+            return new CCSUsage(minimizeRoundTrips, async, took, skippedRemotes, failureType, perClusterUsage);
+        }
+    }
+
+    private CCSUsage(
+        boolean minimizeRoundTrips,
+        boolean async,
+        long took,
+        int skippedRemotes,
+        String failureType,
+        Map<String, RemoteClusterUsage> perClusterUsage
+    ) {
+        this.minimizeRoundTrips = minimizeRoundTrips;
+        this.async = async;
+        this.took = took;
+        this.skippedRemotes = skippedRemotes;
+        this.failureType = failureType;
+        this.perClusterUsage = perClusterUsage;
+    }
 
     public Map<String, RemoteClusterUsage> getPerClusterUsage() {
         return perClusterUsage;

@@ -8,7 +8,7 @@
 
 package org.elasticsearch.action.admin.cluster.stats;
 
-import org.elasticsearch.telemetry.metric.DoubleHistogram;
+import org.HdrHistogram.DoubleHistogram;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -41,11 +41,17 @@ public class CCSUsageHolder {
     }
 
     private synchronized void doUpdate(CCSUsage ccsUsage) {
+        System.err.println("XXX YYY DEBUG A doUpdate");
         totalCCSCount.increment();
         if (ccsUsage.getFailureType() == null) {
+            System.err.println("XXX YYY DEBUG B");
             // handle successful (or partially successful query)
             SuccessfulSearchTelemetry ccsTelemetryInfo = successfulSearchTelem.get();
             ccsTelemetryInfo.update(ccsUsage);
+            System.err.println("XXX YYY DEBUG C1: successful  latency max: " + ccsTelemetryInfo.latency.getMaxValue());
+            System.err.println("XXX YYY DEBUG C2: successful  latency p50: " + ccsTelemetryInfo.latency.getValueAtPercentile(50));
+            System.err.println("XXX YYY DEBUG C3: successful  latency p90: " + ccsTelemetryInfo.latency.getValueAtPercentile(90));
+            System.err.println("XXX YYY DEBUG C4: successful  latency avg: " + ccsTelemetryInfo.latency.getMean());
 
             // process per-remote info
             // TODO: FILL IN ___ LEFTOFF ___
@@ -54,7 +60,10 @@ public class CCSUsageHolder {
             // handle failed query
             FailedSearchTelemetry ccsTelemetryInfo = failedSearchTelem.get();
             ccsTelemetryInfo.update(ccsUsage);
+            System.err.println("XXX YYY DEBUG D");
         }
+
+        System.err.println("XXX YYY DEBUG E: totalCCSCount: " + totalCCSCount.longValue());
     }
 
     /**
@@ -68,12 +77,13 @@ public class CCSUsageHolder {
         PerRemoteTelemetry(String clusterAlias) {
             this.clusterAlias = clusterAlias;
             this.count = 0;
-            // TODO: implement DoubleHistogram or DoubleRecorder
+            // TODO: what should we use for num significant value digits?
+            latency = new DoubleHistogram(2);
         }
 
         void update(CCSUsage.RemoteClusterUsage remoteUsage) {
             count++;
-            latency.record(remoteUsage.getTook());
+            latency.recordValue(remoteUsage.getTook()); // do I need to add count as well using recordValueWithCount?
         }
     }
 
@@ -103,22 +113,7 @@ public class CCSUsageHolder {
             this.countMinimizeRoundtrips = 0;
             this.countSearchesWithSkippedRemotes = 0;
             this.countAsync = 0;
-            this.latency = new DoubleHistogram() {
-                @Override
-                public void record(double value) {
-                    // MP TODO: FILL IN - what? why do I have to fill this in? How does this thing work?
-                }
-
-                @Override
-                public void record(double value, Map<String, Object> attributes) {
-                    // MP TODO: FILL IN
-                }
-
-                @Override
-                public String getName() {
-                    return "ccs-latency";
-                }
-            };
+            this.latency = new DoubleHistogram(2);
         }
 
         void update(CCSUsage ccsUsage) {
@@ -126,7 +121,10 @@ public class CCSUsageHolder {
             countMinimizeRoundtrips += ccsUsage.isMinimizeRoundTrips() ? 1 : 0;
             countSearchesWithSkippedRemotes += ccsUsage.getSkippedRemotes() > 0 ? 1 : 0;
             countAsync += ccsUsage.isAsync() ? 1 : 0;
-            latency.record(ccsUsage.getTook());
+            latency.recordValue(ccsUsage.getTook());
+            System.err.println("XXX ZZZ DEBUG 80: countAsync: " + countAsync);
+            System.err.println("XXX ZZZ DEBUG 81: countSearchesWithSkippedRemotes: " + countSearchesWithSkippedRemotes);
+            System.err.println("XXX ZZZ DEBUG 82: minRT count: " + countMinimizeRoundtrips);
         }
     }
 }
