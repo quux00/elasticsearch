@@ -39,6 +39,7 @@ public class MyRestCountAction extends BaseRestHandler {
 
     @Override
     public RestChannelConsumer prepareRequest(final RestRequest request, final NodeClient client) throws IOException {
+        // throw new UnsupportedOperationException("Hello there");
         String[] indices = Strings.splitStringByCommaToArray(request.param("index"));
 
         // create Transport action request from the REST request

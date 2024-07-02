@@ -391,6 +391,7 @@ import org.elasticsearch.rest.action.ingest.RestPutPipelineAction;
 import org.elasticsearch.rest.action.ingest.RestSimulateIngestAction;
 import org.elasticsearch.rest.action.ingest.RestSimulatePipelineAction;
 import org.elasticsearch.rest.action.mycount.MyCountTransportAction;
+import org.elasticsearch.rest.action.mycount.MyRestCountAction;
 import org.elasticsearch.rest.action.search.RestClearScrollAction;
 import org.elasticsearch.rest.action.search.RestCountAction;
 import org.elasticsearch.rest.action.search.RestExplainAction;
@@ -833,6 +834,7 @@ public class ActionModule extends AbstractModule {
                 handler.routes().forEach(route -> restController.registerHandler(route, placeholderRestHandler));
             }
         };
+        registerHandler.accept(new MyRestCountAction());
         registerHandler.accept(new RestAddVotingConfigExclusionAction());
         registerHandler.accept(new RestClearVotingConfigExclusionsAction());
         registerHandler.accept(new RestNodesInfoAction(settingsFilter));
