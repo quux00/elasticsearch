@@ -172,9 +172,18 @@ public class MyCountTransportAction extends HandledTransportAction<MyCountAction
             long total = 0;
             for (IndexService indexService : indicesService) {
                 for (IndexShard indexShard : indexService) {
-                    total += indexShard.docStats().getCount();
+                    // version 2
+                    if (indexShard.routingEntry().primary()) {
+                        total += indexShard.docStats().getCount();
+                    }
+
+                    // // version 1
+                    // long count = indexShard.docStats().getCount();
+                    // System.err.printf("shard: %s; count=%d\n", indexShard.routingEntry(), count);
+                    // total += count;
                 }
             }
+            System.err.println("---> message received; total: " + total);
             channel.sendResponse(new NodeLevelResponse(total));
         }
     }
