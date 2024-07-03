@@ -28,7 +28,8 @@ public class MyRestCountAction extends BaseRestHandler {
     @Override
     public List<Route> routes() {
         return List.of(
-            new Route(GET, "/_my_count")  // TODO: should this be /_my_count/{name} ?
+            new Route(GET, "/_my_count"),
+            new Route(GET, "/_my_count/{name}")  // add later
         );
     }
 
@@ -38,9 +39,9 @@ public class MyRestCountAction extends BaseRestHandler {
     }
 
     @Override
-    public RestChannelConsumer prepareRequest(final RestRequest request, final NodeClient client) throws IOException {
+    public RestChannelConsumer prepareRequest(RestRequest request, NodeClient client) throws IOException {
         // throw new UnsupportedOperationException("Hello there");
-        String[] indices = Strings.splitStringByCommaToArray(request.param("index"));
+        String[] indices = Strings.splitStringByCommaToArray(request.param("name"));  // add later
 
         // create Transport action request from the REST request
         MyCountActionRequest countRequest = new MyCountActionRequest(Arrays.asList(indices));

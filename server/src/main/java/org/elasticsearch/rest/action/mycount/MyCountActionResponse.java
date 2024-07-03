@@ -15,18 +15,23 @@ import org.elasticsearch.xcontent.ToXContentObject;
 import org.elasticsearch.xcontent.XContentBuilder;
 
 import java.io.IOException;
+import java.util.Map;
 
 public class MyCountActionResponse extends ActionResponse implements ToXContentObject {
 
     private final long count;
+    private final Map<String, Long> perIndexCounts;
 
-    public MyCountActionResponse(long count) {
+    public MyCountActionResponse(long count, Map<String, Long> perIndexCounts) {
         this.count = count;
+        this.perIndexCounts = perIndexCounts;
     }
 
     public MyCountActionResponse(StreamInput in) throws IOException {
         super(in);
         this.count = in.readVLong();
+        // wrap in TransportVersion check - v3
+        this.perIndexCounts = in.readMap(StreamInput::readString, StreamInput::readVLong);
     }
 
     public long getCount() {
@@ -36,12 +41,25 @@ public class MyCountActionResponse extends ActionResponse implements ToXContentO
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         out.writeVLong(count);
+        // wrap in TransportVersion check - v3
+        out.writeMap(perIndexCounts, StreamOutput::writeString, StreamOutput::writeVLong);
     }
 
     @Override
     public XContentBuilder toXContent(XContentBuilder builder, Params params) throws IOException {
         builder.startObject();
         builder.field("count", count);
+
+        // add in third version
+        if (perIndexCounts != null && perIndexCounts.isEmpty() == false) {
+            builder.startObject("by-index");
+            for (Map.Entry<String, Long> entry : perIndexCounts.entrySet()) {
+                builder.field(entry.getKey(), entry.getValue());
+            }
+            builder.endObject();
+        }
+        // end add in third version
+
         builder.endObject();
         return builder;
     }

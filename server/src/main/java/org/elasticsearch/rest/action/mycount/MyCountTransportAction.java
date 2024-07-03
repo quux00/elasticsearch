@@ -39,6 +39,11 @@ import org.elasticsearch.transport.TransportResponseHandler;
 import org.elasticsearch.transport.TransportService;
 
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -90,13 +95,14 @@ public class MyCountTransportAction extends HandledTransportAction<MyCountAction
         DiscoveryNodes nodes = clusterState.nodes();
         CountDown countDown = new CountDown(nodes.size());
         final AtomicLong totalDocCount = new AtomicLong();
+        final Map<String, Long> countByIndices = new ConcurrentHashMap<>();
 
         for (DiscoveryNode node : nodes) {
             // for every node, send a node level request and sum all of them
             transportService.sendChildRequest(
                 node,
                 NODE_LEVEL_ACTION_NAME,
-                new NodeLevelRequest(),
+                new NodeLevelRequest(request.getIndices()),
                 task,
                 TransportRequestOptions.EMPTY,
                 new TransportResponseHandler<NodeLevelResponse>() {
@@ -108,8 +114,11 @@ public class MyCountTransportAction extends HandledTransportAction<MyCountAction
                     @Override
                     public void handleResponse(NodeLevelResponse response) {
                         totalDocCount.addAndGet(response.count);
+                        for (Map.Entry<String, Long> entry : response.byIndexCounts.entrySet()) {
+                            countByIndices.compute(entry.getKey(), (k, v) -> v == null ? 1L : v + entry.getValue());
+                        }
                         if (countDown.countDown()) {
-                            listener.onResponse(new MyCountActionResponse(totalDocCount.get()));
+                            listener.onResponse(new MyCountActionResponse(totalDocCount.get(), response.byIndexCounts));
                         }
                     }
 
@@ -130,32 +139,49 @@ public class MyCountTransportAction extends HandledTransportAction<MyCountAction
     }
 
     static class NodeLevelRequest extends TransportRequest {
-        public NodeLevelRequest() {
-            // TODO: Need this?
+        final List<String> indices;
+
+        NodeLevelRequest(List<String> indices) {
+            this.indices = indices;
         }
 
-        public NodeLevelRequest(StreamInput in) throws IOException {
+        NodeLevelRequest(StreamInput in) throws IOException {
             super(in);
-            // FIXME
+            this.indices = in.readStringCollectionAsImmutableList();
+        }
+
+        @Override
+        public void writeTo(StreamOutput out) throws IOException {
+            super.writeTo(out);
+            out.writeStringCollection(indices);
+        }
+
+        public List<String> getIndices() {
+            return indices;
         }
     }
 
     static class NodeLevelResponse extends TransportResponse {
-
         private final long count;
+        private final Map<String, Long> byIndexCounts; // add in v3 along with new TransportVersion!
 
-        NodeLevelResponse(long count) {
+        NodeLevelResponse(long count, Map<String, Long> byIndexCounts) {
             this.count = count;
+            this.byIndexCounts = byIndexCounts;
         }
 
         NodeLevelResponse(StreamInput in) throws IOException {
             super(in);
             this.count = in.readVLong();
+            // note: wrap this in new TransportVersion check
+            this.byIndexCounts = in.readMap(StreamInput::readString, StreamInput::readVLong);
         }
 
         @Override
         public void writeTo(StreamOutput out) throws IOException {
             out.writeVLong(count);
+            // note: wrap this in new TransportVersion check
+            out.writeMap(byIndexCounts, StreamOutput::writeString, StreamOutput::writeVLong);
         }
     }
 
@@ -169,13 +195,27 @@ public class MyCountTransportAction extends HandledTransportAction<MyCountAction
 
         @Override
         public void messageReceived(NodeLevelRequest request, TransportChannel channel, Task task) throws Exception {
+            HashSet<String> indicesToCount = new HashSet<>(request.getIndices());
+            Map<String, Long> byIndices = new HashMap<>();
+            System.err.println("indicesToCount: " + indicesToCount);
             long total = 0;
             for (IndexService indexService : indicesService) {
                 for (IndexShard indexShard : indexService) {
-                    // version 2
+                    // version 3
                     if (indexShard.routingEntry().primary()) {
-                        total += indexShard.docStats().getCount();
+                        String indexName = indexService.index().getName();
+                        if (indicesToCount.isEmpty() || indicesToCount.contains(indexName)) {
+                            total += indexShard.docStats().getCount();
+                            if (indicesToCount.isEmpty() == false) {
+                                byIndices.compute(indexName, (k, v) -> v == null ? 1L : v + indexShard.docStats().getCount());
+                            }
+                        }
                     }
+
+                    // version 2
+                    // if (indexShard.routingEntry().primary()) {
+                    // total += indexShard.docStats().getCount();
+                    // }
 
                     // // version 1
                     // long count = indexShard.docStats().getCount();
@@ -184,7 +224,7 @@ public class MyCountTransportAction extends HandledTransportAction<MyCountAction
                 }
             }
             System.err.println("---> message received; total: " + total);
-            channel.sendResponse(new NodeLevelResponse(total));
+            channel.sendResponse(new NodeLevelResponse(total, byIndices));
         }
     }
 }
