@@ -1,0 +1,21 @@
+setup:
+  - do:
+      indices.create:
+        index:  test
+  - do:
+      index:
+        index:  test
+        id:     "1"
+        body:   { foo: bar }
+
+  - do:
+      indices.refresh:
+        index: [test]
+
+---
+"my count total only":
+  - do:
+      count:
+        name: test
+
+  - match: {count : 1}
