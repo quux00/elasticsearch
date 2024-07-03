@@ -115,7 +115,9 @@ public class MyCountTransportAction extends HandledTransportAction<MyCountAction
                     public void handleResponse(NodeLevelResponse response) {
                         totalDocCount.addAndGet(response.count);
                         for (Map.Entry<String, Long> entry : response.byIndexCounts.entrySet()) {
-                            countByIndices.compute(entry.getKey(), (k, v) -> v == null ? 1L : v + entry.getValue());
+                            Long count = entry.getValue();
+                            // TODO: set count to 1L in compute call to have the bug
+                            countByIndices.compute(entry.getKey(), (k, v) -> v == null ? count : v + count);
                         }
                         if (countDown.countDown()) {
                             listener.onResponse(new MyCountActionResponse(totalDocCount.get(), response.byIndexCounts));
@@ -205,9 +207,10 @@ public class MyCountTransportAction extends HandledTransportAction<MyCountAction
                     if (indexShard.routingEntry().primary()) {
                         String indexName = indexService.index().getName();
                         if (indicesToCount.isEmpty() || indicesToCount.contains(indexName)) {
-                            total += indexShard.docStats().getCount();
+                            final long shardDocCount = indexShard.docStats().getCount();
+                            total += shardDocCount;
                             if (indicesToCount.isEmpty() == false) {
-                                byIndices.compute(indexName, (k, v) -> v == null ? 1L : v + indexShard.docStats().getCount());
+                                byIndices.compute(indexName, (k, v) -> v == null ? shardDocCount : v + shardDocCount);
                             }
                         }
                     }
