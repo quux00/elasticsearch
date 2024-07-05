@@ -25,7 +25,6 @@ import org.elasticsearch.common.util.concurrent.EsExecutors;
 import org.elasticsearch.index.IndexService;
 import org.elasticsearch.index.shard.IndexShard;
 import org.elasticsearch.indices.IndicesService;
-import org.elasticsearch.tasks.CancellableTask;
 import org.elasticsearch.tasks.Task;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.TransportChannel;
@@ -36,6 +35,11 @@ import org.elasticsearch.transport.TransportResponseHandler;
 import org.elasticsearch.transport.TransportService;
 
 import java.io.IOException;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -89,6 +93,7 @@ public class MyCountTransportAction extends HandledTransportAction<MyCountAction
 
         final AtomicLong totalDocCount = new AtomicLong(0);
         CountDown countDown = new CountDown(nodes.size());
+        Map<String, Long> countByIndices = new ConcurrentHashMap<>();
 
         for (DiscoveryNode node : nodes) {
             transportService.sendChildRequest(
@@ -106,15 +111,18 @@ public class MyCountTransportAction extends HandledTransportAction<MyCountAction
                     @Override
                     public void handleResponse(MyCountActionResponse response) {
                         totalDocCount.addAndGet(response.getCount());
+                        for (Map.Entry<String, Long> entry : response.getCountByIndex().entrySet()) {
+                            countByIndices.compute(entry.getKey(), (k, v) -> v == null ? entry.getValue() : v + entry.getValue());
+                        }
                         if (countDown.countDown()) {
-                            listener.onResponse(new MyCountActionResponse(totalDocCount.get()));
+                            listener.onResponse(new MyCountActionResponse(totalDocCount.get(), countByIndices));
                         }
                     }
 
                     @Override
                     public void handleException(TransportException exc) {
                         if (countDown.countDown()) {
-                            listener.onResponse(new MyCountActionResponse(totalDocCount.get()));
+                            listener.onResponse(new MyCountActionResponse(totalDocCount.get(), countByIndices));
                         }
                         logger.debug("Error in MyCount: {}", exc);
                     }
@@ -138,22 +146,28 @@ public class MyCountTransportAction extends HandledTransportAction<MyCountAction
 
         @Override
         public void messageReceived(MyCountActionRequest request, TransportChannel channel, Task task) throws Exception {
+            Set<String> indicesToCount = new HashSet<>(request.getIndices());
+            Map<String, Long> byIndices = new HashMap<>();
+
             // implement the logic of actually getting the doc count from the Lucene indices
-
-            CancellableTask cancellableTask = (CancellableTask) task;
-
             long total = 0;
 
             for (IndexService indexService : indicesService) {
                 for (IndexShard indexShard : indexService) {
-                    total += indexShard.docStats().getCount();
-                }
-                if (cancellableTask.isCancelled()) {
-                    // take some action
+                    if (indexShard.routingEntry().primary()) {
+                        String indexName = indexService.index().getName();
+                        if (indicesToCount.isEmpty() || indicesToCount.contains(indexName)) {
+                            long shardCount = indexShard.docStats().getCount();
+                            total += shardCount;
+                            if (indicesToCount.isEmpty() == false) {
+                                byIndices.compute(indexName, (k, v) -> v == null ? shardCount : v + shardCount);
+                            }
+                        }
+                    }
                 }
             }
 
-            channel.sendResponse(new MyCountActionResponse(total));
+            channel.sendResponse(new MyCountActionResponse(total, byIndices));
         }
     }
 

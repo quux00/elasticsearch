@@ -240,6 +240,8 @@ import org.elasticsearch.index.seqno.RetentionLeaseActions;
 import org.elasticsearch.indices.SystemIndices;
 import org.elasticsearch.indices.breaker.CircuitBreakerService;
 import org.elasticsearch.indices.store.TransportNodesListShardStoreMetadata;
+import org.elasticsearch.mycount.MyCountTransportAction;
+import org.elasticsearch.mycount.MyRestCountAction;
 import org.elasticsearch.persistent.CompletionPersistentTaskAction;
 import org.elasticsearch.persistent.RemovePersistentTaskAction;
 import org.elasticsearch.persistent.StartPersistentTaskAction;
@@ -632,6 +634,7 @@ public class ActionModule extends AbstractModule {
         actions.register(PrevalidateNodeRemovalAction.INSTANCE, TransportPrevalidateNodeRemovalAction.class);
         actions.register(HealthApiStatsAction.INSTANCE, HealthApiStatsTransportAction.class);
 
+        actions.register(MyCountTransportAction.TYPE, MyCountTransportAction.class);
         actions.register(TransportAddVotingConfigExclusionsAction.TYPE, TransportAddVotingConfigExclusionsAction.class);
         actions.register(TransportClearVotingConfigExclusionsAction.TYPE, TransportClearVotingConfigExclusionsAction.class);
         actions.register(TransportClusterAllocationExplainAction.TYPE, TransportClusterAllocationExplainAction.class);
@@ -831,6 +834,7 @@ public class ActionModule extends AbstractModule {
                 handler.routes().forEach(route -> restController.registerHandler(route, placeholderRestHandler));
             }
         };
+        registerHandler.accept(new MyRestCountAction());
         registerHandler.accept(new RestAddVotingConfigExclusionAction());
         registerHandler.accept(new RestClearVotingConfigExclusionsAction());
         registerHandler.accept(new RestNodesInfoAction(settingsFilter));
