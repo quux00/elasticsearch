@@ -9,13 +9,38 @@ setup:
         body:   { foo: bar }
 
   - do:
+      index:
+        index:  index2
+        id:     "2"
+        body:   { foo: quux }
+
+  - do:
       indices.refresh:
-        index: [test]
+        index: [test, index2]
 
 ---
-"my count total only":
+"my_count total only":
   - do:
-      count:
+      my_count: {}
+
+  - match: {count : 2}
+
+---
+"my_count count by index - one index":
+  - do:
+      my_count:
         name: test
 
   - match: {count : 1}
+  - match: {by-index.test : 1}
+  - is_false: by-index.index2
+
+---
+"my_count count by index - two indices":
+  - do:
+      my_count:
+        name: "test,index2"
+
+  - match: {count : 2}
+  - match: {by-index.test : 1}
+  - match: {by-index.index2 : 1}
