@@ -16,6 +16,7 @@ import org.elasticsearch.action.RemoteClusterActionType;
 import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.HandledTransportAction;
 import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.service.ClusterService;
@@ -39,6 +40,7 @@ import org.elasticsearch.transport.TransportResponseHandler;
 import org.elasticsearch.transport.TransportService;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
@@ -64,12 +66,14 @@ public class MyCountTransportAction extends HandledTransportAction<MyCountAction
     private final ClusterService clusterService;
     private final IndicesService indicesService;
     private final ThreadPool threadPool;
+    private final IndexNameExpressionResolver indexNameExpressionResolver;
 
     @Inject
     public MyCountTransportAction(
         TransportService transportService,
         ClusterService clusterService,
         IndicesService indicesService,
+        IndexNameExpressionResolver indexNameExpressionResolver,
         ThreadPool threadPool,
         ActionFilters actionFilters
     ) {
@@ -78,6 +82,7 @@ public class MyCountTransportAction extends HandledTransportAction<MyCountAction
         this.transportService = transportService;
         this.clusterService = clusterService;
         this.indicesService = indicesService;
+        this.indexNameExpressionResolver = indexNameExpressionResolver;
         this.threadPool = threadPool;
         transportService.registerRequestHandler(
             NODE_LEVEL_ACTION_NAME,
@@ -97,12 +102,16 @@ public class MyCountTransportAction extends HandledTransportAction<MyCountAction
         final AtomicLong totalDocCount = new AtomicLong();
         final Map<String, Long> countByIndices = new ConcurrentHashMap<>();
 
+        String[] concreteIndexNames = indexNameExpressionResolver.concreteIndexNames(clusterState, request);
+        System.err.println("YYY concreteIndexNames: " + Arrays.toString(concreteIndexNames));
+        System.err.println("YYY indexNames in request - changed?: " + request.getIndices());
+
         for (DiscoveryNode node : nodes) {
             // for every node, send a node level request and sum all of them
             transportService.sendChildRequest(
                 node,
                 NODE_LEVEL_ACTION_NAME,
-                new NodeLevelRequest(request.getIndices()),
+                new NodeLevelRequest(Arrays.stream(concreteIndexNames).toList()),
                 task,
                 TransportRequestOptions.EMPTY,
                 new TransportResponseHandler<NodeLevelResponse>() {
@@ -120,7 +129,7 @@ public class MyCountTransportAction extends HandledTransportAction<MyCountAction
                             countByIndices.compute(entry.getKey(), (k, v) -> v == null ? count : v + count);
                         }
                         if (countDown.countDown()) {
-                            listener.onResponse(new MyCountActionResponse(totalDocCount.get(), response.byIndexCounts));
+                            listener.onResponse(new MyCountActionResponse(totalDocCount.get(), countByIndices));
                         }
                     }
 

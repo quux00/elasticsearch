@@ -38,6 +38,10 @@ public class MyCountActionResponse extends ActionResponse implements ToXContentO
         return count;
     }
 
+    public Map<String, Long> getPerIndexCounts() {
+        return perIndexCounts;
+    }
+
     @Override
     public void writeTo(StreamOutput out) throws IOException {
         out.writeVLong(count);

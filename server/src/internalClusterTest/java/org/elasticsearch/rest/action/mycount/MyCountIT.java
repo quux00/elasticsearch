@@ -12,6 +12,7 @@ import org.elasticsearch.cluster.metadata.IndexMetadata;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.test.ESIntegTestCase;
 
+import java.io.IOException;
 import java.util.List;
 
 import static org.hamcrest.Matchers.equalTo;
@@ -59,4 +60,24 @@ public class MyCountIT extends ESIntegTestCase {
         assertThat(resp.getCount(), equalTo(numDocs));
     }
 
+    public void testSimpleNoReplicasWildCards() throws IOException {
+        internalCluster().ensureAtLeastNumDataNodes(2);
+        String indexName = "test2";
+        client().admin()
+            .indices()
+            .prepareCreate(indexName)
+            .setSettings(Settings.builder().put(IndexMetadata.INDEX_NUMBER_OF_REPLICAS_SETTING.getKey(), 0)) // add later
+            .get();
+        ensureGreen(indexName);
+        long numDocs = randomIntBetween(1, 100);
+        for (int i = 0; i < numDocs; i++) {
+            client().prepareIndex(indexName).setId("id-" + i).setSource("field", Integer.toString(i)).get();
+        }
+        client().admin().indices().prepareRefresh(indexName).get();
+        MyCountActionResponse resp = client().execute(MyCountTransportAction.TYPE, new MyCountActionRequest(List.of("*"))).actionGet();
+        assertThat(resp.getCount(), equalTo(numDocs));
+        System.err.println(resp.getPerIndexCounts());
+        assertThat(resp.getPerIndexCounts().size(), equalTo(1));
+        assertThat(resp.getPerIndexCounts().get(indexName), equalTo(numDocs));
+    }
 }
