@@ -1,0 +1,51 @@
+setup:
+  - do:
+      indices.create:
+        index:  test
+
+  - do:
+      indices.create:
+        index:  index2
+
+  - do:
+      index:
+        index:  test
+        id:     "1"
+        body:   { foo: bar }
+
+  - do:
+      index:
+        index:  index2
+        id:     "2"
+        body:   { foo: quux }
+
+  - do:
+      indices.refresh:
+        index: [test, index2]
+
+---
+"my_count total only":
+  - do:
+      my_count: {}
+
+  - match: {count : 2}
+
+---
+"my_count count by index - one index":
+  - do:
+      my_count:
+        name: test
+
+  - match: {count : 1}
+  - match: {by-index.test : 1}
+  - is_false: by-index.index2
+
+---
+"my_count count by index - two indices":
+  - do:
+      my_count:
+        name: "test,index2"
+
+  - match: {count : 2}
+  - match: {by-index.test : 1}
+  - match: {by-index.index2 : 1}

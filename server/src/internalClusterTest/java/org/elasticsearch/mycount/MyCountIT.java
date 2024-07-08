@@ -62,6 +62,53 @@ public class MyCountIT extends ESIntegTestCase {
         MyCountActionResponse resp = client().execute(MyCountTransportAction.TYPE, new MyCountActionRequest(List.of())).actionGet();
         assertNotNull("Response should not not null", resp);
         assertThat(resp.getCount(), equalTo(numDocs));
+        assertThat(resp.getCountByIndex().size(), equalTo(0));
+    }
+
+    public void testDocCountWithNoReplicasAndMultipleIndices() {
+        String indexName1 = "myindex";
+        String indexName2 = "stas";
+        client().admin()
+            .indices()
+            .prepareCreate(indexName1)
+            .setSettings(Settings.builder().put(IndexMetadata.INDEX_NUMBER_OF_REPLICAS_SETTING.getKey(), 0))
+            .get();
+        client().admin()
+            .indices()
+            .prepareCreate(indexName2)
+            .setSettings(Settings.builder().put(IndexMetadata.INDEX_NUMBER_OF_REPLICAS_SETTING.getKey(), 0))
+            .get();
+        ensureGreen(indexName1);
+        ensureGreen(indexName2);
+        long numDocs = randomIntBetween(1, 100);
+        for (int i = 0; i < numDocs; i++) {
+            client().prepareIndex(indexName1).setId("id-" + i).setSource("myfield", Integer.toString(i)).get();
+            client().prepareIndex(indexName2).setId("id-" + i).setSource("other_field", Integer.toString(i)).get();
+        }
+        client().admin().indices().prepareRefresh(indexName1).get();
+        client().admin().indices().prepareRefresh(indexName2).get();
+
+        {
+            MyCountActionResponse resp = client().execute(MyCountTransportAction.TYPE, new MyCountActionRequest(List.of(indexName1)))
+                .actionGet();
+            assertNotNull("Response should not not null", resp);
+            assertThat(resp.getCount(), equalTo(numDocs));
+            assertThat(resp.getCountByIndex().size(), equalTo(1));
+            System.err.println(numDocs);
+            assertThat(resp.getCountByIndex().get(indexName1), equalTo(numDocs));
+        }
+
+        {
+            MyCountActionResponse resp = client().execute(
+                MyCountTransportAction.TYPE,
+                new MyCountActionRequest(List.of(indexName1, indexName2))
+            ).actionGet();
+            assertNotNull("Response should not not null", resp);
+            assertThat(resp.getCount(), equalTo(numDocs * 2));
+            assertThat(resp.getCountByIndex().size(), equalTo(2));
+            assertThat(resp.getCountByIndex().get(indexName1), equalTo(numDocs));
+            assertThat(resp.getCountByIndex().get(indexName2), equalTo(numDocs));
+        }
     }
 
 }
