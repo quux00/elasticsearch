@@ -111,4 +111,23 @@ public class MyCountIT extends ESIntegTestCase {
         }
     }
 
+    public void testSimpleNoReplicasWildCards() {
+        internalCluster().ensureAtLeastNumDataNodes(2);
+        String indexName = "test2";
+        client().admin()
+            .indices()
+            .prepareCreate(indexName)
+            .setSettings(Settings.builder().put(IndexMetadata.INDEX_NUMBER_OF_REPLICAS_SETTING.getKey(), 0)) // add later
+            .get();
+        ensureGreen(indexName);
+        long numDocs = randomIntBetween(1, 100);
+        for (int i = 0; i < numDocs; i++) {
+            client().prepareIndex(indexName).setId("id-" + i).setSource("field", Integer.toString(i)).get();
+        }
+        client().admin().indices().prepareRefresh(indexName).get();
+        MyCountActionResponse resp = client().execute(MyCountTransportAction.TYPE, new MyCountActionRequest(List.of("*"))).actionGet();
+        assertThat(resp.getCount(), equalTo(numDocs));
+        assertThat(resp.getCountByIndex().size(), equalTo(1));
+        assertThat(resp.getCountByIndex().get(indexName), equalTo(numDocs));
+    }
 }

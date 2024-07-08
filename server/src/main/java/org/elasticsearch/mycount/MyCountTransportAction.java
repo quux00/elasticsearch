@@ -15,6 +15,7 @@ import org.elasticsearch.action.ActionType;
 import org.elasticsearch.action.support.ActionFilters;
 import org.elasticsearch.action.support.HandledTransportAction;
 import org.elasticsearch.cluster.ClusterState;
+import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.node.DiscoveryNodes;
 import org.elasticsearch.cluster.service.ClusterService;
@@ -56,12 +57,14 @@ public class MyCountTransportAction extends HandledTransportAction<MyCountAction
     private final ClusterService clusterService;
     private final IndicesService indicesService;
     private final ThreadPool threadPool;
+    private final IndexNameExpressionResolver indexNameExpressionResolver;
 
     @Inject
     public MyCountTransportAction(
         TransportService transportService,
         ClusterService clusterService,
         IndicesService indicesService,
+        IndexNameExpressionResolver indexNameExpressionResolver,
         ThreadPool threadPool,
         ActionFilters actionFilters
     ) {
@@ -70,6 +73,7 @@ public class MyCountTransportAction extends HandledTransportAction<MyCountAction
         this.transportService = transportService;
         this.clusterService = clusterService;
         this.indicesService = indicesService;
+        this.indexNameExpressionResolver = indexNameExpressionResolver;
         this.threadPool = threadPool;
 
         transportService.registerRequestHandler(
@@ -94,6 +98,9 @@ public class MyCountTransportAction extends HandledTransportAction<MyCountAction
         final AtomicLong totalDocCount = new AtomicLong(0);
         CountDown countDown = new CountDown(nodes.size());
         Map<String, Long> countByIndices = new ConcurrentHashMap<>();
+
+        String[] concreteIndexNames = indexNameExpressionResolver.concreteIndexNames(clusterState, request);
+        request.indices(concreteIndexNames);
 
         for (DiscoveryNode node : nodes) {
             transportService.sendChildRequest(
