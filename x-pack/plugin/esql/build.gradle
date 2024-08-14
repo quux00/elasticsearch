@@ -144,7 +144,9 @@ configurations {
 }
 
 dependencies {
-  regenerate "org.antlr:antlr4:${versions.antlr4}"
+  testImplementation project(path: ':server')
+  testImplementation project(path: ':server')
+    regenerate "org.antlr:antlr4:${versions.antlr4}"
 }
 
 String grammarPath = 'src/main/antlr'

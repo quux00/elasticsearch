@@ -17,6 +17,7 @@ import org.elasticsearch.core.Releasables;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
+import org.elasticsearch.xpack.esql.action.EsqlExecutionInfo;
 import org.elasticsearch.xpack.esql.action.EsqlQueryRequest;
 import org.elasticsearch.xpack.esql.analysis.Analyzer;
 import org.elasticsearch.xpack.esql.analysis.AnalyzerContext;
@@ -119,12 +120,15 @@ public class EsqlSession {
      */
     public void execute(
         EsqlQueryRequest request,
+        EsqlExecutionInfo executionInfo,
         BiConsumer<PhysicalPlan, ActionListener<Result>> runPhase,
         ActionListener<Result> listener
     ) {
+        System.err.println("---> XXX DEBUG 1 execute");
         LOGGER.debug("ESQL query:\n{}", request.query());
         analyzedPlan(
             parse(request.query(), request.params()),
+            executionInfo,
             listener.delegateFailureAndWrap((next, analyzedPlan) -> executeAnalyzedPlan(request, runPhase, analyzedPlan, next))
         );
     }
@@ -134,6 +138,7 @@ public class EsqlSession {
      * this is public for testing. See {@link Phased} for the sequence of operations.
      */
     public void executeAnalyzedPlan(
+        //EsqlExecutionInfo executionInfo,  // MP TODO: do we need this here? doesn't seem to be used
         EsqlQueryRequest request,
         BiConsumer<PhysicalPlan, ActionListener<Result>> runPhase,
         LogicalPlan analyzedPlan,
@@ -182,22 +187,24 @@ public class EsqlSession {
         return parsed;
     }
 
-    public void analyzedPlan(LogicalPlan parsed, ActionListener<LogicalPlan> listener) {
+    public void analyzedPlan(LogicalPlan parsed, EsqlExecutionInfo executionInfo, ActionListener<LogicalPlan> listener) {
         if (parsed.analyzed()) {
             listener.onResponse(parsed);
             return;
         }
 
         preAnalyze(parsed, (indices, policies) -> {
+            // MP TODO: indices is an IndexResolution object
             Analyzer analyzer = new Analyzer(new AnalyzerContext(configuration, functionRegistry, indices, policies), verifier);
-            var plan = analyzer.analyze(parsed);
+            LogicalPlan plan = analyzer.analyze(parsed);
             plan.setAnalyzed();
             LOGGER.debug("Analyzed plan:\n{}", plan);
-            return plan;
+            return plan; // MP TODO D33C7F4E-9A8A: I don't understand what this return is for - returning to where?
         }, listener);
     }
 
     private <T> void preAnalyze(LogicalPlan parsed, BiFunction<IndexResolution, EnrichResolution, T> action, ActionListener<T> listener) {
+        System.err.println("---> XXX DEBUG 2 preAnalyze");
         PreAnalyzer.PreAnalysis preAnalysis = preAnalyzer.preAnalyze(parsed);
         var unresolvedPolicies = preAnalysis.enriches.stream()
             .map(e -> new EnrichPolicyResolver.UnresolvedPolicy((String) e.policyName().fold(), e.mode()))
@@ -245,6 +252,8 @@ public class EsqlSession {
             TableInfo tableInfo = preAnalysis.indices.get(0);
             TableIdentifier table = tableInfo.id();
             var fieldNames = fieldNames(parsed, enrichPolicyMatchFields);
+            System.err.println("---> XXX DEBUG 5 preAnalyzeIndices");
+            // MP TODO this is where the field-caps call is done !!
             indexResolver.resolveAsMergedMapping(table.index(), fieldNames, listener);
         } else {
             try {

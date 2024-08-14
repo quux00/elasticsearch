@@ -17,16 +17,22 @@ import org.elasticsearch.common.Priority;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.settings.Setting;
 import org.elasticsearch.common.settings.Settings;
+import org.elasticsearch.common.util.CollectionUtils;
 import org.elasticsearch.compute.lucene.DataPartitioning;
 import org.elasticsearch.compute.operator.DriverProfile;
 import org.elasticsearch.compute.operator.exchange.ExchangeService;
 import org.elasticsearch.core.TimeValue;
+import org.elasticsearch.index.query.MatchAllQueryBuilder;
+import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.plugins.Plugin;
+import org.elasticsearch.plugins.SearchPlugin;
 import org.elasticsearch.test.AbstractMultiClustersTestCase;
 import org.elasticsearch.test.InternalTestCluster;
 import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.xpack.esql.plugin.EsqlPlugin;
 import org.elasticsearch.xpack.esql.plugin.QueryPragmas;
+import org.elasticsearch.xpack.esql.querydsl.query.SlowRunningQueryBuilder;
+import org.elasticsearch.xpack.esql.querydsl.query.ThrowingQueryBuilder;
 import org.junit.Before;
 
 import java.util.ArrayList;
@@ -55,6 +61,7 @@ public class CrossClustersQueryIT extends AbstractMultiClustersTestCase {
         List<Class<? extends Plugin>> plugins = new ArrayList<>(super.nodePlugins(clusterAlias));
         plugins.add(EsqlPlugin.class);
         plugins.add(InternalExchangePlugin.class);
+        plugins.add(TestQueryBuilderPlugin.class);
         return plugins;
     }
 
@@ -104,7 +111,10 @@ public class CrossClustersQueryIT extends AbstractMultiClustersTestCase {
     }
 
     public void testSimple() {
-        try (EsqlQueryResponse resp = runQuery("from logs-*,*:logs-* | stats sum (v)")) {
+        QueryBuilder slowRunningQueryBuilder = new SlowRunningQueryBuilder(8888L);
+        QueryBuilder throwingQueryBuilder = new ThrowingQueryBuilder(randomLong(), new IllegalStateException("index corrupted"), 0);
+
+        try (EsqlQueryResponse resp = runQuery("from logs-*,*:logs-* | stats sum (v)", throwingQueryBuilder)) {
             List<List<Object>> values = getValuesList(resp);
             assertThat(values, hasSize(1));
             assertThat(values.get(0), equalTo(List.of(330L)));
@@ -114,6 +124,26 @@ public class CrossClustersQueryIT extends AbstractMultiClustersTestCase {
             assertThat(values, hasSize(2));
             assertThat(values.get(0), equalTo(List.of("local")));
             assertThat(values.get(1), equalTo(List.of("remote")));
+        }
+    }
+
+    public static class TestQueryBuilderPlugin extends Plugin implements SearchPlugin {
+        public TestQueryBuilderPlugin() {}
+
+        @Override
+        public List<QuerySpec<?>> getQueries() {
+            QuerySpec<SlowRunningQueryBuilder> slowRunningSpec = new QuerySpec<>(
+                SlowRunningQueryBuilder.NAME,
+                SlowRunningQueryBuilder::new,
+                p -> {
+                    throw new IllegalStateException("not implemented");
+                }
+            );
+            QuerySpec<ThrowingQueryBuilder> throwingSpec = new QuerySpec<>(ThrowingQueryBuilder.NAME, ThrowingQueryBuilder::new, p -> {
+                throw new IllegalStateException("not implemented");
+            });
+
+            return List.of(slowRunningSpec, throwingSpec);
         }
     }
 
@@ -231,6 +261,14 @@ public class CrossClustersQueryIT extends AbstractMultiClustersTestCase {
     protected EsqlQueryResponse runQuery(String query) {
         EsqlQueryRequest request = EsqlQueryRequest.syncEsqlQueryRequest();
         request.query(query);
+        request.pragmas(AbstractEsqlIntegTestCase.randomPragmas());
+        return runQuery(request);
+    }
+
+    protected EsqlQueryResponse runQuery(String query, QueryBuilder filter) {
+        EsqlQueryRequest request = EsqlQueryRequest.syncEsqlQueryRequest();
+        request.query(query);
+        request.filter(filter);
         request.pragmas(AbstractEsqlIntegTestCase.randomPragmas());
         return runQuery(request);
     }

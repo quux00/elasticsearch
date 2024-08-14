@@ -29,6 +29,7 @@ import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.xpack.core.XPackPlugin;
 import org.elasticsearch.xpack.core.async.AsyncExecutionId;
 import org.elasticsearch.xpack.esql.action.ColumnInfoImpl;
+import org.elasticsearch.xpack.esql.action.EsqlExecutionInfo;
 import org.elasticsearch.xpack.esql.action.EsqlQueryAction;
 import org.elasticsearch.xpack.esql.action.EsqlQueryRequest;
 import org.elasticsearch.xpack.esql.action.EsqlQueryResponse;
@@ -160,11 +161,14 @@ public class TransportEsqlQueryAction extends HandledTransportAction<EsqlQueryRe
             request.tables()
         );
         String sessionId = sessionID(task);
+        EsqlExecutionInfo executionInfo = new EsqlExecutionInfo();
+        // MP TODO: this just sets up a closure/consumer to pass into planExecutor.esql below - it does no work
         BiConsumer<PhysicalPlan, ActionListener<Result>> runPhase = (physicalPlan, resultListener) -> computeService.execute(
             sessionId,
             (CancellableTask) task,
             physicalPlan,
             configuration,
+            executionInfo,
             resultListener
         );
 
@@ -173,6 +177,7 @@ public class TransportEsqlQueryAction extends HandledTransportAction<EsqlQueryRe
             sessionId,
             configuration,
             enrichPolicyResolver,
+            executionInfo,
             runPhase,
             listener.map(result -> toResponse(task, request, configuration, result))
         );

@@ -54,11 +54,13 @@ import org.elasticsearch.tasks.TaskCancelledException;
 import org.elasticsearch.threadpool.ThreadPool;
 import org.elasticsearch.transport.RemoteClusterAware;
 import org.elasticsearch.transport.RemoteClusterService;
+import org.elasticsearch.transport.RemoteConnectionInfo;
 import org.elasticsearch.transport.Transport;
 import org.elasticsearch.transport.TransportChannel;
 import org.elasticsearch.transport.TransportRequestHandler;
 import org.elasticsearch.transport.TransportRequestOptions;
 import org.elasticsearch.transport.TransportService;
+import org.elasticsearch.xpack.esql.action.EsqlExecutionInfo;
 import org.elasticsearch.xpack.esql.action.EsqlQueryAction;
 import org.elasticsearch.xpack.esql.enrich.EnrichLookupService;
 import org.elasticsearch.xpack.esql.plan.physical.ExchangeSinkExec;
@@ -80,6 +82,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.stream.Stream;
 
 import static org.elasticsearch.xpack.esql.plugin.EsqlPlugin.ESQL_WORKER_THREAD_POOL_NAME;
 
@@ -132,6 +135,7 @@ public class ComputeService {
         CancellableTask rootTask,
         PhysicalPlan physicalPlan,
         EsqlConfiguration configuration,
+        EsqlExecutionInfo executionInfo,
         ActionListener<Result> listener
     ) {
         Tuple<PhysicalPlan, PhysicalPlan> coordinatorAndDataNodePlan = PlannerUtils.breakPlanBetweenCoordinatorAndDataNode(
@@ -169,6 +173,7 @@ public class ComputeService {
                 null
             );
             try (
+                // MP TODO 94161540-AB74: I don't understand this code path
                 var computeListener = new ComputeListener(
                     transportService,
                     rootTask,
@@ -194,6 +199,7 @@ public class ComputeService {
             queryPragmas.exchangeBufferSize(),
             transportService.getThreadPool().executor(ThreadPool.Names.SEARCH)
         );
+        System.err.println("DEBUG 13: CREATING RESULT .......: ");
         try (
             Releasable ignored = exchangeSource.addEmptySink();
             var computeListener = new ComputeListener(
@@ -252,6 +258,8 @@ public class ComputeService {
                 throw new IllegalStateException("can't find original indices for cluster " + clusterAlias);
             }
             if (concreteIndices.indices().length > 0) {
+                boolean skipUnavailable = remoteClusterService.isSkipUnavailable(clusterAlias);
+                System.err.printf("+++ skipUnavailable=%s for cluster [%s]\n", skipUnavailable, clusterAlias);
                 Transport.Connection connection = remoteClusterService.getConnection(clusterAlias);
                 remoteClusters.add(new RemoteCluster(clusterAlias, connection, concreteIndices.indices(), originalIndices.indices()));
             }
@@ -283,6 +291,7 @@ public class ComputeService {
         // but it would be better to have a proper impl.
         QueryBuilder requestFilter = PlannerUtils.requestFilter(planWithReducer, x -> true);
         var lookupListener = ActionListener.releaseAfter(computeListener.acquireAvoid(), exchangeSource.addEmptySink());
+        // MP TODO: SearchShards API is called here lookupDataNodes
         lookupDataNodes(parentTask, clusterAlias, requestFilter, concreteIndices, originalIndices, ActionListener.wrap(dataNodes -> {
             try (RefCountingListener refs = new RefCountingListener(lookupListener)) {
                 // For each target node, first open a remote exchange on the remote node, then link the exchange source to
@@ -500,6 +509,7 @@ public class ComputeService {
 
     }
 
+    // MP TODO: does this need to have skipUnavailable added to it?
     record RemoteCluster(String clusterAlias, Transport.Connection connection, String[] concreteIndices, String[] originalIndices) {
 
     }
@@ -557,6 +567,7 @@ public class ComputeService {
         );
         try (ThreadContext.StoredContext ignored = threadContext.newStoredContextPreservingResponseHeaders()) {
             threadContext.markAsSystemContext();
+            System.err.println("+++ DEBUG 100: SearchShardsRequest being sent for : " + clusterAlias);
             SearchShardsRequest searchShardsRequest = new SearchShardsRequest(
                 originalIndices,
                 SearchRequest.DEFAULT_INDICES_OPTIONS,
