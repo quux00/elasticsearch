@@ -122,6 +122,7 @@ public class EsqlSession {
         BiConsumer<PhysicalPlan, ActionListener<Result>> runPhase,
         ActionListener<Result> listener
     ) {
+        System.err.println("---> XXX DEBUG 1 EsqlSession execute");
         LOGGER.debug("ESQL query:\n{}", request.query());
         analyzedPlan(
             parse(request.query(), request.params()),
@@ -198,6 +199,7 @@ public class EsqlSession {
     }
 
     private <T> void preAnalyze(LogicalPlan parsed, BiFunction<IndexResolution, EnrichResolution, T> action, ActionListener<T> listener) {
+        System.err.println("---> XXX DEBUG 2 EsqlSession preAnalyze");
         PreAnalyzer.PreAnalysis preAnalysis = preAnalyzer.preAnalyze(parsed);
         var unresolvedPolicies = preAnalysis.enriches.stream()
             .map(e -> new EnrichPolicyResolver.UnresolvedPolicy((String) e.policyName().fold(), e.mode()))
@@ -245,6 +247,8 @@ public class EsqlSession {
             TableInfo tableInfo = preAnalysis.indices.get(0);
             TableIdentifier table = tableInfo.id();
             var fieldNames = fieldNames(parsed, enrichPolicyMatchFields);
+            System.err.println("---> XXX DEBUG 5 EsqlSession preAnalyzeIndices");
+            // MP TODO this is where the field-caps call is done !!
             indexResolver.resolveAsMergedMapping(table.index(), fieldNames, listener);
         } else {
             try {

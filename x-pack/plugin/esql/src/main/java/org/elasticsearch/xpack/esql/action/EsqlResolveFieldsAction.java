@@ -9,6 +9,7 @@ package org.elasticsearch.xpack.esql.action;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.ActionType;
 import org.elasticsearch.action.RemoteClusterActionType;
+import org.elasticsearch.action.fieldcaps.FieldCapabilitiesIndexResponse;
 import org.elasticsearch.action.fieldcaps.FieldCapabilitiesRequest;
 import org.elasticsearch.action.fieldcaps.FieldCapabilitiesResponse;
 import org.elasticsearch.action.fieldcaps.TransportFieldCapabilitiesAction;
@@ -18,6 +19,9 @@ import org.elasticsearch.common.util.concurrent.EsExecutors;
 import org.elasticsearch.injection.guice.Inject;
 import org.elasticsearch.tasks.Task;
 import org.elasticsearch.transport.TransportService;
+
+import java.util.Arrays;
+import java.util.List;
 
 /**
  * A fork of the field-caps API for ES|QL. This fork allows us to gradually introduce features and optimizations to this internal
@@ -47,6 +51,28 @@ public class EsqlResolveFieldsAction extends HandledTransportAction<FieldCapabil
 
     @Override
     protected void doExecute(Task task, FieldCapabilitiesRequest request, final ActionListener<FieldCapabilitiesResponse> listener) {
-        fieldCapsAction.executeRequest(task, request, REMOTE_TYPE, listener);
+        // fieldCapsAction.executeRequest(task, request, REMOTE_TYPE, listener);
+
+        // MP TODO -- added
+        List<String> indicesList = Arrays.asList(request.indices());
+        System.err.println("---> XXX DEBUG 7 EsqlResolveFieldsAction - calling fieldCapsAction.executeRequest for indices: " + indicesList);
+
+        ActionListener<FieldCapabilitiesResponse> loggingListener = new ActionListener<>() {
+            @Override
+            public void onResponse(FieldCapabilitiesResponse response) {
+                for (FieldCapabilitiesIndexResponse idxResponse : response.getIndexResponses()) {
+                    String indexName = idxResponse.getIndexName();
+                    System.err.printf("--> DEBUG 7b: FieldCaps Response: index:[%s]; can_match=%s\n", indexName, idxResponse.canMatch());
+                }
+                listener.onResponse(response);
+            }
+
+            @Override
+            public void onFailure(Exception e) {
+                listener.onFailure(e);
+            }
+        };
+        fieldCapsAction.executeRequest(task, request, REMOTE_TYPE, loggingListener);
+        // MP TODO -- end
     }
 }

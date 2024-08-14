@@ -222,4 +222,22 @@ public final class FieldCapabilitiesIndexResponse implements Writeable {
     public int hashCode() {
         return Objects.hash(indexName, indexMappingHash, responseMap, canMatch);
     }
+
+    @Override
+    public String toString() {
+        return "FieldCapabilitiesIndexResponse{"
+            + "indexName='"
+            + indexName
+            + '\''
+            + ", indexMappingHash='"
+            + indexMappingHash
+            + '\''
+            + ", responseMap="
+            + responseMap
+            + ", canMatch="
+            + canMatch
+            + ", originVersion="
+            + originVersion
+            + '}';
+    }
 }

@@ -99,4 +99,9 @@ public class FieldCapabilitiesFailure implements Writeable, ToXContentObject {
         this.indices.add(index);
         return this;
     }
+
+    @Override
+    public String toString() {
+        return "FieldCapabilitiesFailure{" + "indices=" + indices + ", exception=" + exception + '}';
+    }
 }

@@ -74,6 +74,7 @@ public class IndexResolver {
      * Resolves a pattern to one (potentially compound meaning that spawns multiple indices) mapping.
      */
     public void resolveAsMergedMapping(String indexWildcard, Set<String> fieldNames, ActionListener<IndexResolution> listener) {
+        System.err.println("---> XXX DEBUG 6 resolveAsMergedMapping - calling field caps");
         client.execute(
             EsqlResolveFieldsAction.TYPE,
             createFieldCapsRequest(indexWildcard, fieldNames),
@@ -83,6 +84,7 @@ public class IndexResolver {
 
     // public for testing only
     public IndexResolution mergedMappings(String indexPattern, FieldCapabilitiesResponse fieldCapsResponse) {
+        System.err.println("+++ *** fieldCapsResponse failures: " + fieldCapsResponse.getFailures());
         assert ThreadPool.assertCurrentThreadPool(ThreadPool.Names.SEARCH_COORDINATION); // too expensive to run this on a transport worker
         if (fieldCapsResponse.getIndexResponses().isEmpty()) {
             return IndexResolution.notFound(indexPattern);
@@ -266,6 +268,7 @@ public class IndexResolver {
     private static FieldCapabilitiesRequest createFieldCapsRequest(String index, Set<String> fieldNames) {
         FieldCapabilitiesRequest req = new FieldCapabilitiesRequest().indices(Strings.commaDelimitedListToStringArray(index));
         req.fields(fieldNames.toArray(String[]::new));
+        System.err.printf("+++ fieldCaps being called with: index:[%s], fields:[%s]\n", index, fieldNames);
         req.includeUnmapped(true);
         // lenient because we throw our own errors looking at the response e.g. if something was not resolved
         // also because this way security doesn't throw authorization exceptions but rather honors ignore_unavailable

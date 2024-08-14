@@ -238,6 +238,7 @@ public class TransportFieldCapabilitiesAction extends HandledTransportAction<Fie
             for (Map.Entry<String, OriginalIndices> remoteIndices : remoteClusterIndices.entrySet()) {
                 String clusterAlias = remoteIndices.getKey();
                 OriginalIndices originalIndices = remoteIndices.getValue();
+                System.err.println("+++ TransportFieldCaps calling: " + clusterAlias);
                 var remoteClusterClient = transportService.getRemoteClusterService()
                     .getRemoteClusterClient(
                         clusterAlias,
