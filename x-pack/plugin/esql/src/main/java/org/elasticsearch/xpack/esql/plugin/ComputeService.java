@@ -170,7 +170,7 @@ public class ComputeService {
                 null
             );
             try (
-                // MP TODO 94161540-AB74: I don't understand this code path
+                // MP TODO 94161540-AB74: I don't understand this code path - run plan on coordinator only
                 var computeListener = new ComputeListener(
                     transportService,
                     rootTask,
@@ -198,6 +198,7 @@ public class ComputeService {
         );
         try (
             Releasable ignored = exchangeSource.addEmptySink();
+            // MP TODO: top level ComputeListener
             var computeListener = new ComputeListener(transportService, rootTask, listener.map(r -> {
                 System.err.println("DEBUG 13: CREATING RESULT .......: ");
                 // MP TODO: neither the ComputeResponse, nor the DriverProfiles identify which cluster this comes from - how identify that?
@@ -358,6 +359,7 @@ public class ComputeService {
                         // MP TODO: what is this intermediate "clusterListener" ActionListener for? Why do we pass null to onResponse?
                         // MP TODO: this is the only listener that is specific to each remote cluster, so do we need add logic to this
                         // MP TODO: handler to record metadata about each cluster?
+                        // will return a ComputeResponse to the coordinating cluster
                         var clusterListener = ActionListener.runBefore(computeListener.acquireCompute(), () -> l.onResponse(null));
                         transportService.sendChildRequest(
                             cluster.connection,
@@ -503,6 +505,7 @@ public class ComputeService {
         }
     }
 
+    // MP TODO: extend DataNode
     record DataNode(Transport.Connection connection, List<ShardId> shardIds, Map<Index, AliasFilter> aliasFilters) {
 
     }
@@ -519,6 +522,7 @@ public class ComputeService {
      * Ideally, the search_shards API should be called before the field-caps API; however, this can lead
      * to a situation where the column structure (i.e., matched data types) differs depending on the query.
      */
+    // MP TODO: determine number of shards/nodes
     private void lookupDataNodes(
         Task parentTask,
         String clusterAlias,
@@ -760,7 +764,7 @@ public class ComputeService {
 
     public static final String CLUSTER_ACTION_NAME = EsqlQueryAction.NAME + "/cluster";
 
-    // MP TODO: is this running on the remote cluster or the querying coordinator?
+    // MP TODO: is this running on the remote cluster or the querying coordinator? A: On remote cluster
     private class ClusterRequestHandler implements TransportRequestHandler<ClusterComputeRequest> {
         @Override
         public void messageReceived(ClusterComputeRequest request, TransportChannel channel, Task task) {

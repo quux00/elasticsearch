@@ -8,6 +8,7 @@
 package org.elasticsearch.xpack.esql.execution;
 
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.xpack.esql.action.EsqlExecutionInfo;
 import org.elasticsearch.xpack.esql.action.EsqlQueryRequest;
 import org.elasticsearch.xpack.esql.analysis.PreAnalyzer;
 import org.elasticsearch.xpack.esql.analysis.Verifier;
@@ -67,7 +68,8 @@ public class PlanExecutor {
         );
         QueryMetric clientId = QueryMetric.fromString("rest");
         metrics.total(clientId);
-        session.execute(request, runPhase, wrap(listener::onResponse, ex -> {
+        EsqlExecutionInfo executionInfoBogus = new EsqlExecutionInfo(); // MP TODO: need to grab this as param to this method
+        session.execute(request, executionInfoBogus, runPhase, wrap(listener::onResponse, ex -> {
             // TODO when we decide if we will differentiate Kibana from REST, this String value will likely come from the request
             metrics.failed(clientId);
             listener.onFailure(ex);

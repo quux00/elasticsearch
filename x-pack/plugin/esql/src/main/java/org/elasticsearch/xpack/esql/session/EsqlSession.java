@@ -120,6 +120,7 @@ public class EsqlSession {
      */
     public void execute(
         EsqlQueryRequest request,
+        EsqlExecutionInfo executionInfo,
         BiConsumer<PhysicalPlan, ActionListener<Result>> runPhase,
         ActionListener<Result> listener
     ) {
@@ -203,6 +204,7 @@ public class EsqlSession {
             LOGGER.debug("Analyzed plan:\n{}", plan);
             System.err.println("___ MP TODO: here is where we would add clusterAliasesWithErrors to ExecutionInfo");
             for (String clusterWithError : indices.getClusterAliasesWithErrors()) {
+                // MP TODO: could also pass the EsqlExecutionInfo into the IndexResolver?
                 EsqlExecutionInfo.Cluster cluster = executionInfo.getCluster(clusterWithError);
                 EsqlExecutionInfo.Cluster.Builder builder = new EsqlExecutionInfo.Cluster.Builder(cluster);
                 if (cluster.isSkipUnavailable()) {

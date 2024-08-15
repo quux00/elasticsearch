@@ -40,8 +40,13 @@ final class ComputeListener implements Releasable {
     private final TransportService transportService;
     private final List<DriverProfile> collectedProfiles;
     private final ResponseHeadersCollector responseHeaders;
+    // TODO: may want to add ExecutionInfo here as instance var
 
-    ComputeListener(TransportService transportService, CancellableTask task, ActionListener<ComputeResponse> delegate) {
+    ComputeListener(
+        TransportService transportService,
+        CancellableTask task, /*EsqlExecutionInfo executionInfo, */
+        ActionListener<ComputeResponse> delegate
+    ) {
         this.transportService = transportService;
         this.task = task;
         this.responseHeaders = new ResponseHeadersCollector(transportService.getThreadPool().getThreadContext());
@@ -73,7 +78,7 @@ final class ComputeListener implements Releasable {
     /**
      * Acquires a new listener that collects compute result. This listener will also collects warnings emitted during compute
      */
-    ActionListener<ComputeResponse> acquireCompute() {
+    ActionListener<ComputeResponse> acquireCompute(/*String clusterAlias*/) {  // MP TODO: could pass in clusterAlias here
         return acquireAvoid().map(resp -> {
             responseHeaders.collect();
             var profiles = resp.getProfiles();
