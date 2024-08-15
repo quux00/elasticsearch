@@ -129,7 +129,9 @@ public class EsqlSession {
         analyzedPlan(
             parse(request.query(), request.params()),
             executionInfo,
-            listener.delegateFailureAndWrap((next, analyzedPlan) -> executeAnalyzedPlan(request, runPhase, analyzedPlan, next))
+            listener.delegateFailureAndWrap(
+                (next, analyzedPlan) -> executeAnalyzedPlan(request, executionInfo, runPhase, analyzedPlan, next)
+            )
         );
     }
 
@@ -139,6 +141,7 @@ public class EsqlSession {
      */
     public void executeAnalyzedPlan(
         EsqlQueryRequest request,
+        EsqlExecutionInfo executionInfo,
         BiConsumer<PhysicalPlan, ActionListener<Result>> runPhase,
         LogicalPlan analyzedPlan,
         ActionListener<Result> listener
@@ -147,12 +150,13 @@ public class EsqlSession {
         if (firstPhase == null) {
             runPhase.accept(logicalPlanToPhysicalPlan(analyzedPlan, request), listener);
         } else {
-            executePhased(new ArrayList<>(), analyzedPlan, request, firstPhase, runPhase, listener);
+            executePhased(new ArrayList<>(), executionInfo, analyzedPlan, request, firstPhase, runPhase, listener);
         }
     }
 
     private void executePhased(
         List<DriverProfile> profileAccumulator,
+        EsqlExecutionInfo executionInfo,
         LogicalPlan mainPlan,
         EsqlQueryRequest request,
         LogicalPlan firstPhase,
@@ -172,7 +176,7 @@ public class EsqlSession {
                         finalListener.onResponse(new Result(finalResult.schema(), finalResult.pages(), profileAccumulator));
                     }));
                 } else {
-                    executePhased(profileAccumulator, newMainPlan, request, newFirstPhase, runPhase, next);
+                    executePhased(profileAccumulator, executionInfo, newMainPlan, request, newFirstPhase, runPhase, next);
                 }
             } finally {
                 Releasables.closeExpectNoException(Releasables.wrap(Iterators.map(result.pages().iterator(), p -> p::releaseBlocks)));

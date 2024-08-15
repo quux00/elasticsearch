@@ -170,6 +170,7 @@ public class TransportEsqlQueryAction extends HandledTransportAction<EsqlQueryRe
         BiConsumer<PhysicalPlan, ActionListener<Result>> runPhase = (physicalPlan, resultListener) -> computeService.execute(
             sessionId,
             (CancellableTask) task,
+            executionInfo,
             physicalPlan,
             configuration,
             resultListener

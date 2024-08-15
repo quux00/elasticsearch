@@ -25,8 +25,7 @@ import java.util.Locale;
 import java.util.Map;
 
 /**
- * Holds execute metadata about ES|QL queries.
- * Wraps the EsqlQueryRequest. (MP TODO: do we really need to wrap the request?)
+ * Holds execution metadata about ES|QL queries.
  */
 public class EsqlExecutionInfo {
     // for cross-cluster scenarios where cluster names are shown in API responses, use this string
@@ -34,8 +33,6 @@ public class EsqlExecutionInfo {
     public static final String LOCAL_CLUSTER_NAME_REPRESENTATION = "(local)";
 
     public final Map<String, Cluster> clusters;
-
-    // private final EsqlQueryRequest esqlQueryRequest;
 
     public EsqlExecutionInfo() {
         this.clusters = ConcurrentCollections.newConcurrentMap();  // MP TODO: does this need to be a ConcurrentHashMap
@@ -50,13 +47,10 @@ public class EsqlExecutionInfo {
         clusters.put(cluster.getClusterAlias(), cluster);
     }
 
-    // public EsqlExecutionInfo(EsqlQueryRequest request) {
-    // this.esqlQueryRequest = request;
-    // }
-
-    // public EsqlQueryRequest getRequest() {
-    // return esqlQueryRequest;
-    // }
+    @Override
+    public String toString() {
+        return "EsqlExecutionInfo{" + "clusters=" + clusters + '}';
+    }
 
     public static class Cluster implements ToXContentFragment, Writeable {
         public static final ParseField INDICES_FIELD = new ParseField("indices");

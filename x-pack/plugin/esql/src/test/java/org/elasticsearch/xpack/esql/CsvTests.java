@@ -47,6 +47,7 @@ import org.elasticsearch.xpack.core.enrich.EnrichPolicy;
 import org.elasticsearch.xpack.esql.CsvTestUtils.ActualResults;
 import org.elasticsearch.xpack.esql.CsvTestUtils.Type;
 import org.elasticsearch.xpack.esql.action.EsqlCapabilities;
+import org.elasticsearch.xpack.esql.action.EsqlExecutionInfo;
 import org.elasticsearch.xpack.esql.action.EsqlQueryRequest;
 import org.elasticsearch.xpack.esql.analysis.Analyzer;
 import org.elasticsearch.xpack.esql.analysis.AnalyzerContext;
@@ -417,6 +418,7 @@ public class CsvTests extends ESTestCase {
 
         session.executeAnalyzedPlan(
             new EsqlQueryRequest(),
+            new EsqlExecutionInfo(),
             runPhase(bigArrays, physicalOperationProviders),
             analyzed,
             listener.delegateFailureAndWrap(

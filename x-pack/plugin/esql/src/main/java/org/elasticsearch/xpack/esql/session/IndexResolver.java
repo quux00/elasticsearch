@@ -166,12 +166,12 @@ public class IndexResolver {
                     new EsqlExecutionInfo.Cluster.Builder(cluster).setStatus(EsqlExecutionInfo.Cluster.Status.SKIPPED).build()
                 );
             } else {
+                // MP TODO FIXME - causes a 500 - is that what we want to return? What is returned in search when skip_unavailable=false?
                 throw new IllegalStateException(
                     "Placeholder error for failing an ESQL search. Required remote cluster could not be contacted:" + clusterAlias
                 );
             }
         }
-
         // MP TODO -- end
 
         // Build hierarchical fields - it's easier to do it in sorted order so the object fields come first.

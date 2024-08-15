@@ -56,6 +56,7 @@ import org.elasticsearch.transport.TransportChannel;
 import org.elasticsearch.transport.TransportRequestHandler;
 import org.elasticsearch.transport.TransportRequestOptions;
 import org.elasticsearch.transport.TransportService;
+import org.elasticsearch.xpack.esql.action.EsqlExecutionInfo;
 import org.elasticsearch.xpack.esql.action.EsqlQueryAction;
 import org.elasticsearch.xpack.esql.action.EsqlSearchShardsAction;
 import org.elasticsearch.xpack.esql.enrich.EnrichLookupService;
@@ -131,10 +132,14 @@ public class ComputeService {
     public void execute(
         String sessionId,
         CancellableTask rootTask,
+        EsqlExecutionInfo executionInfo,
         PhysicalPlan physicalPlan,
         Configuration configuration,
         ActionListener<Result> listener
     ) {
+        System.err.println("-------------------------------------");
+        System.err.println("====== ComputeService execute: executionInfo: " + executionInfo);
+        System.err.println("-------------------------------------");
         Tuple<PhysicalPlan, PhysicalPlan> coordinatorAndDataNodePlan = PlannerUtils.breakPlanBetweenCoordinatorAndDataNode(
             physicalPlan,
             configuration
