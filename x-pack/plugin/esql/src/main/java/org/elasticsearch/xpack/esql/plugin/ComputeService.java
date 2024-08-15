@@ -179,7 +179,7 @@ public class ComputeService {
                 var computeListener = new ComputeListener(
                     transportService,
                     rootTask,
-                    listener.map(r -> new Result(physicalPlan.output(), collectedPages, r.getProfiles()))
+                    listener.map(r -> new Result(physicalPlan.output(), collectedPages, r.getProfiles(), executionInfo))
                 )
             ) {
                 runCompute(rootTask, computeContext, coordinatorPlan, computeListener.acquireCompute());
@@ -208,7 +208,7 @@ public class ComputeService {
                 System.err.println("DEBUG 13: CREATING RESULT .......: ");
                 // MP TODO: neither the ComputeResponse, nor the DriverProfiles identify which cluster this comes from - how identify that?
                 // MP TODO: This ComputeListener is called once at the end once all
-                return new Result(physicalPlan.output(), collectedPages, r.getProfiles());
+                return new Result(physicalPlan.output(), collectedPages, r.getProfiles(), executionInfo);
             }))
         ) {
             // run compute on the coordinator
