@@ -22,6 +22,7 @@ import org.elasticsearch.transport.ConnectTransportException;
 import org.elasticsearch.transport.NoSeedNodeLeftException;
 import org.elasticsearch.transport.NoSuchRemoteClusterException;
 import org.elasticsearch.transport.RemoteClusterAware;
+import org.elasticsearch.xpack.esql.action.EsqlExecutionInfo;
 import org.elasticsearch.xpack.esql.action.EsqlResolveFieldsAction;
 import org.elasticsearch.xpack.esql.core.type.DataType;
 import org.elasticsearch.xpack.esql.core.type.DateEsField;
@@ -79,12 +80,17 @@ public class IndexResolver {
     /**
      * Resolves a pattern to one (potentially compound meaning that spawns multiple indices) mapping.
      */
-    public void resolveAsMergedMapping(String indexWildcard, Set<String> fieldNames, ActionListener<IndexResolution> listener) {
+    public void resolveAsMergedMapping(
+        String indexWildcard,
+        Set<String> fieldNames,
+        EsqlExecutionInfo executionInfo,
+        ActionListener<IndexResolution> listener
+    ) {
         System.err.println("---> XXX DEBUG 6 resolveAsMergedMapping - calling field caps");
         client.execute(
             EsqlResolveFieldsAction.TYPE,
             createFieldCapsRequest(indexWildcard, fieldNames),
-            listener.delegateFailureAndWrap((l, response) -> l.onResponse(mergedMappings(indexWildcard, response)))
+            listener.delegateFailureAndWrap((l, response) -> l.onResponse(mergedMappings(indexWildcard, executionInfo, response)))
         );
     }
 
@@ -107,20 +113,20 @@ public class IndexResolver {
     }
 
     // public for testing only
-    public IndexResolution mergedMappings(String indexPattern, FieldCapabilitiesResponse fieldCapsResponse) {
+    public IndexResolution mergedMappings(String indexPattern, EsqlExecutionInfo executionInfo, FieldCapabilitiesResponse response) {
         // MP TODO -- added start
         System.err.println("+++ ***IR mergedMappings indexPattern: " + indexPattern);
-        System.err.println("+++ ***IR fieldCapsResponse failures: " + fieldCapsResponse.getFailures());
-        System.err.println("+++ ***IR fieldCapsResponse indices: " + Arrays.asList(fieldCapsResponse.getIndices()));
-        System.err.println("+++ ***IR fieldCapsResponse failed indices count: " + fieldCapsResponse.getFailedIndicesCount());
+        System.err.println("+++ ***IR fieldCapsResponse failures: " + response.getFailures());
+        System.err.println("+++ ***IR fieldCapsResponse indices: " + Arrays.asList(response.getIndices()));
+        System.err.println("+++ ***IR fieldCapsResponse failed indices count: " + response.getFailedIndicesCount());
 
-        for (FieldCapabilitiesFailure failure : fieldCapsResponse.getFailures()) {
+        for (FieldCapabilitiesFailure failure : response.getFailures()) {
             System.err.println("+++ F***IR fieldCapsResponse indices: " + Arrays.asList(failure.getIndices()));
             isRemoteUnavailable(failure.getException());
             System.err.println("isRemoteUnavailable(failure.getException()): " + isRemoteUnavailable(failure.getException()));
         }
 
-        for (FieldCapabilitiesIndexResponse idxResponse : fieldCapsResponse.getIndexResponses()) {
+        for (FieldCapabilitiesIndexResponse idxResponse : response.getIndexResponses()) {
             String indexName = idxResponse.getIndexName();
             System.err.printf("--> ***IR: FieldCaps Response: index:[%s]; can_match=%s\n", indexName, idxResponse.canMatch());
         }
@@ -128,24 +134,44 @@ public class IndexResolver {
 
         // MP TODO: this is where I need to add field-caps failure info to IndexResolution
         assert ThreadPool.assertCurrentThreadPool(ThreadPool.Names.SEARCH_COORDINATION); // too expensive to run this on a transport worker
-        if (fieldCapsResponse.getIndexResponses().isEmpty()) {
+        if (response.getIndexResponses().isEmpty()) {
             return IndexResolution.notFound(indexPattern);
         }
 
-        Map<String, List<IndexFieldCapabilities>> fieldsCaps = collectFieldCaps(fieldCapsResponse);
+        Map<String, List<IndexFieldCapabilities>> fieldsCaps = collectFieldCaps(response);
         Set<String> clusterAliasesWithErrors = new HashSet<>();
         // MP TODO -- added
-        if (fieldCapsResponse.getFailures() != null && fieldCapsResponse.getFailures().isEmpty() == false) {
-            for (FieldCapabilitiesFailure failure : fieldCapsResponse.getFailures()) {
+        if (response.getFailures() != null && response.getFailures().isEmpty() == false) {
+            for (FieldCapabilitiesFailure failure : response.getFailures()) {
                 if (isRemoteUnavailable(failure.getException())) {
                     for (String indexExpression : failure.getIndices()) {
                         if (indexExpression.indexOf(RemoteClusterAware.REMOTE_CLUSTER_INDEX_SEPARATOR) > 0) {
-                            clusterAliasesWithErrors.add(parseClusterAlias(indexExpression));
+                            String clusterAlias = parseClusterAlias(indexExpression);
+                            // MP TODO: is it possible to get the same cluster twice here (what if you put a cluster twice in the
+                            // field-caps?)
+                            System.err.println("555 DEBUG 555: mergedMappings: error for cluster: " + clusterAlias);
+                            clusterAliasesWithErrors.add(clusterAlias);
                         }
                     }
                 }
             }
         }
+
+        for (String clusterAlias : clusterAliasesWithErrors) {
+            EsqlExecutionInfo.Cluster cluster = executionInfo.getCluster(clusterAlias);
+            assert cluster != null : "EsqlExecutionInfo was set up incorrectly; null entry for cluster: " + clusterAlias;
+            if (cluster.isSkipUnavailable()) {
+                System.err.println("555 DEBUG 666: marking cluster as SKIPPED: " + clusterAlias);
+                executionInfo.swapCluster(
+                    new EsqlExecutionInfo.Cluster.Builder(cluster).setStatus(EsqlExecutionInfo.Cluster.Status.SKIPPED).build()
+                );
+            } else {
+                throw new IllegalStateException(
+                    "Placeholder error for failing an ESQL search. Required remote cluster could not be contacted:" + clusterAlias
+                );
+            }
+        }
+
         // MP TODO -- end
 
         // Build hierarchical fields - it's easier to do it in sorted order so the object fields come first.
@@ -188,7 +214,7 @@ public class IndexResolver {
             // TODO we're careful to make isAlias match IndexResolver - but do we use it?
 
             EsField field = firstUnsupportedParent == null
-                ? createField(fieldCapsResponse, name, fullName, caps, isAlias)
+                ? createField(response, name, fullName, caps, isAlias)
                 : new UnsupportedEsField(
                     fullName,
                     firstUnsupportedParent.getOriginalType(),
@@ -199,29 +225,21 @@ public class IndexResolver {
         }
 
         boolean allEmpty = true;
-        for (FieldCapabilitiesIndexResponse ir : fieldCapsResponse.getIndexResponses()) {
+        for (FieldCapabilitiesIndexResponse ir : response.getIndexResponses()) {
             allEmpty &= ir.get().isEmpty();
         }
         if (allEmpty) {
             // If all the mappings are empty we return an empty set of resolved indices to line up with QL
             EsIndex esIndex = new EsIndex(indexPattern, rootFields, Set.of());
-            if (clusterAliasesWithErrors.isEmpty()) {
-                return IndexResolution.valid(esIndex);
-            } else {
-                return IndexResolution.validWithSkippedRemotes(esIndex, new ArrayList<>(clusterAliasesWithErrors));
-            }
+            return IndexResolution.valid(esIndex);
         }
 
-        Set<String> concreteIndices = new HashSet<>(fieldCapsResponse.getIndexResponses().size());
-        for (FieldCapabilitiesIndexResponse ir : fieldCapsResponse.getIndexResponses()) {
+        Set<String> concreteIndices = new HashSet<>(response.getIndexResponses().size());
+        for (FieldCapabilitiesIndexResponse ir : response.getIndexResponses()) {
             concreteIndices.add(ir.getIndexName());
         }
         EsIndex esIndex = new EsIndex(indexPattern, rootFields, concreteIndices);
-        if (clusterAliasesWithErrors.isEmpty()) {
-            return IndexResolution.valid(esIndex);
-        } else {
-            return IndexResolution.validWithSkippedRemotes(esIndex, new ArrayList<>(clusterAliasesWithErrors));
-        }
+        return IndexResolution.valid(esIndex);
     }
 
     // MP TODO - copied/modified from PainlessExecuteAction

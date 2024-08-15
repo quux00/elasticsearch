@@ -8,24 +8,17 @@ package org.elasticsearch.xpack.esql.index;
 
 import org.elasticsearch.core.Nullable;
 
-import java.util.Collections;
-import java.util.List;
 import java.util.Objects;
 
 public final class IndexResolution {
-    public static IndexResolution validWithSkippedRemotes(EsIndex index, List<String> clusterAliasesWithErrors) {
-        Objects.requireNonNull(index, "index must not be null if it was found");
-        return new IndexResolution(index, clusterAliasesWithErrors);  // MP TODO: FIXME
-    }
-
     public static IndexResolution valid(EsIndex index) {
         Objects.requireNonNull(index, "index must not be null if it was found");
-        return new IndexResolution(index);
+        return new IndexResolution(index, null);
     }
 
     public static IndexResolution invalid(String invalid) {
         Objects.requireNonNull(invalid, "invalid must not be null to signal that the index is invalid");
-        return new IndexResolution(invalid);
+        return new IndexResolution(null, invalid);
     }
 
     public static IndexResolution notFound(String name) {
@@ -36,29 +29,10 @@ public final class IndexResolution {
     private final EsIndex index;
     @Nullable
     private final String invalid;
-    private final List<String> clusterAliasesWithErrors;  // TODO: do we also need to include the Exception/errors
 
-    private IndexResolution(EsIndex index) {
+    private IndexResolution(EsIndex index, @Nullable String invalid) {
         this.index = index;
-        this.invalid = null;
-        this.clusterAliasesWithErrors = Collections.emptyList();
-    }
-
-    private IndexResolution(String invalid) {
-        this.index = null;
         this.invalid = invalid;
-        this.clusterAliasesWithErrors = Collections.emptyList();
-    }
-
-    private IndexResolution(EsIndex index, List<String> clusterAliasesWithErrors) {
-        this.index = index;
-        this.invalid = null;
-        this.clusterAliasesWithErrors = clusterAliasesWithErrors;
-        System.err.println(">>> DEBUG 100: IndexResolution: clusterAliasesWithErrors: " + clusterAliasesWithErrors);
-    }
-
-    public List<String> getClusterAliasesWithErrors() {
-        return clusterAliasesWithErrors;
     }
 
     public boolean matches(String indexName) {

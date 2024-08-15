@@ -52,6 +52,7 @@ public class PlanExecutor {
         String sessionId,
         Configuration cfg,
         EnrichPolicyResolver enrichPolicyResolver,
+        EsqlExecutionInfo executionInfo,
         BiConsumer<PhysicalPlan, ActionListener<Result>> runPhase,
         ActionListener<Result> listener
     ) {
@@ -68,8 +69,7 @@ public class PlanExecutor {
         );
         QueryMetric clientId = QueryMetric.fromString("rest");
         metrics.total(clientId);
-        EsqlExecutionInfo executionInfoBogus = new EsqlExecutionInfo(); // MP TODO: need to grab this as param to this method
-        session.execute(request, executionInfoBogus, runPhase, wrap(listener::onResponse, ex -> {
+        session.execute(request, executionInfo, runPhase, wrap(listener::onResponse, ex -> {
             // TODO when we decide if we will differentiate Kibana from REST, this String value will likely come from the request
             metrics.failed(clientId);
             listener.onFailure(ex);

@@ -126,12 +126,9 @@ public class EsqlSession {
     ) {
         System.err.println("---> XXX DEBUG 1 EsqlSession execute");
         LOGGER.debug("ESQL query:\n{}", request.query());
-        EsqlExecutionInfo bogus = new EsqlExecutionInfo(); // MP TODO FIXME: swap this for one passed into the method!
-        bogus.swapCluster(new EsqlExecutionInfo.Cluster("remote1", "*:foo", true));
-        bogus.swapCluster(new EsqlExecutionInfo.Cluster("remote2", "*:bar", false));
         analyzedPlan(
             parse(request.query(), request.params()),
-            bogus,
+            executionInfo,
             listener.delegateFailureAndWrap((next, analyzedPlan) -> executeAnalyzedPlan(request, runPhase, analyzedPlan, next))
         );
     }
@@ -189,37 +186,27 @@ public class EsqlSession {
         return parsed;
     }
 
-    // MP TODO: need to pass ExecutionInfo into this method
     public void analyzedPlan(LogicalPlan parsed, EsqlExecutionInfo executionInfo, ActionListener<LogicalPlan> listener) {
         if (parsed.analyzed()) {
             listener.onResponse(parsed);
             return;
         }
 
-        preAnalyze(parsed, (indices, policies) -> {
-            // MP TODO: this IndexResolution object now has clusterAliasesWithErrors - check if empty or not
+        preAnalyze(parsed, executionInfo, (indices, policies) -> {
             Analyzer analyzer = new Analyzer(new AnalyzerContext(configuration, functionRegistry, indices, policies), verifier);
             var plan = analyzer.analyze(parsed);
             plan.setAnalyzed();
             LOGGER.debug("Analyzed plan:\n{}", plan);
-            System.err.println("___ MP TODO: here is where we would add clusterAliasesWithErrors to ExecutionInfo");
-            for (String clusterWithError : indices.getClusterAliasesWithErrors()) {
-                // MP TODO: could also pass the EsqlExecutionInfo into the IndexResolver?
-                EsqlExecutionInfo.Cluster cluster = executionInfo.getCluster(clusterWithError);
-                EsqlExecutionInfo.Cluster.Builder builder = new EsqlExecutionInfo.Cluster.Builder(cluster);
-                if (cluster.isSkipUnavailable()) {
-                    System.err.println("___ preAnalysis: DEBUG 88: setting Cluster to SKIPPED: " + clusterWithError);
-                    builder.setStatus(EsqlExecutionInfo.Cluster.Status.SKIPPED);
-                } else {
-                    System.err.println("___ preAnalysis: DEBUG 88: setting Cluster to FAILED: " + clusterWithError);
-                    builder.setStatus(EsqlExecutionInfo.Cluster.Status.FAILED);  // MP TODO: we would actually throw exception here
-                }
-            }
             return plan;
         }, listener);
     }
 
-    private <T> void preAnalyze(LogicalPlan parsed, BiFunction<IndexResolution, EnrichResolution, T> action, ActionListener<T> listener) {
+    private <T> void preAnalyze(
+        LogicalPlan parsed,
+        EsqlExecutionInfo executionInfo,
+        BiFunction<IndexResolution, EnrichResolution, T> action,
+        ActionListener<T> listener
+    ) {
         System.err.println("---> XXX DEBUG 2 EsqlSession preAnalyze");
         PreAnalyzer.PreAnalysis preAnalysis = preAnalyzer.preAnalyze(parsed);
         var unresolvedPolicies = preAnalysis.enriches.stream()
@@ -237,7 +224,7 @@ public class EsqlSession {
                 .map(ResolvedEnrichPolicy::matchField)
                 .collect(Collectors.toSet());
             // MP TODO field-caps call is done in this method below (preAnalyzeIndices)
-            preAnalyzeIndices(parsed, l.delegateFailureAndWrap((ll, indexResolution) -> {
+            preAnalyzeIndices(parsed, executionInfo, l.delegateFailureAndWrap((ll, indexResolution) -> {
                 // MP TODO: this IndexResolution object now has clusterAliasesWithErrors - check if empty but handle in action.apply below
                 if (indexResolution.isValid()) {
                     Set<String> newClusters = enrichPolicyResolver.groupIndicesPerCluster(
@@ -260,7 +247,12 @@ public class EsqlSession {
         }));
     }
 
-    private <T> void preAnalyzeIndices(LogicalPlan parsed, ActionListener<IndexResolution> listener, Set<String> enrichPolicyMatchFields) {
+    private <T> void preAnalyzeIndices(
+        LogicalPlan parsed,
+        EsqlExecutionInfo executionInfo,
+        ActionListener<IndexResolution> listener,
+        Set<String> enrichPolicyMatchFields
+    ) {
         PreAnalyzer.PreAnalysis preAnalysis = new PreAnalyzer().preAnalyze(parsed);
         // TODO we plan to support joins in the future when possible, but for now we'll just fail early if we see one
         if (preAnalysis.indices.size() > 1) {
@@ -272,7 +264,7 @@ public class EsqlSession {
             var fieldNames = fieldNames(parsed, enrichPolicyMatchFields);
             System.err.println("---> XXX DEBUG 5 EsqlSession preAnalyzeIndices");
             // MP TODO this is where the field-caps call is done !!
-            indexResolver.resolveAsMergedMapping(table.index(), fieldNames, listener);
+            indexResolver.resolveAsMergedMapping(table.index(), fieldNames, executionInfo, listener);
         } else {
             try {
                 // occurs when dealing with local relations (row a = 1)

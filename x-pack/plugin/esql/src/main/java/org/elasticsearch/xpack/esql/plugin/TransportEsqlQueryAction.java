@@ -162,6 +162,10 @@ public class TransportEsqlQueryAction extends HandledTransportAction<EsqlQueryRe
         );
         String sessionId = sessionID(task);
         EsqlExecutionInfo executionInfo = new EsqlExecutionInfo();
+        // MP TODO FIXME: need to parse something (request?) to get list of clusters => where is that determined?
+        executionInfo.swapCluster(new EsqlExecutionInfo.Cluster("remote1", "*:foo", true));
+        executionInfo.swapCluster(new EsqlExecutionInfo.Cluster("remote2", "*:bar", false));
+
         // MP TODO: this just sets up a closure/consumer to pass into planExecutor.esql below - it does no work
         BiConsumer<PhysicalPlan, ActionListener<Result>> runPhase = (physicalPlan, resultListener) -> computeService.execute(
             sessionId,
@@ -176,6 +180,7 @@ public class TransportEsqlQueryAction extends HandledTransportAction<EsqlQueryRe
             sessionId,
             configuration,
             enrichPolicyResolver,
+            executionInfo,
             runPhase,
             listener.map(result -> toResponse(task, request, configuration, result))
         );
