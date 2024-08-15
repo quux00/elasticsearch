@@ -6,7 +6,9 @@
  */
 package org.elasticsearch.xpack.esql.session;
 
+import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.ActionListener;
+import org.elasticsearch.action.fieldcaps.FieldCapabilitiesFailure;
 import org.elasticsearch.action.fieldcaps.FieldCapabilitiesIndexResponse;
 import org.elasticsearch.action.fieldcaps.FieldCapabilitiesRequest;
 import org.elasticsearch.action.fieldcaps.FieldCapabilitiesResponse;
@@ -16,6 +18,10 @@ import org.elasticsearch.client.internal.Client;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.index.mapper.TimeSeriesParams;
 import org.elasticsearch.threadpool.ThreadPool;
+import org.elasticsearch.transport.ConnectTransportException;
+import org.elasticsearch.transport.NoSeedNodeLeftException;
+import org.elasticsearch.transport.NoSuchRemoteClusterException;
+import org.elasticsearch.transport.RemoteClusterAware;
 import org.elasticsearch.xpack.esql.action.EsqlResolveFieldsAction;
 import org.elasticsearch.xpack.esql.core.type.DataType;
 import org.elasticsearch.xpack.esql.core.type.DateEsField;
@@ -82,15 +88,65 @@ public class IndexResolver {
         );
     }
 
+    // MP TODO: - copied from TransportResolveClusterAction/CCSUsage - probably needs to go into ExceptionUtils
+    public static boolean isRemoteUnavailable(Exception e) {
+        if (ExceptionsHelper.unwrap(
+            e,
+            ConnectTransportException.class,
+            NoSuchRemoteClusterException.class,
+            NoSeedNodeLeftException.class
+        ) != null) {
+            return true;
+        }
+        Throwable ill = ExceptionsHelper.unwrap(e, IllegalStateException.class, IllegalArgumentException.class);
+        if (ill != null && (ill.getMessage().contains("Unable to open any connections") || ill.getMessage().contains("unknown host"))) {
+            return true;
+        }
+        // Ok doesn't look like any of the known remote exceptions
+        return false;
+    }
+
     // public for testing only
     public IndexResolution mergedMappings(String indexPattern, FieldCapabilitiesResponse fieldCapsResponse) {
-        System.err.println("+++ *** fieldCapsResponse failures: " + fieldCapsResponse.getFailures());
+        // MP TODO -- added start
+        System.err.println("+++ ***IR mergedMappings indexPattern: " + indexPattern);
+        System.err.println("+++ ***IR fieldCapsResponse failures: " + fieldCapsResponse.getFailures());
+        System.err.println("+++ ***IR fieldCapsResponse indices: " + Arrays.asList(fieldCapsResponse.getIndices()));
+        System.err.println("+++ ***IR fieldCapsResponse failed indices count: " + fieldCapsResponse.getFailedIndicesCount());
+
+        for (FieldCapabilitiesFailure failure : fieldCapsResponse.getFailures()) {
+            System.err.println("+++ F***IR fieldCapsResponse indices: " + Arrays.asList(failure.getIndices()));
+            isRemoteUnavailable(failure.getException());
+            System.err.println("isRemoteUnavailable(failure.getException()): " + isRemoteUnavailable(failure.getException()));
+        }
+
+        for (FieldCapabilitiesIndexResponse idxResponse : fieldCapsResponse.getIndexResponses()) {
+            String indexName = idxResponse.getIndexName();
+            System.err.printf("--> ***IR: FieldCaps Response: index:[%s]; can_match=%s\n", indexName, idxResponse.canMatch());
+        }
+        // MP TODO -- end
+
+        // MP TODO: this is where I need to add field-caps failure info to IndexResolution
         assert ThreadPool.assertCurrentThreadPool(ThreadPool.Names.SEARCH_COORDINATION); // too expensive to run this on a transport worker
         if (fieldCapsResponse.getIndexResponses().isEmpty()) {
             return IndexResolution.notFound(indexPattern);
         }
 
         Map<String, List<IndexFieldCapabilities>> fieldsCaps = collectFieldCaps(fieldCapsResponse);
+        Set<String> clusterAliasesWithErrors = new HashSet<>();
+        // MP TODO -- added
+        if (fieldCapsResponse.getFailures() != null && fieldCapsResponse.getFailures().isEmpty() == false) {
+            for (FieldCapabilitiesFailure failure : fieldCapsResponse.getFailures()) {
+                if (isRemoteUnavailable(failure.getException())) {
+                    for (String indexExpression : failure.getIndices()) {
+                        if (indexExpression.indexOf(RemoteClusterAware.REMOTE_CLUSTER_INDEX_SEPARATOR) > 0) {
+                            clusterAliasesWithErrors.add(parseClusterAlias(indexExpression));
+                        }
+                    }
+                }
+            }
+        }
+        // MP TODO -- end
 
         // Build hierarchical fields - it's easier to do it in sorted order so the object fields come first.
         // TODO flattened is simpler - could we get away with that?
@@ -148,14 +204,51 @@ public class IndexResolver {
         }
         if (allEmpty) {
             // If all the mappings are empty we return an empty set of resolved indices to line up with QL
-            return IndexResolution.valid(new EsIndex(indexPattern, rootFields, Set.of()));
+            EsIndex esIndex = new EsIndex(indexPattern, rootFields, Set.of());
+            if (clusterAliasesWithErrors.isEmpty()) {
+                return IndexResolution.valid(esIndex);
+            } else {
+                return IndexResolution.validWithSkippedRemotes(esIndex, new ArrayList<>(clusterAliasesWithErrors));
+            }
         }
 
         Set<String> concreteIndices = new HashSet<>(fieldCapsResponse.getIndexResponses().size());
         for (FieldCapabilitiesIndexResponse ir : fieldCapsResponse.getIndexResponses()) {
             concreteIndices.add(ir.getIndexName());
         }
-        return IndexResolution.valid(new EsIndex(indexPattern, rootFields, concreteIndices));
+        EsIndex esIndex = new EsIndex(indexPattern, rootFields, concreteIndices);
+        if (clusterAliasesWithErrors.isEmpty()) {
+            return IndexResolution.valid(esIndex);
+        } else {
+            return IndexResolution.validWithSkippedRemotes(esIndex, new ArrayList<>(clusterAliasesWithErrors));
+        }
+    }
+
+    // MP TODO - copied/modified from PainlessExecuteAction
+
+    /**
+     * @param indexExpression expects a single index expression at a time
+     * @return cluster alias in the index expression. If none is present, returns RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY
+     */
+    static String parseClusterAlias(String indexExpression) {
+        assert indexExpression != null : "Must not pass null indexExpression";
+        String trimmed = indexExpression.trim();
+        String sep = String.valueOf(RemoteClusterAware.REMOTE_CLUSTER_INDEX_SEPARATOR);
+        if (trimmed.startsWith(sep) || trimmed.endsWith(sep)) {
+            throw new IllegalArgumentException(
+                "Unable to parse one single valid index name from the provided index expression: [" + indexExpression + "]"
+            );
+        }
+        String[] parts = indexExpression.split(sep, 2);
+        if (parts.length == 1) {
+            return RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
+        } else if (parts.length == 2) {
+            return parts[0];
+        } else {
+            throw new IllegalArgumentException(
+                "Unable to parse one single valid index name from the provided index expression: [" + indexExpression + "]"
+            );
+        }
     }
 
     private boolean allNested(List<IndexFieldCapabilities> caps) {

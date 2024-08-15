@@ -200,6 +200,8 @@ public class ComputeService {
             Releasable ignored = exchangeSource.addEmptySink();
             var computeListener = new ComputeListener(transportService, rootTask, listener.map(r -> {
                 System.err.println("DEBUG 13: CREATING RESULT .......: ");
+                // MP TODO: neither the ComputeResponse, nor the DriverProfiles identify which cluster this comes from - how identify that?
+                // MP TODO: This ComputeListener is called once at the end once all
                 return new Result(physicalPlan.output(), collectedPages, r.getProfiles());
             }))
         ) {
@@ -353,6 +355,9 @@ public class ComputeService {
                         exchangeSource.addRemoteSink(remoteSink, queryPragmas.concurrentExchangeClients());
                         var remotePlan = new RemoteClusterPlan(plan, cluster.concreteIndices, cluster.originalIndices);
                         var clusterRequest = new ClusterComputeRequest(cluster.clusterAlias, sessionId, configuration, remotePlan);
+                        // MP TODO: what is this intermediate "clusterListener" ActionListener for? Why do we pass null to onResponse?
+                        // MP TODO: this is the only listener that is specific to each remote cluster, so do we need add logic to this
+                        // MP TODO: handler to record metadata about each cluster?
                         var clusterListener = ActionListener.runBefore(computeListener.acquireCompute(), () -> l.onResponse(null));
                         transportService.sendChildRequest(
                             cluster.connection,
@@ -755,6 +760,7 @@ public class ComputeService {
 
     public static final String CLUSTER_ACTION_NAME = EsqlQueryAction.NAME + "/cluster";
 
+    // MP TODO: is this running on the remote cluster or the querying coordinator?
     private class ClusterRequestHandler implements TransportRequestHandler<ClusterComputeRequest> {
         @Override
         public void messageReceived(ClusterComputeRequest request, TransportChannel channel, Task task) {

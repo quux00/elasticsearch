@@ -11,6 +11,7 @@ import org.elasticsearch.action.search.ShardSearchFailure;
 import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
+import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.rest.action.RestActions;
 import org.elasticsearch.xcontent.ParseField;
@@ -21,6 +22,7 @@ import java.io.IOException;
 import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 
 /**
  * Holds execute metadata about ES|QL queries.
@@ -31,10 +33,21 @@ public class EsqlExecutionInfo {
     // rather than empty string (RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY) we use internally
     public static final String LOCAL_CLUSTER_NAME_REPRESENTATION = "(local)";
 
+    public final Map<String, Cluster> clusters;
+
     // private final EsqlQueryRequest esqlQueryRequest;
 
     public EsqlExecutionInfo() {
+        this.clusters = ConcurrentCollections.newConcurrentMap();  // MP TODO: does this need to be a ConcurrentHashMap
+    }
 
+    public Cluster getCluster(String clusterAlias) {
+        return clusters.get(clusterAlias);
+    }
+
+    public void swapCluster(Cluster cluster) {
+        // MP TODO: this probably needs to follow the thread safe swapCluster model in SearchResponse, but doing fast-n-easy very for now
+        clusters.put(cluster.getClusterAlias(), cluster);
     }
 
     // public EsqlExecutionInfo(EsqlQueryRequest request) {

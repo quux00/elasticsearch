@@ -17,6 +17,7 @@ import org.elasticsearch.core.Releasables;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
+import org.elasticsearch.xpack.esql.action.EsqlExecutionInfo;
 import org.elasticsearch.xpack.esql.action.EsqlQueryRequest;
 import org.elasticsearch.xpack.esql.analysis.Analyzer;
 import org.elasticsearch.xpack.esql.analysis.AnalyzerContext;
@@ -124,8 +125,12 @@ public class EsqlSession {
     ) {
         System.err.println("---> XXX DEBUG 1 EsqlSession execute");
         LOGGER.debug("ESQL query:\n{}", request.query());
+        EsqlExecutionInfo bogus = new EsqlExecutionInfo(); // MP TODO FIXME: swap this for one passed into the method!
+        bogus.swapCluster(new EsqlExecutionInfo.Cluster("remote1", "*:foo", true));
+        bogus.swapCluster(new EsqlExecutionInfo.Cluster("remote2", "*:bar", false));
         analyzedPlan(
             parse(request.query(), request.params()),
+            bogus,
             listener.delegateFailureAndWrap((next, analyzedPlan) -> executeAnalyzedPlan(request, runPhase, analyzedPlan, next))
         );
     }
@@ -183,17 +188,31 @@ public class EsqlSession {
         return parsed;
     }
 
-    public void analyzedPlan(LogicalPlan parsed, ActionListener<LogicalPlan> listener) {
+    // MP TODO: need to pass ExecutionInfo into this method
+    public void analyzedPlan(LogicalPlan parsed, EsqlExecutionInfo executionInfo, ActionListener<LogicalPlan> listener) {
         if (parsed.analyzed()) {
             listener.onResponse(parsed);
             return;
         }
 
         preAnalyze(parsed, (indices, policies) -> {
+            // MP TODO: this IndexResolution object now has clusterAliasesWithErrors - check if empty or not
             Analyzer analyzer = new Analyzer(new AnalyzerContext(configuration, functionRegistry, indices, policies), verifier);
             var plan = analyzer.analyze(parsed);
             plan.setAnalyzed();
             LOGGER.debug("Analyzed plan:\n{}", plan);
+            System.err.println("___ MP TODO: here is where we would add clusterAliasesWithErrors to ExecutionInfo");
+            for (String clusterWithError : indices.getClusterAliasesWithErrors()) {
+                EsqlExecutionInfo.Cluster cluster = executionInfo.getCluster(clusterWithError);
+                EsqlExecutionInfo.Cluster.Builder builder = new EsqlExecutionInfo.Cluster.Builder(cluster);
+                if (cluster.isSkipUnavailable()) {
+                    System.err.println("___ preAnalysis: DEBUG 88: setting Cluster to SKIPPED: " + clusterWithError);
+                    builder.setStatus(EsqlExecutionInfo.Cluster.Status.SKIPPED);
+                } else {
+                    System.err.println("___ preAnalysis: DEBUG 88: setting Cluster to FAILED: " + clusterWithError);
+                    builder.setStatus(EsqlExecutionInfo.Cluster.Status.FAILED);  // MP TODO: we would actually throw exception here
+                }
+            }
             return plan;
         }, listener);
     }
@@ -215,7 +234,9 @@ public class EsqlSession {
                 .stream()
                 .map(ResolvedEnrichPolicy::matchField)
                 .collect(Collectors.toSet());
+            // MP TODO field-caps call is done in this method below (preAnalyzeIndices)
             preAnalyzeIndices(parsed, l.delegateFailureAndWrap((ll, indexResolution) -> {
+                // MP TODO: this IndexResolution object now has clusterAliasesWithErrors - check if empty but handle in action.apply below
                 if (indexResolution.isValid()) {
                     Set<String> newClusters = enrichPolicyResolver.groupIndicesPerCluster(
                         indexResolution.get().concreteIndices().toArray(String[]::new)
