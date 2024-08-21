@@ -17,6 +17,7 @@ import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
 import org.elasticsearch.tasks.CancellableTask;
 import org.elasticsearch.transport.TransportService;
+import org.elasticsearch.xpack.esql.action.EsqlExecutionInfo;
 
 import java.util.ArrayList;
 import java.util.Collections;
@@ -41,14 +42,17 @@ final class ComputeListener implements Releasable {
     private final List<DriverProfile> collectedProfiles;
     private final ResponseHeadersCollector responseHeaders;
     // TODO: may want to add ExecutionInfo here as instance var
+    private final EsqlExecutionInfo executionInfo;
 
     ComputeListener(
         TransportService transportService,
-        CancellableTask task, /*EsqlExecutionInfo executionInfo, */
+        CancellableTask task,
+        EsqlExecutionInfo executionInfo,
         ActionListener<ComputeResponse> delegate
     ) {
         this.transportService = transportService;
         this.task = task;
+        this.executionInfo = executionInfo;
         this.responseHeaders = new ResponseHeadersCollector(transportService.getThreadPool().getThreadContext());
         this.collectedProfiles = Collections.synchronizedList(new ArrayList<>());
         this.refs = new RefCountingListener(1, ActionListener.wrap(ignored -> {

@@ -179,6 +179,7 @@ public class ComputeService {
                 var computeListener = new ComputeListener(
                     transportService,
                     rootTask,
+                    executionInfo,
                     listener.map(r -> new Result(physicalPlan.output(), collectedPages, r.getProfiles(), executionInfo))
                 )
             ) {
@@ -203,8 +204,8 @@ public class ComputeService {
         );
         try (
             Releasable ignored = exchangeSource.addEmptySink();
-            // MP TODO: top level ComputeListener
-            var computeListener = new ComputeListener(transportService, rootTask, listener.map(r -> {
+            // MP TODO: INFO: this is the top level ComputeListener
+            var computeListener = new ComputeListener(transportService, rootTask, executionInfo, listener.map(r -> {
                 System.err.println("DEBUG 13: CREATING RESULT .......: ");
                 // MP TODO: neither the ComputeResponse, nor the DriverProfiles identify which cluster this comes from - how identify that?
                 // MP TODO: This ComputeListener is called once at the end once all
@@ -761,7 +762,9 @@ public class ComputeService {
                 request.indices(),
                 request.indicesOptions()
             );
-            try (var computeListener = new ComputeListener(transportService, (CancellableTask) task, listener)) {
+            // MP TODO: is it OK to pass null for the ExecutionInfo
+            // MP TODO: does this code only run on remote clusters or the querying coordinator
+            try (var computeListener = new ComputeListener(transportService, (CancellableTask) task, null, listener)) {
                 runComputeOnDataNode((CancellableTask) task, sessionId, reducePlan, request, computeListener);
             }
         }
@@ -780,7 +783,8 @@ public class ComputeService {
                 listener.onFailure(new IllegalStateException("expected exchange sink for a remote compute; got " + plan));
                 return;
             }
-            try (var computeListener = new ComputeListener(transportService, (CancellableTask) task, listener)) {
+            // MP TODO: is it OK to pass in null for the ExecutionInfo?
+            try (var computeListener = new ComputeListener(transportService, (CancellableTask) task, null, listener)) {
                 runComputeOnRemoteCluster(
                     request.clusterAlias(),
                     request.sessionId(),
