@@ -95,7 +95,7 @@ public class IndexResolver {
     }
 
     // MP TODO: - copied from TransportResolveClusterAction/CCSUsage - probably needs to go into ExceptionUtils
-    public static boolean isRemoteUnavailable(Exception e) {
+    public static boolean isRemoteUnavailableException(Exception e) {
         if (ExceptionsHelper.unwrap(
             e,
             ConnectTransportException.class,
@@ -114,7 +114,7 @@ public class IndexResolver {
 
     // public for testing only
     public IndexResolution mergedMappings(String indexPattern, EsqlExecutionInfo executionInfo, FieldCapabilitiesResponse response) {
-        // MP TODO -- added start
+        // MP TODO -- added start TEMP
         System.err.println("+++ ***IR mergedMappings indexPattern: " + indexPattern);
         System.err.println("+++ ***IR fieldCapsResponse failures: " + response.getFailures());
         System.err.println("+++ ***IR fieldCapsResponse indices: " + Arrays.asList(response.getIndices()));
@@ -122,57 +122,24 @@ public class IndexResolver {
 
         for (FieldCapabilitiesFailure failure : response.getFailures()) {
             System.err.println("+++ F***IR fieldCapsResponse indices: " + Arrays.asList(failure.getIndices()));
-            isRemoteUnavailable(failure.getException());
-            System.err.println("isRemoteUnavailable(failure.getException()): " + isRemoteUnavailable(failure.getException()));
+            isRemoteUnavailableException(failure.getException());
+            System.err.println("isRemoteUnavailable(failure.getException()): " + isRemoteUnavailableException(failure.getException()));
         }
 
         for (FieldCapabilitiesIndexResponse idxResponse : response.getIndexResponses()) {
             String indexName = idxResponse.getIndexName();
             System.err.printf("--> ***IR: FieldCaps Response: index:[%s]; can_match=%s\n", indexName, idxResponse.canMatch());
         }
-        // MP TODO -- end
+        // MP TODO -- end TEMP
 
         // MP TODO: this is where I need to add field-caps failure info to IndexResolution
         assert ThreadPool.assertCurrentThreadPool(ThreadPool.Names.SEARCH_COORDINATION); // too expensive to run this on a transport worker
         if (response.getIndexResponses().isEmpty()) {
+            // MP TODO: how does existing code handle this? With my current model, this would return and ExecutionInfo would still be empty
             return IndexResolution.notFound(indexPattern);
         }
 
         Map<String, List<IndexFieldCapabilities>> fieldsCaps = collectFieldCaps(response);
-        Set<String> clusterAliasesWithErrors = new HashSet<>();
-        // MP TODO -- added
-        if (response.getFailures() != null && response.getFailures().isEmpty() == false) {
-            for (FieldCapabilitiesFailure failure : response.getFailures()) {
-                if (isRemoteUnavailable(failure.getException())) {
-                    for (String indexExpression : failure.getIndices()) {
-                        if (indexExpression.indexOf(RemoteClusterAware.REMOTE_CLUSTER_INDEX_SEPARATOR) > 0) {
-                            String clusterAlias = parseClusterAlias(indexExpression);
-                            // MP TODO: is it possible to get the same cluster twice here (what if you put a cluster twice in the
-                            // field-caps?)
-                            System.err.println("555 DEBUG 555: mergedMappings: error for cluster: " + clusterAlias);
-                            clusterAliasesWithErrors.add(clusterAlias);
-                        }
-                    }
-                }
-            }
-        }
-
-        for (String clusterAlias : clusterAliasesWithErrors) {
-            EsqlExecutionInfo.Cluster cluster = executionInfo.getCluster(clusterAlias);
-            assert cluster != null : "EsqlExecutionInfo was set up incorrectly; null entry for cluster: " + clusterAlias;
-            if (cluster.isSkipUnavailable()) {
-                System.err.println("555 DEBUG 666: marking cluster as SKIPPED: " + clusterAlias);
-                executionInfo.swapCluster(
-                    new EsqlExecutionInfo.Cluster.Builder(cluster).setStatus(EsqlExecutionInfo.Cluster.Status.SKIPPED).build()
-                );
-            } else {
-                // MP TODO FIXME - causes a 500 - is that what we want to return? What is returned in search when skip_unavailable=false?
-                throw new IllegalStateException(
-                    "Placeholder error for failing an ESQL search. Required remote cluster could not be contacted:" + clusterAlias
-                );
-            }
-        }
-        // MP TODO -- end
 
         // Build hierarchical fields - it's easier to do it in sorted order so the object fields come first.
         // TODO flattened is simpler - could we get away with that?
@@ -236,9 +203,59 @@ public class IndexResolver {
 
         Set<String> concreteIndices = new HashSet<>(response.getIndexResponses().size());
         for (FieldCapabilitiesIndexResponse ir : response.getIndexResponses()) {
-            concreteIndices.add(ir.getIndexName());
+            String indexExpression = ir.getIndexName();
+            concreteIndices.add(indexExpression);
+            String clusterAlias = parseClusterAlias(indexExpression);
+            EsqlExecutionInfo.Cluster cluster = executionInfo.getCluster(clusterAlias);
+            if (cluster == null) {
+                System.err.println("/////////////// DEBUG A: adding new cluster to EsqlExecutionInfo: " + clusterAlias);
+                executionInfo.swapCluster(
+                    new EsqlExecutionInfo.Cluster(clusterAlias, indexExpression, executionInfo.isSkipUnavailable(clusterAlias))
+                );
+            } else {
+                System.err.println("/////////////// DEBUG B: updating cluster with addl indexExpression in ExecInfo: " + clusterAlias);
+                String newIndexExpr = cluster.getIndexExpression() + "," + indexExpression;
+                executionInfo.swapCluster(new EsqlExecutionInfo.Cluster.Builder(cluster).setIndexExpression(newIndexExpr).build());
+            }
         }
         EsIndex esIndex = new EsIndex(indexPattern, rootFields, concreteIndices);
+
+        // MP TODO -- added
+        // record any errors that occurred during field-caps lookup
+        Set<String> clusterAliasesWithErrors = new HashSet<>();
+        if (response.getFailures() != null && response.getFailures().isEmpty() == false) {
+            for (FieldCapabilitiesFailure failure : response.getFailures()) {
+                if (isRemoteUnavailableException(failure.getException())) {
+                    for (String indexExpression : failure.getIndices()) {
+                        if (indexExpression.indexOf(RemoteClusterAware.REMOTE_CLUSTER_INDEX_SEPARATOR) > 0) {
+                            String clusterAlias = parseClusterAlias(indexExpression);
+                            // MP TODO: is it possible to get the same cluster twice here (what if you put a cluster twice in the
+                            // field-caps?)
+                            System.err.println("//// 555 DEBUG 555: mergedMappings: error for cluster: " + clusterAlias);
+                            clusterAliasesWithErrors.add(clusterAlias);
+                        }
+                    }
+                }
+            }
+        }
+
+        for (String clusterAlias : clusterAliasesWithErrors) {
+            EsqlExecutionInfo.Cluster cluster = executionInfo.getCluster(clusterAlias);
+            assert cluster != null : "EsqlExecutionInfo was set up incorrectly; null entry for cluster: " + clusterAlias;
+            if (cluster.isSkipUnavailable()) {
+                System.err.println("555 DEBUG 666: marking cluster as SKIPPED: " + clusterAlias);
+                executionInfo.swapCluster(
+                    new EsqlExecutionInfo.Cluster.Builder(cluster).setStatus(EsqlExecutionInfo.Cluster.Status.SKIPPED).build()
+                );
+            } else {
+                // MP TODO FIXME - causes a 500 - is that what we want to return? What is returned in search when skip_unavailable=false?
+                throw new IllegalStateException(
+                    "Placeholder error for failing an ESQL search. Required remote cluster could not be contacted:" + clusterAlias
+                );
+            }
+        }
+        // MP TODO -- end
+
         return IndexResolution.valid(esIndex);
     }
 

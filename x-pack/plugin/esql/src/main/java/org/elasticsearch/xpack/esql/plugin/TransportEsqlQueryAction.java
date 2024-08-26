@@ -25,6 +25,7 @@ import org.elasticsearch.tasks.CancellableTask;
 import org.elasticsearch.tasks.Task;
 import org.elasticsearch.tasks.TaskId;
 import org.elasticsearch.threadpool.ThreadPool;
+import org.elasticsearch.transport.RemoteClusterService;
 import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.xpack.core.XPackPlugin;
 import org.elasticsearch.xpack.core.async.AsyncExecutionId;
@@ -64,6 +65,7 @@ public class TransportEsqlQueryAction extends HandledTransportAction<EsqlQueryRe
     private final EnrichPolicyResolver enrichPolicyResolver;
     private final EnrichLookupService enrichLookupService;
     private final AsyncTaskManagementService<EsqlQueryRequest, EsqlQueryResponse, EsqlQueryTask> asyncTaskManagementService;
+    private final RemoteClusterService remoteClusterService;
 
     @Inject
     @SuppressWarnings("this-escape")
@@ -113,6 +115,7 @@ public class TransportEsqlQueryAction extends HandledTransportAction<EsqlQueryRe
             threadPool,
             bigArrays
         );
+        remoteClusterService = transportService.getRemoteClusterService();
     }
 
     @Override
@@ -161,10 +164,8 @@ public class TransportEsqlQueryAction extends HandledTransportAction<EsqlQueryRe
             request.tables()
         );
         String sessionId = sessionID(task);
-        EsqlExecutionInfo executionInfo = new EsqlExecutionInfo();
-        // MP TODO FIXME: need to parse something (request?) to get list of clusters => where is that determined?
-        executionInfo.swapCluster(new EsqlExecutionInfo.Cluster("remote1", "*:foo", true));
-        executionInfo.swapCluster(new EsqlExecutionInfo.Cluster("remote2", "*:bar", false));
+
+        EsqlExecutionInfo executionInfo = new EsqlExecutionInfo(clusterAlias -> remoteClusterService.isSkipUnavailable(clusterAlias));
 
         // MP TODO: this just sets up a closure/consumer to pass into planExecutor.esql below - it does no work
         BiConsumer<PhysicalPlan, ActionListener<Result>> runPhase = (physicalPlan, resultListener) -> computeService.execute(

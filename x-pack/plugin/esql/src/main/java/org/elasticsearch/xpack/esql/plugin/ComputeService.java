@@ -73,6 +73,7 @@ import org.elasticsearch.xpack.esql.session.IndexResolver;
 import org.elasticsearch.xpack.esql.session.Result;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.List;
@@ -138,7 +139,7 @@ public class ComputeService {
         ActionListener<Result> listener
     ) {
         System.err.println("-------------------------------------");
-        System.err.println("====== ComputeService execute: executionInfo: " + executionInfo);
+        System.err.println("====== ComputeService execute: START: " + executionInfo);
         System.err.println("-------------------------------------");
         Tuple<PhysicalPlan, PhysicalPlan> coordinatorAndDataNodePlan = PlannerUtils.breakPlanBetweenCoordinatorAndDataNode(
             physicalPlan,
@@ -204,11 +205,15 @@ public class ComputeService {
         );
         try (
             Releasable ignored = exchangeSource.addEmptySink();
-            // MP TODO: INFO: this is the top level ComputeListener
+            // this is the top level ComputeListener called once at the end (once all clusters have finished for a CCS)
             var computeListener = new ComputeListener(transportService, rootTask, executionInfo, listener.map(r -> {
-                System.err.println("DEBUG 13: CREATING RESULT .......: ");
-                // MP TODO: neither the ComputeResponse, nor the DriverProfiles identify which cluster this comes from - how identify that?
-                // MP TODO: This ComputeListener is called once at the end once all
+                System.err.println(
+                    "DEBUG 13: CREATING RESULT .......: "
+                        + new Result(physicalPlan.output(), collectedPages, r.getProfiles(), executionInfo)
+                );
+                System.err.println("-------------------------------------");
+                System.err.println("====== ComputeService FINAL: executionInfo: " + executionInfo);
+                System.err.println("-------------------------------------");
                 return new Result(physicalPlan.output(), collectedPages, r.getProfiles(), executionInfo);
             }))
         ) {
@@ -231,6 +236,7 @@ public class ComputeService {
                     Set.of(localConcreteIndices.indices()),
                     localOriginalIndices,
                     exchangeSource,
+                    executionInfo,
                     computeListener
                 );
             }
@@ -262,10 +268,6 @@ public class ComputeService {
                 throw new IllegalStateException("can't find original indices for cluster " + clusterAlias);
             }
             if (concreteIndices.indices().length > 0) {
-                // MP TODO -- added
-                boolean skipUnavailable = remoteClusterService.isSkipUnavailable(clusterAlias);
-                System.err.printf("+++ skipUnavailable=%s for cluster [%s]\n", skipUnavailable, clusterAlias);
-                // MP TODO -- end
                 Transport.Connection connection = remoteClusterService.getConnection(clusterAlias);
                 remoteClusters.add(new RemoteCluster(clusterAlias, connection, concreteIndices.indices(), originalIndices));
             }
@@ -282,6 +284,7 @@ public class ComputeService {
         Set<String> concreteIndices,
         OriginalIndices originalIndices,
         ExchangeSourceHandler exchangeSource,
+        EsqlExecutionInfo executionInfo,
         ComputeListener computeListener
     ) {
         var planWithReducer = configuration.pragmas().nodeLevelReduction() == false
@@ -298,44 +301,52 @@ public class ComputeService {
         QueryBuilder requestFilter = PlannerUtils.requestFilter(planWithReducer, x -> true);
         var lookupListener = ActionListener.releaseAfter(computeListener.acquireAvoid(), exchangeSource.addEmptySink());
         // MP TODO: SearchShards API is called here lookupDataNodes
-        lookupDataNodes(parentTask, clusterAlias, requestFilter, concreteIndices, originalIndices, ActionListener.wrap(dataNodes -> {
-            try (RefCountingListener refs = new RefCountingListener(lookupListener)) {
-                // For each target node, first open a remote exchange on the remote node, then link the exchange source to
-                // the new remote exchange sink, and initialize the computation on the target node via data-node-request.
-                for (DataNode node : dataNodes) {
-                    var queryPragmas = configuration.pragmas();
-                    ExchangeService.openExchange(
-                        transportService,
-                        node.connection,
-                        sessionId,
-                        queryPragmas.exchangeBufferSize(),
-                        esqlExecutor,
-                        refs.acquire().delegateFailureAndWrap((l, unused) -> {
-                            var remoteSink = exchangeService.newRemoteSink(parentTask, sessionId, transportService, node.connection);
-                            exchangeSource.addRemoteSink(remoteSink, queryPragmas.concurrentExchangeClients());
-                            var dataNodeListener = ActionListener.runBefore(computeListener.acquireCompute(), () -> l.onResponse(null));
-                            transportService.sendChildRequest(
-                                node.connection,
-                                DATA_ACTION_NAME,
-                                new DataNodeRequest(
-                                    sessionId,
-                                    configuration,
-                                    clusterAlias,
-                                    node.shardIds,
-                                    node.aliasFilters,
-                                    planWithReducer,
-                                    originalIndices.indices(),
-                                    originalIndices.indicesOptions()
-                                ),
-                                parentTask,
-                                TransportRequestOptions.EMPTY,
-                                new ActionListenerResponseHandler<>(dataNodeListener, ComputeResponse::new, esqlExecutor)
-                            );
-                        })
-                    );
+        lookupDataNodes(
+            parentTask,
+            clusterAlias,
+            requestFilter,
+            concreteIndices,
+            originalIndices,
+            executionInfo,
+            ActionListener.wrap(dataNodes -> {
+                try (RefCountingListener refs = new RefCountingListener(lookupListener)) {
+                    // For each target node, first open a remote exchange on the remote node, then link the exchange source to
+                    // the new remote exchange sink, and initialize the computation on the target node via data-node-request.
+                    for (DataNode node : dataNodes) {
+                        var queryPragmas = configuration.pragmas();
+                        ExchangeService.openExchange(
+                            transportService,
+                            node.connection,
+                            sessionId,
+                            queryPragmas.exchangeBufferSize(),
+                            esqlExecutor,
+                            refs.acquire().delegateFailureAndWrap((l, unused) -> {
+                                var remoteSink = exchangeService.newRemoteSink(parentTask, sessionId, transportService, node.connection);
+                                exchangeSource.addRemoteSink(remoteSink, queryPragmas.concurrentExchangeClients());
+                                var dataNodeListener = ActionListener.runBefore(computeListener.acquireCompute(), () -> l.onResponse(null));
+                                transportService.sendChildRequest(
+                                    node.connection,
+                                    DATA_ACTION_NAME,
+                                    new DataNodeRequest(
+                                        sessionId,
+                                        configuration,
+                                        clusterAlias,
+                                        node.shardIds,
+                                        node.aliasFilters,
+                                        planWithReducer,
+                                        originalIndices.indices(),
+                                        originalIndices.indicesOptions()
+                                    ),
+                                    parentTask,
+                                    TransportRequestOptions.EMPTY,
+                                    new ActionListenerResponseHandler<>(dataNodeListener, ComputeResponse::new, esqlExecutor)
+                                );
+                            })
+                        );
+                    }
                 }
-            }
-        }, lookupListener::onFailure));
+            }, lookupListener::onFailure)
+        );
     }
 
     private void startComputeOnRemoteClusters(
@@ -366,7 +377,11 @@ public class ComputeService {
                         // MP TODO: this is the only listener that is specific to each remote cluster, so do we need add logic to this
                         // MP TODO: handler to record metadata about each cluster?
                         // will return a ComputeResponse to the coordinating cluster
-                        var clusterListener = ActionListener.runBefore(computeListener.acquireCompute(), () -> l.onResponse(null));
+                        System.err.println("___________________ CCC: clusterListener being created");
+                        var clusterListener = ActionListener.runBefore(
+                            computeListener.acquireCompute(cluster.clusterAlias()),
+                            () -> l.onResponse(null) // MP TODO: why null here?
+                        );
                         transportService.sendChildRequest(
                             cluster.connection,
                             CLUSTER_ACTION_NAME,
@@ -535,6 +550,7 @@ public class ComputeService {
         QueryBuilder filter,
         Set<String> concreteIndices,
         OriginalIndices originalIndices,
+        EsqlExecutionInfo executionInfo,
         ActionListener<List<DataNode>> listener
     ) {
         ActionListener<SearchShardsResponse> searchShardsListener = listener.map(resp -> {
@@ -544,17 +560,24 @@ public class ComputeService {
             }
             Map<String, List<ShardId>> nodeToShards = new HashMap<>();
             Map<String, Map<Index, AliasFilter>> nodeToAliasFilters = new HashMap<>();
+            int totalShards = 0;
+            int skippedShards = 0;
             for (SearchShardsGroup group : resp.getGroups()) {
                 var shardId = group.shardId();
+                totalShards++;
                 if (group.skipped()) {
+                    skippedShards++;
+                    totalShards++;
                     continue;
                 }
                 if (group.allocatedNodes().isEmpty()) {
                     throw new ShardNotFoundException(group.shardId(), "no shard copies found {}", group.shardId());
                 }
+                // MP TODO: why is this if check done third rather than first? should it be moved above group.skipped?
                 if (concreteIndices.contains(shardId.getIndexName()) == false) {
                     continue;
                 }
+                totalShards++;
                 String targetNode = group.allocatedNodes().get(0);
                 nodeToShards.computeIfAbsent(targetNode, k -> new ArrayList<>()).add(shardId);
                 AliasFilter aliasFilter = resp.getAliasFilters().get(shardId.getIndex().getUUID());
@@ -568,9 +591,15 @@ public class ComputeService {
                 Map<Index, AliasFilter> aliasFilters = nodeToAliasFilters.getOrDefault(e.getKey(), Map.of());
                 dataNodes.add(new DataNode(transportService.getConnection(node), e.getValue(), aliasFilters));
             }
+            EsqlExecutionInfo.Cluster cluster = executionInfo.getCluster(clusterAlias);
+            assert cluster != null : "No cluster in EsqlExecutionInfo for cluster alias: " + clusterAlias;
+            executionInfo.swapCluster(
+                new EsqlExecutionInfo.Cluster.Builder(cluster).setTotalShards(totalShards).setSkippedShards(skippedShards).build()
+            );
+            System.err.println("+++ DEBUG 100: SearchShardsRequest executionInfo summary : " + executionInfo);
             return dataNodes;
         });
-        System.err.println("+++ DEBUG 100: SearchShardsRequest being sent for : " + clusterAlias);
+        System.err.println("+++ DEBUG 101: SearchShardsRequest being sent for : " + clusterAlias);
         SearchShardsRequest searchShardsRequest = new SearchShardsRequest(
             originalIndices.indices(),
             originalIndices.indicesOptions(),
@@ -772,10 +801,11 @@ public class ComputeService {
 
     public static final String CLUSTER_ACTION_NAME = EsqlQueryAction.NAME + "/cluster";
 
-    // MP TODO: is this running on the remote cluster or the querying coordinator? A: On remote cluster
+    // MP TODO: Based on my testing, this ONLY runs on the remote cluster (TODO: confirm with Nhat)
     private class ClusterRequestHandler implements TransportRequestHandler<ClusterComputeRequest> {
         @Override
         public void messageReceived(ClusterComputeRequest request, TransportChannel channel, Task task) {
+            System.err.println("YYY :::::: YYY DEBUG 999 YYY ClusterRequestHandler ClusterComputeRequest - where am I running?");
             ChannelActionListener<ComputeResponse> listener = new ChannelActionListener<>(channel);
             RemoteClusterPlan remoteClusterPlan = request.remoteClusterPlan();
             var plan = remoteClusterPlan.plan();
@@ -784,6 +814,8 @@ public class ComputeService {
                 return;
             }
             // MP TODO: is it OK to pass in null for the ExecutionInfo?
+            EsqlExecutionInfo executionInfo = new EsqlExecutionInfo();
+            executionInfo.swapCluster(new EsqlExecutionInfo.Cluster(request.clusterAlias(), Arrays.toString(request.indices()), true));
             try (var computeListener = new ComputeListener(transportService, (CancellableTask) task, null, listener)) {
                 runComputeOnRemoteCluster(
                     request.clusterAlias(),
@@ -793,6 +825,7 @@ public class ComputeService {
                     (ExchangeSinkExec) plan,
                     Set.of(remoteClusterPlan.targetIndices()),
                     remoteClusterPlan.originalIndices(),
+                    executionInfo,  // MP TODO: this has to be non-null, so what do we do here?
                     computeListener
                 );
             }
@@ -816,8 +849,10 @@ public class ComputeService {
         ExchangeSinkExec plan,
         Set<String> concreteIndices,
         OriginalIndices originalIndices,
+        EsqlExecutionInfo executionInfo,
         ComputeListener computeListener
     ) {
+        System.err.println("PPP: ::: :PPP runComputeOnRemoteCluster - this ONLY RUNS ON REMOTE CLUSTERS right??"); // MP TODO: correct!
         final var exchangeSink = exchangeService.getSinkHandler(globalSessionId);
         parentTask.addListener(
             () -> exchangeService.finishSinkHandler(globalSessionId, new TaskCancelledException(parentTask.getReasonCancelled()))
@@ -842,6 +877,11 @@ public class ComputeService {
                 coordinatorPlan,
                 computeListener.acquireCompute()
             );
+            // MP TODO: can we find a way to return a new ClusterComputeResponse rather than a simple ComputeResponse?
+            // MP TODO: IDEA is to put another laying of ActionListener here to construct the final ComputeResponse, but the problem
+            // MP TODO is that the shard accounting is only gathered during the SearchShards, so the code needs to know whether
+            // MP TODO it is acting as a remote coordinator in order to gather that additional info (??)
+            // ComputeListener intercept = new ComputeListener();
             startComputeOnDataNodes(
                 localSessionId,
                 clusterAlias,
@@ -851,6 +891,7 @@ public class ComputeService {
                 concreteIndices,
                 originalIndices,
                 exchangeSource,
+                executionInfo,
                 computeListener
             );
         }

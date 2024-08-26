@@ -186,7 +186,12 @@ public class EsqlSession {
 
     private LogicalPlan parse(String query, QueryParams params) {
         var parsed = new EsqlParser().createStatement(query, params);
+        for (LogicalPlan child : parsed.children()) {
+            System.err.println("child expressions: " + child.expressions());
+        }
         LOGGER.debug("Parsed logical plan:\n{}", parsed);
+        System.err.println("Parsed logical plan: " + parsed);  // MP TODO: prints: \_UnresolvedRelation[logs-*,*:logs-*], so cluster
+                                                               // resolution HAS NOT YET HAPPENED
         return parsed;
     }
 
@@ -201,6 +206,7 @@ public class EsqlSession {
             var plan = analyzer.analyze(parsed);
             plan.setAnalyzed();
             LOGGER.debug("Analyzed plan:\n{}", plan);
+            System.err.println("|||||| PRE_ANALYZE plan: " + plan);
             return plan;
         }, listener);
     }

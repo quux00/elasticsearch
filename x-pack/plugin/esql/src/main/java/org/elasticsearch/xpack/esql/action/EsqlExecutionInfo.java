@@ -12,8 +12,10 @@ import org.elasticsearch.common.io.stream.StreamInput;
 import org.elasticsearch.common.io.stream.StreamOutput;
 import org.elasticsearch.common.io.stream.Writeable;
 import org.elasticsearch.common.util.concurrent.ConcurrentCollections;
+import org.elasticsearch.core.Predicates;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.rest.action.RestActions;
+import org.elasticsearch.transport.RemoteClusterAware;
 import org.elasticsearch.xcontent.ParseField;
 import org.elasticsearch.xcontent.ToXContentFragment;
 import org.elasticsearch.xcontent.XContentBuilder;
@@ -23,6 +25,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.function.Predicate;
 
 /**
  * Holds execution metadata about ES|QL queries.
@@ -33,9 +36,30 @@ public class EsqlExecutionInfo {
     public static final String LOCAL_CLUSTER_NAME_REPRESENTATION = "(local)";
 
     public final Map<String, Cluster> clusters;
+    private Predicate<String> skipUnavailablePredicate;
 
+    // MP TODO: should this only be used for testing? remove this later?
     public EsqlExecutionInfo() {
+        this(Predicates.always());  // default all clusters to skip_unavailable=true
+    }
+
+    public EsqlExecutionInfo(Predicate<String> skipUnavailablePredicate) {
         this.clusters = ConcurrentCollections.newConcurrentMap();  // MP TODO: does this need to be a ConcurrentHashMap
+        this.skipUnavailablePredicate = skipUnavailablePredicate;
+    }
+
+    // MP TODO: is there a better way to supply this info? Awkward to have it here
+
+    /**
+     * @param clusterAlias to lookup skip_unavailable from
+     * @return skip_unavailable setting (true/false)
+     * @throws org.elasticsearch.transport.NoSuchRemoteClusterException if clusterAlias is unknown to this node's RemoteClusterService
+     */
+    public boolean isSkipUnavailable(String clusterAlias) {
+        if (RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY.equals(clusterAlias)) {
+            return false;
+        }
+        return skipUnavailablePredicate.test(clusterAlias);
     }
 
     public Cluster getCluster(String clusterAlias) {
@@ -56,8 +80,6 @@ public class EsqlExecutionInfo {
         public static final ParseField INDICES_FIELD = new ParseField("indices");
         public static final ParseField STATUS_FIELD = new ParseField("status");
         public static final ParseField TOOK = new ParseField("took");
-
-        public static final boolean SKIP_UNAVAILABLE_DEFAULT = true;  // MP TODO - do we need this for ESQL?
 
         private final String clusterAlias;
         private final String indexExpression; // original index expression from the user for this cluster
@@ -174,6 +196,7 @@ public class EsqlExecutionInfo {
          * All other fields can be set and override the value in the "copyFrom" Cluster.
          */
         public static class Builder {
+            private String indexExpression;
             private Cluster.Status status;
             private Integer totalShards;
             private Integer successfulShards;
@@ -195,7 +218,7 @@ public class EsqlExecutionInfo {
             public Cluster build() {
                 return new Cluster(
                     original.getClusterAlias(),
-                    original.getIndexExpression(),
+                    indexExpression == null ? original.getIndexExpression() : indexExpression,
                     original.isSkipUnavailable(),
                     status != null ? status : original.getStatus(),
                     totalShards != null ? totalShards : original.getTotalShards(),
@@ -205,6 +228,11 @@ public class EsqlExecutionInfo {
                     failures != null ? failures : original.getFailures(),
                     took != null ? took : original.getTook()
                 );
+            }
+
+            public Cluster.Builder setIndexExpression(String indexExpression) {
+                this.indexExpression = indexExpression;
+                return this;
             }
 
             public Cluster.Builder setStatus(Cluster.Status status) {
