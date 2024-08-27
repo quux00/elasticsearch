@@ -22,9 +22,21 @@ import java.util.List;
 // MP TODO: why was this class marked as final?
 public /*final*/ class ComputeResponse extends TransportResponse {
     private final List<DriverProfile> profiles;
+    private long tookNanos = 0;
+    public int totalShards = 0;
+    public int successfulShards = 0;
+    public int skippedShards = 0;
+    public int failedShards = 0;
 
     ComputeResponse(List<DriverProfile> profiles) {
         this.profiles = profiles;
+    }
+
+    // MP TODO: add the other shards fields here once I get this working
+    ComputeResponse(List<DriverProfile> profiles, long tookNanos, int totalShards) {
+        this(profiles);
+        this.tookNanos = tookNanos;
+        this.totalShards = totalShards;
     }
 
     ComputeResponse(StreamInput in) throws IOException {
@@ -38,6 +50,10 @@ public /*final*/ class ComputeResponse extends TransportResponse {
         } else {
             profiles = null;
         }
+        if (in.getTransportVersion().onOrAfter(TransportVersions.INGEST_PIPELINE_EXCEPTION_ADDED)) { // MP TODO: add own new version
+            this.tookNanos = in.readVLong();
+            this.totalShards = in.readVInt();
+        }
     }
 
     @Override
@@ -50,9 +66,21 @@ public /*final*/ class ComputeResponse extends TransportResponse {
                 out.writeCollection(profiles);
             }
         }
+        if (out.getTransportVersion().onOrAfter(TransportVersions.INGEST_PIPELINE_EXCEPTION_ADDED)) { // MP TODO: add own new version
+            out.writeVLong(tookNanos);
+            out.writeVInt(totalShards);
+        }
     }
 
     public List<DriverProfile> getProfiles() {
         return profiles;
+    }
+
+    public long getTookNanos() {
+        return tookNanos;
+    }
+
+    public int getTotalShards() {
+        return totalShards;
     }
 }

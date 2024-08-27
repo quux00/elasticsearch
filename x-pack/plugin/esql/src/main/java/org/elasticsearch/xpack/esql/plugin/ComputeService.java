@@ -817,8 +817,10 @@ public class ComputeService {
             }
             // MP TODO: is it OK to pass in null for the ExecutionInfo?
             EsqlExecutionInfo executionInfo = new EsqlExecutionInfo();
+            // MP TODO: the skipUnavailable value here is unknown (and not needed) - so need to create a ctor that doesn't need it or
+            // MP TODO: allow it to be set to null?
             executionInfo.swapCluster(new EsqlExecutionInfo.Cluster(request.clusterAlias(), Arrays.toString(request.indices()), true));
-            try (var computeListener = new ComputeListener(transportService, (CancellableTask) task, null, listener)) {
+            try (var computeListener = new ComputeListener(transportService, (CancellableTask) task, executionInfo, listener)) {
                 runComputeOnRemoteCluster(
                     request.clusterAlias(),
                     request.sessionId(),
@@ -827,7 +829,7 @@ public class ComputeService {
                     (ExchangeSinkExec) plan,
                     Set.of(remoteClusterPlan.targetIndices()),
                     remoteClusterPlan.originalIndices(),
-                    executionInfo,  // MP TODO: this has to be non-null, so what do we do here?
+                    executionInfo,
                     computeListener
                 );
             }

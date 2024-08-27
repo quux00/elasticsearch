@@ -9,7 +9,6 @@ package org.elasticsearch.xpack.esql.plugin;
 
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.RefCountingListener;
-import org.elasticsearch.common.Strings;
 import org.elasticsearch.compute.operator.DriverProfile;
 import org.elasticsearch.compute.operator.FailureCollector;
 import org.elasticsearch.compute.operator.ResponseHeadersCollector;
@@ -58,6 +57,9 @@ final class ComputeListener implements Releasable {
         this.collectedProfiles = Collections.synchronizedList(new ArrayList<>());
         this.refs = new RefCountingListener(1, ActionListener.wrap(ignored -> {
             responseHeaders.finish();
+            System.err.println(
+                "88888888888 A ComputeListener RefCountingListener, creating ComputeResponse and has ref to ExecutionInfo: " + executionInfo
+            );
             var result = new ComputeResponse(collectedProfiles.isEmpty() ? List.of() : collectedProfiles.stream().toList());
             delegate.onResponse(result);
         }, e -> delegate.onFailure(failureCollector.getFailure())));
@@ -68,6 +70,9 @@ final class ComputeListener implements Releasable {
      */
     ActionListener<Void> acquireAvoid() {
         return refs.acquire().delegateResponse((l, e) -> {
+            System.err.println(
+                "88888888888 B ComputeListener RefCountingListener, acquireAvoid and has ref to ExecutionInfo: " + executionInfo
+            );
             failureCollector.unwrapAndCollect(e);
             try {
                 if (cancelled.compareAndSet(false, true)) {
@@ -90,19 +95,19 @@ final class ComputeListener implements Releasable {
                 numProfiles = resp.getProfiles().size();
             }
             // MP TODO --- start TMP
-            if (resp.remoteAddress() == null) {
-                System.err.println("NNN NNN DEBUG NNN: acquireCompute resp for port: null + num profiles: " + numProfiles);
-            } else {
-                System.err.println(
-                    "NNN NNN DEBUG NNN: acquireCompute resp for port: [["
-                        + resp.remoteAddress().getPort()
-                        + "]] :: numProfiles: "
-                        + numProfiles
-                );
-            }
-            for (DriverProfile profile : resp.getProfiles()) {
-                System.err.println("  |-- NNN NNN DEBUG NNN: acquireCompute resp profile: " + Strings.toString(profile));
-            }
+            // if (resp.remoteAddress() == null) {
+            // System.err.println("NNN NNN DEBUG NNN: acquireCompute resp for port: null + num profiles: " + numProfiles);
+            // } else {
+            // System.err.println(
+            // "NNN NNN DEBUG NNN: acquireCompute resp for port: [["
+            // + resp.remoteAddress().getPort()
+            // + "]] :: numProfiles: "
+            // + numProfiles
+            // );
+            // }
+            // for (DriverProfile profile : resp.getProfiles()) {
+            // System.err.println(" |-- NNN NNN DEBUG NNN: acquireCompute resp profile: " + Strings.toString(profile));
+            // }
             // MP TODO --- end TMP
             responseHeaders.collect();
             var profiles = resp.getProfiles();
@@ -122,6 +127,9 @@ final class ComputeListener implements Releasable {
         assert clusterAlias != null : "Must provide non-null cluster alias to acquireCompute";
         assert executionInfo != null : "When providing cluster alias to acquireCompute, EsqlExecutionInfo must not be null";
         return acquireAvoid().map(resp -> {
+            System.err.println(
+                "88888888888 C ComputeListener RefCountingListener, acquireAvoid and has ref to ExecutionInfo: " + executionInfo
+            );
             var profiles = resp.getProfiles();
             int numProfiles = profiles == null ? -1 : profiles.size();
             // MP TODO: is this the right way to calculate overall took time for the query on the remote cluster?
