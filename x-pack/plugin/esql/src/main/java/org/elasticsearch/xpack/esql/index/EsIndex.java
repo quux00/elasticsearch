@@ -32,9 +32,6 @@ public class EsIndex implements Writeable {
         this.name = name;
         this.mapping = mapping;
         this.concreteIndices = concreteIndices;
-        // MP TODO: this object handles all clusters: print example: concreteIndices: [blogs, remote2:blogs]
-        System.err.println("%%% EsIndex ctor: concreteIndices: " + concreteIndices.toString());
-        System.err.println("%%% EsIndex ctor: mapping: " + mapping);
     }
 
     @SuppressWarnings("unchecked")

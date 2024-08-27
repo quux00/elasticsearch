@@ -31,6 +31,8 @@ import java.util.concurrent.atomic.AtomicBoolean;
  * 2. Collects driver profiles from sub tasks.
  * 3. Collects response headers from sub tasks, specifically warnings emitted during compute
  * 4. Collects failures and returns the most appropriate exception to the caller.
+ *
+ * MP TODO: update docs around changes for CCS telemetry collection
  */
 final class ComputeListener implements Releasable {
     private static final Logger LOGGER = LogManager.getLogger(ComputeService.class);
@@ -50,6 +52,17 @@ final class ComputeListener implements Releasable {
         EsqlExecutionInfo executionInfo,
         ActionListener<ComputeResponse> delegate
     ) {
+        this(transportService, task, executionInfo, null, delegate);
+    }
+
+    // MP TODO: where is this created for the case on the remote cluster where it needs to add ExecInfo - can we pass in clusterAlias?
+    ComputeListener(
+        TransportService transportService,
+        CancellableTask task,
+        EsqlExecutionInfo executionInfo,
+        String clusterAlias,  // when non-null indicates that this is a top-level ComputeListener running on a remote cluster for CCS
+        ActionListener<ComputeResponse> delegate
+    ) {
         this.transportService = transportService;
         this.task = task;
         this.executionInfo = executionInfo;
@@ -60,7 +73,19 @@ final class ComputeListener implements Releasable {
             System.err.println(
                 "88888888888 A ComputeListener RefCountingListener, creating ComputeResponse and has ref to ExecutionInfo: " + executionInfo
             );
-            var result = new ComputeResponse(collectedProfiles.isEmpty() ? List.of() : collectedProfiles.stream().toList());
+            List<DriverProfile> profiles = collectedProfiles.isEmpty() ? List.of() : collectedProfiles.stream().toList();
+            ComputeResponse result = null;
+            if (clusterAlias != null) {
+                // // MP TODO: I have no idea if this invariant should be true - adding for debugging right now
+                assert executionInfo != null : "EsqlExecutionInfo must not be null when clusterAlias is present";
+                System.err.println("          +++++ ++++ clusterAlias: " + clusterAlias);
+                EsqlExecutionInfo.Cluster cluster = executionInfo.getCluster(clusterAlias);
+                System.err.println("          +++++ ++++ cluster       : " + cluster);
+                assert cluster != null : "Cluster for " + clusterAlias + " is unexpectedly null in execInfo in ComputeListener. Why?";
+                result = new ComputeResponse(profiles, 888, cluster.getTotalShards());
+            } else {
+                result = new ComputeResponse(profiles);
+            }
             delegate.onResponse(result);
         }, e -> delegate.onFailure(failureCollector.getFailure())));
     }
@@ -114,7 +139,6 @@ final class ComputeListener implements Releasable {
             if (profiles != null && profiles.isEmpty() == false) {
                 collectedProfiles.addAll(profiles);
             }
-            System.err.println("NNN NNN DEBUG NNN: acquireCompute resp collectedProfiles sz: " + collectedProfiles.size());
             return null;
         });
     }
@@ -128,7 +152,7 @@ final class ComputeListener implements Releasable {
         assert executionInfo != null : "When providing cluster alias to acquireCompute, EsqlExecutionInfo must not be null";
         return acquireAvoid().map(resp -> {
             System.err.println(
-                "88888888888 C ComputeListener RefCountingListener, acquireAvoid and has ref to ExecutionInfo: " + executionInfo
+                "88888888888 C ComputeListener RefCountingListener, acquireCompute and has ref to ExecutionInfo: " + executionInfo
             );
             var profiles = resp.getProfiles();
             int numProfiles = profiles == null ? -1 : profiles.size();
@@ -145,19 +169,20 @@ final class ComputeListener implements Releasable {
             // MP TODO: if yes, where does the failure path go - how do we update the ExecutionInfo with failure info?
             System.err.printf(
                 ">>> ^^^ DEBUG 777: ComputeListener acquireCompute - add cluster info for [%s] to execInfo. nprofiles: %d; maxTook: %d; "
-                    + "type of resp:%s; is ClusterComputeResponse:%s\n",
+                    + "total shards in resp:%d; took in resp:%d\n",
                 clusterAlias,
                 numProfiles,
                 maxTook,
-                resp.getClass().getSimpleName(),
-                resp instanceof ClusterComputeResponse
+                resp.getTotalShards(),
+                resp.getTookNanos()
             );
             EsqlExecutionInfo.Cluster cluster = executionInfo.getCluster(clusterAlias);
             executionInfo.swapCluster(
                 new EsqlExecutionInfo.Cluster.Builder(cluster)
                     // MP TODO: how detect actual response status to set Cluster status here?
                     .setStatus(EsqlExecutionInfo.Cluster.Status.SUCCESSFUL)
-                    .setTook(new TimeValue(maxTook))
+                    .setTook(new TimeValue(resp.getTookNanos()))
+                    .setTotalShards(resp.getTotalShards())
                     .build()
             );
             responseHeaders.collect();

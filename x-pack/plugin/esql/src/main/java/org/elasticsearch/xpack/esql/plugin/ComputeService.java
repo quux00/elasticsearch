@@ -389,7 +389,7 @@ public class ComputeService {
                             clusterRequest,
                             rootTask,
                             TransportRequestOptions.EMPTY,
-                            new ActionListenerResponseHandler<>(clusterListener, ClusterComputeResponse::new, esqlExecutor)
+                            new ActionListenerResponseHandler<>(clusterListener, ComputeResponse::new, esqlExecutor)
                         );
                     })
                 );
@@ -816,20 +816,21 @@ public class ComputeService {
                 return;
             }
             // MP TODO: is it OK to pass in null for the ExecutionInfo?
-            EsqlExecutionInfo executionInfo = new EsqlExecutionInfo();
+            EsqlExecutionInfo execInfo = new EsqlExecutionInfo();
             // MP TODO: the skipUnavailable value here is unknown (and not needed) - so need to create a ctor that doesn't need it or
             // MP TODO: allow it to be set to null?
-            executionInfo.swapCluster(new EsqlExecutionInfo.Cluster(request.clusterAlias(), Arrays.toString(request.indices()), true));
-            try (var computeListener = new ComputeListener(transportService, (CancellableTask) task, executionInfo, listener)) {
+            String clusterAlias = request.clusterAlias();
+            execInfo.swapCluster(new EsqlExecutionInfo.Cluster(clusterAlias, Arrays.toString(request.indices()), true));
+            try (var computeListener = new ComputeListener(transportService, (CancellableTask) task, execInfo, clusterAlias, listener)) {
                 runComputeOnRemoteCluster(
-                    request.clusterAlias(),
+                    clusterAlias,
                     request.sessionId(),
                     (CancellableTask) task,
                     request.configuration(),
                     (ExchangeSinkExec) plan,
                     Set.of(remoteClusterPlan.targetIndices()),
                     remoteClusterPlan.originalIndices(),
-                    executionInfo,
+                    execInfo,
                     computeListener
                 );
             }

@@ -44,12 +44,11 @@ public class EsqlExecutionInfo {
     }
 
     public EsqlExecutionInfo(Predicate<String> skipUnavailablePredicate) {
-        this.clusters = ConcurrentCollections.newConcurrentMap();  // MP TODO: does this need to be a ConcurrentHashMap
+        this.clusters = ConcurrentCollections.newConcurrentMap();  // MP TODO: does this need to be a ConcurrentHashMap?
         this.skipUnavailablePredicate = skipUnavailablePredicate;
     }
 
     // MP TODO: is there a better way to supply this info? Awkward to have it here
-
     /**
      * @param clusterAlias to lookup skip_unavailable from
      * @return skip_unavailable setting (true/false)
