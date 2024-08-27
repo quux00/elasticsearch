@@ -287,6 +287,7 @@ public class ComputeService {
         EsqlExecutionInfo executionInfo,
         ComputeListener computeListener
     ) {
+        System.err.println("PPP startComputeOnDataNodes clusterAlias: [" + clusterAlias + "]");
         var planWithReducer = configuration.pragmas().nodeLevelReduction() == false
             ? dataNodePlan
             : dataNodePlan.transformUp(FragmentExec.class, f -> {
@@ -388,7 +389,7 @@ public class ComputeService {
                             clusterRequest,
                             rootTask,
                             TransportRequestOptions.EMPTY,
-                            new ActionListenerResponseHandler<>(clusterListener, ComputeResponse::new, esqlExecutor)
+                            new ActionListenerResponseHandler<>(clusterListener, ClusterComputeResponse::new, esqlExecutor)
                         );
                     })
                 );
@@ -553,6 +554,7 @@ public class ComputeService {
         EsqlExecutionInfo executionInfo,
         ActionListener<List<DataNode>> listener
     ) {
+        System.err.println("PPP lookupDataNodes clusterAlias: [" + clusterAlias + "]");
         ActionListener<SearchShardsResponse> searchShardsListener = listener.map(resp -> {
             Map<String, DiscoveryNode> nodes = new HashMap<>();
             for (DiscoveryNode node : resp.getNodes()) {

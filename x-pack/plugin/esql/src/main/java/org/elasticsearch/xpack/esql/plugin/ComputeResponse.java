@@ -19,9 +19,9 @@ import java.util.List;
 /**
  * The compute result of {@link DataNodeRequest} or {@link ClusterComputeRequest}
  */
-final class ComputeResponse extends TransportResponse {
+// MP TODO: why was this class marked as final?
+public /*final*/ class ComputeResponse extends TransportResponse {
     private final List<DriverProfile> profiles;
-    // MP TODO: can add an overall took time here that the remote coordinator is tracking
 
     ComputeResponse(List<DriverProfile> profiles) {
         this.profiles = profiles;

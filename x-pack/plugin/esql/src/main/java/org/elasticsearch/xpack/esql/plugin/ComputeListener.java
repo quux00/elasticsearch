@@ -89,6 +89,7 @@ final class ComputeListener implements Releasable {
             if (resp.getProfiles() != null) {
                 numProfiles = resp.getProfiles().size();
             }
+            // MP TODO --- start TMP
             if (resp.remoteAddress() == null) {
                 System.err.println("NNN NNN DEBUG NNN: acquireCompute resp for port: null + num profiles: " + numProfiles);
             } else {
@@ -102,6 +103,7 @@ final class ComputeListener implements Releasable {
             for (DriverProfile profile : resp.getProfiles()) {
                 System.err.println("  |-- NNN NNN DEBUG NNN: acquireCompute resp profile: " + Strings.toString(profile));
             }
+            // MP TODO --- end TMP
             responseHeaders.collect();
             var profiles = resp.getProfiles();
             if (profiles != null && profiles.isEmpty() == false) {
@@ -134,10 +136,13 @@ final class ComputeListener implements Releasable {
             // MP TODO: if we get here does that mean that the remote search is finished and was SUCCESSFUL?
             // MP TODO: if yes, where does the failure path go - how do we update the ExecutionInfo with failure info?
             System.err.printf(
-                ">>> ^^^ DEBUG 777: ComputeListener acquireCompute - add cluster info for [%s] to execInfo. nprofiles: %d; maxTook: %d\n",
+                ">>> ^^^ DEBUG 777: ComputeListener acquireCompute - add cluster info for [%s] to execInfo. nprofiles: %d; maxTook: %d; "
+                    + "type of resp:%s; is ClusterComputeResponse:%s\n",
                 clusterAlias,
                 numProfiles,
-                maxTook
+                maxTook,
+                resp.getClass().getSimpleName(),
+                resp instanceof ClusterComputeResponse
             );
             EsqlExecutionInfo.Cluster cluster = executionInfo.getCluster(clusterAlias);
             executionInfo.swapCluster(
