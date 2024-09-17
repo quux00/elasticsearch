@@ -6,6 +6,8 @@
  */
 package org.elasticsearch.xpack.esql.session;
 
+import org.elasticsearch.ElasticsearchException;
+import org.elasticsearch.ElasticsearchWrapperException;
 import org.elasticsearch.ExceptionsHelper;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.fieldcaps.FieldCapabilitiesFailure;
@@ -227,23 +229,36 @@ public class IndexResolver {
         }
 
         if (failures != null) {
-            Set<String> unavailableClusters = new HashSet<>();
+            Map<String, FieldCapabilitiesFailure> unavailableClusters = new HashMap<>();
             for (FieldCapabilitiesFailure failure : failures) {
                 if (isRemoteUnavailableException(failure.getException())) {
                     for (String indexExpression : failure.getIndices()) {
                         if (indexExpression.indexOf(RemoteClusterAware.REMOTE_CLUSTER_INDEX_SEPARATOR) > 0) {
-                            unavailableClusters.add(parseClusterAlias(indexExpression));
+                            unavailableClusters.put(parseClusterAlias(indexExpression), failure);
                         }
                     }
                 }
             }
-            for (String clusterAlias : unavailableClusters) {
-                executionInfo.swapCluster(
-                    clusterAlias,
-                    (k, v) -> new EsqlExecutionInfo.Cluster.Builder(v).setStatus(EsqlExecutionInfo.Cluster.Status.SKIPPED).build()
-                );
-                // TODO: follow-on PR will set SKIPPED status when skip_unavailable=true and throw an exception when skip_unavailable=false
+            for (Map.Entry<String, FieldCapabilitiesFailure> unavailable : unavailableClusters.entrySet()) {
+                String clusterAlias = unavailable.getKey();
+                if (executionInfo.getCluster(clusterAlias).isSkipUnavailable()) {
+                    executionInfo.swapCluster(
+                        clusterAlias,
+                        (k, v) -> new EsqlExecutionInfo.Cluster.Builder(v).setStatus(EsqlExecutionInfo.Cluster.Status.SKIPPED).build()
+                    );
+                } else {
+                    throw new RemoteClusterException(
+                        Strings.format("Remote cluster [%s] with setting skip_unavailable=false is not available"),
+                        unavailable.getValue().getException()
+                    );
+                }
             }
+        }
+    }
+
+    public static class RemoteClusterException extends ElasticsearchException implements ElasticsearchWrapperException {
+        public RemoteClusterException(String msg, Throwable cause) {
+            super(msg, cause);
         }
     }
 
