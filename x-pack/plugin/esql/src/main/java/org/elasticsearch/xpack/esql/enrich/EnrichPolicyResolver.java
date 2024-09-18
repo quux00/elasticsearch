@@ -35,6 +35,7 @@ import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.xpack.core.ClientHelper;
 import org.elasticsearch.xpack.core.enrich.EnrichMetadata;
 import org.elasticsearch.xpack.core.enrich.EnrichPolicy;
+import org.elasticsearch.xpack.esql.action.EsqlExecutionInfo;
 import org.elasticsearch.xpack.esql.analysis.EnrichResolution;
 import org.elasticsearch.xpack.esql.core.type.DataType;
 import org.elasticsearch.xpack.esql.core.type.EsField;
@@ -100,6 +101,7 @@ public class EnrichPolicyResolver {
     public void resolvePolicies(
         Collection<String> targetClusters,
         Collection<UnresolvedPolicy> unresolvedPolicies,
+        EsqlExecutionInfo executionInfo,
         ActionListener<EnrichResolution> listener
     ) {
         if (unresolvedPolicies.isEmpty() || targetClusters.isEmpty()) {
@@ -108,7 +110,7 @@ public class EnrichPolicyResolver {
         }
         final Set<String> remoteClusters = new HashSet<>(targetClusters);
         final boolean includeLocal = remoteClusters.remove(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY);
-        lookupPolicies(remoteClusters, includeLocal, unresolvedPolicies, listener.map(lookupResponses -> {
+        lookupPolicies(remoteClusters, includeLocal, unresolvedPolicies, executionInfo, listener.map(lookupResponses -> {
             final EnrichResolution enrichResolution = new EnrichResolution();
             for (UnresolvedPolicy unresolved : unresolvedPolicies) {
                 Tuple<ResolvedEnrichPolicy, String> resolved = mergeLookupResults(
@@ -246,6 +248,7 @@ public class EnrichPolicyResolver {
         Collection<String> remoteClusters,
         boolean includeLocal,
         Collection<UnresolvedPolicy> unresolvedPolicies,
+        EsqlExecutionInfo executionInfo,
         ActionListener<Map<String, LookupResponse>> listener
     ) {
         final Map<String, LookupResponse> lookupResponses = ConcurrentCollections.newConcurrentMap();
@@ -261,8 +264,18 @@ public class EnrichPolicyResolver {
                     try {
                         connection = getRemoteConnection(cluster);
                     } catch (Exception e) {
-                        refs.acquire().onFailure(e);
-                        return;
+                        if (executionInfo.getCluster(cluster).isSkipUnavailable()) {
+                            // MP TODO: do I need to set shard counts to zero or update any other fields?
+                            executionInfo.swapCluster(
+                                cluster,
+                                (k, v) -> new EsqlExecutionInfo.Cluster.Builder(v).setStatus(EsqlExecutionInfo.Cluster.Status.SKIPPED)
+                                    .build()
+                            );
+                            continue;
+                        } else {
+                            refs.acquire().onFailure(e);
+                            return;
+                        }
                     }
                     transportService.sendRequest(
                         connection,

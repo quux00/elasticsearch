@@ -231,32 +231,39 @@ public class EsqlSession {
                 .flatMap(t -> Arrays.stream(Strings.commaDelimitedListToStringArray(t.id().index())))
                 .toArray(String[]::new)
         ).keySet();
-        enrichPolicyResolver.resolvePolicies(targetClusters, unresolvedPolicies, listener.delegateFailureAndWrap((l, enrichResolution) -> {
-            // first we need the match_fields names from enrich policies and THEN, with an updated list of fields, we call field_caps API
-            var matchFields = enrichResolution.resolvedEnrichPolicies()
-                .stream()
-                .map(ResolvedEnrichPolicy::matchField)
-                .collect(Collectors.toSet());
-            preAnalyzeIndices(parsed, executionInfo, l.delegateFailureAndWrap((ll, indexResolution) -> {
-                if (indexResolution.isValid()) {
-                    Set<String> newClusters = enrichPolicyResolver.groupIndicesPerCluster(
-                        indexResolution.get().concreteIndices().toArray(String[]::new)
-                    ).keySet();
-                    // If new clusters appear when resolving the main indices, we need to resolve the enrich policies again
-                    // or exclude main concrete indices. Since this is rare, it's simpler to resolve the enrich policies again.
-                    // TODO: add a test for this
-                    if (targetClusters.containsAll(newClusters) == false) {
-                        enrichPolicyResolver.resolvePolicies(
-                            newClusters,
-                            unresolvedPolicies,
-                            ll.map(newEnrichResolution -> action.apply(indexResolution, newEnrichResolution))
-                        );
-                        return;
+        enrichPolicyResolver.resolvePolicies(
+            targetClusters,
+            unresolvedPolicies,
+            executionInfo,
+            listener.delegateFailureAndWrap((l, enrichResolution) -> {
+                // first we need the match_fields names from enrich policies and THEN, with an updated list of fields, we call field_caps
+                // API
+                var matchFields = enrichResolution.resolvedEnrichPolicies()
+                    .stream()
+                    .map(ResolvedEnrichPolicy::matchField)
+                    .collect(Collectors.toSet());
+                preAnalyzeIndices(parsed, executionInfo, l.delegateFailureAndWrap((ll, indexResolution) -> {
+                    if (indexResolution.isValid()) {
+                        Set<String> newClusters = enrichPolicyResolver.groupIndicesPerCluster(
+                            indexResolution.get().concreteIndices().toArray(String[]::new)
+                        ).keySet();
+                        // If new clusters appear when resolving the main indices, we need to resolve the enrich policies again
+                        // or exclude main concrete indices. Since this is rare, it's simpler to resolve the enrich policies again.
+                        // TODO: add a test for this
+                        if (targetClusters.containsAll(newClusters) == false) {
+                            enrichPolicyResolver.resolvePolicies(
+                                newClusters,
+                                unresolvedPolicies,
+                                executionInfo,
+                                ll.map(newEnrichResolution -> action.apply(indexResolution, newEnrichResolution))
+                            );
+                            return;
+                        }
                     }
-                }
-                ll.onResponse(action.apply(indexResolution, enrichResolution));
-            }), matchFields);
-        }));
+                    ll.onResponse(action.apply(indexResolution, enrichResolution));
+                }), matchFields);
+            })
+        );
     }
 
     private void preAnalyzeIndices(

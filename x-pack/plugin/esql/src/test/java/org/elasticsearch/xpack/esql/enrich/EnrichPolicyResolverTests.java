@@ -441,7 +441,8 @@ public class EnrichPolicyResolverTests extends ESTestCase {
                     unresolvedPolicies.add(new UnresolvedPolicy("legacy-policy-1", randomFrom(Enrich.Mode.values())));
                 }
             }
-            super.resolvePolicies(clusters, unresolvedPolicies, future);
+            // MP TODO: pass in actual EsqlExecutionInfo
+            super.resolvePolicies(clusters, unresolvedPolicies, null, future);
             return future.actionGet(30, TimeUnit.SECONDS);
         }
 
