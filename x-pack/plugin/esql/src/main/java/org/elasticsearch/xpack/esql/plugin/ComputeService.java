@@ -175,6 +175,7 @@ public class ComputeService {
             );
             try (
                 var computeListener = ComputeListener.createComputeListener(
+                    RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY,
                     transportService,
                     rootTask,
                     execInfo,
@@ -202,15 +203,23 @@ public class ComputeService {
             transportService.getThreadPool().executor(ThreadPool.Names.SEARCH)
         );
         long start = configuration.getQueryStartTimeNanos();
+        String local = RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
         try (
             Releasable ignored = exchangeSource.addEmptySink();
             // this is the top level ComputeListener called once at the end (e.g., once all clusters have finished for a CCS)
-            var computeListener = ComputeListener.createComputeListener(transportService, rootTask, execInfo, start, listener.map(r -> {
-                long tookTimeNanos = System.nanoTime() - configuration.getQueryStartTimeNanos();
-                execInfo.overallTook(new TimeValue(tookTimeNanos, TimeUnit.NANOSECONDS));
-                System.err.println("AAA AAA >>> D D D D: FINAL TOP LEVEL computeListener: r.uniqueID: " + r.uniqueId);
-                return new Result(physicalPlan.output(), collectedPages, r.getProfiles(), execInfo);
-            }))
+            var computeListener = ComputeListener.createComputeListener(
+                local,
+                transportService,
+                rootTask,
+                execInfo,
+                start,
+                listener.map(r -> {
+                    long tookTimeNanos = System.nanoTime() - configuration.getQueryStartTimeNanos();
+                    execInfo.overallTook(new TimeValue(tookTimeNanos, TimeUnit.NANOSECONDS));
+                    System.err.println("AAA AAA >>> D D D D: FINAL TOP LEVEL computeListener: r.uniqueID: " + r.uniqueId);
+                    return new Result(physicalPlan.output(), collectedPages, r.getProfiles(), execInfo);
+                })
+            )
         ) {
             // run compute on the coordinator
             exchangeSource.addCompletionListener(computeListener.acquireAvoid());
