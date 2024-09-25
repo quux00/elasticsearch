@@ -9,7 +9,6 @@ package org.elasticsearch.xpack.esql.plugin;
 
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.support.RefCountingListener;
-import org.elasticsearch.common.util.concurrent.CountDown;
 import org.elasticsearch.compute.operator.DriverProfile;
 import org.elasticsearch.compute.operator.FailureCollector;
 import org.elasticsearch.compute.operator.ResponseHeadersCollector;
@@ -18,6 +17,7 @@ import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
 import org.elasticsearch.tasks.CancellableTask;
+import org.elasticsearch.transport.RemoteClusterAware;
 import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.xpack.esql.action.EsqlExecutionInfo;
 
@@ -47,14 +47,38 @@ final class ComputeListener implements Releasable {
     private final ResponseHeadersCollector responseHeaders;
 
     private final EsqlExecutionInfo esqlExecutionInfo;
+    private final long queryStartTimeNanos;
 
+    // for use by DataNodeRequestHandler
+    public static ComputeListener createComputeListener(
+        TransportService transportService,
+        CancellableTask task,
+        ActionListener<ComputeResponse> delegate
+    ) {
+        System.err.println("------- Creating compute Listener for DataNodeRequestHandler");
+        // try {
+        // throw new RuntimeException("DDD -------------- Create CL from: ");
+        // } catch (RuntimeException e) {
+        // LOGGER.warn(e.getMessage() + " stack trace ", e);
+        // }
+        return new ComputeListener(transportService, task, null, null, -1, delegate);
+    }
+
+    // for use by top level ComputeListener in ComputeService
     public static ComputeListener createComputeListener(
         TransportService transportService,
         CancellableTask task,
         EsqlExecutionInfo executionInfo,
+        long queryStartTimeNanos,
         ActionListener<ComputeResponse> delegate
     ) {
-        return new ComputeListener(transportService, task, null, executionInfo, delegate);
+        System.err.println("------- Creating TOP LEVEL compute Listener (non remote)");
+        // try {
+        // throw new RuntimeException("DDD -------------- Create CL from: ");
+        // } catch (RuntimeException e) {
+        // LOGGER.warn(e.getMessage() + " stack trace ", e);
+        // }
+        return new ComputeListener(transportService, task, null, executionInfo, queryStartTimeNanos, delegate);
     }
 
     /**
@@ -72,9 +96,11 @@ final class ComputeListener implements Releasable {
         TransportService transportService,
         CancellableTask task,
         EsqlExecutionInfo executionInfo,
+        long queryStartTimeNanos,
         ActionListener<ComputeResponse> delegate
     ) {
-        return new ComputeListener(transportService, task, clusterAlias, executionInfo, delegate);
+        System.err.println("------- Creating REMOTE compute Listener for: " + clusterAlias);
+        return new ComputeListener(transportService, task, clusterAlias, executionInfo, queryStartTimeNanos, delegate);
     }
 
     private ComputeListener(
@@ -82,6 +108,7 @@ final class ComputeListener implements Releasable {
         CancellableTask task,
         String clusterAlias,
         EsqlExecutionInfo executionInfo,
+        long queryStartTimeNanos,
         ActionListener<ComputeResponse> delegate
     ) {
         this.transportService = transportService;
@@ -89,12 +116,24 @@ final class ComputeListener implements Releasable {
         this.responseHeaders = new ResponseHeadersCollector(transportService.getThreadPool().getThreadContext());
         this.collectedProfiles = Collections.synchronizedList(new ArrayList<>());
         this.esqlExecutionInfo = executionInfo;
+        this.queryStartTimeNanos = queryStartTimeNanos;
+        // MP TODO: write assert that checks if that clusterAlias is not null, then executionInfo must not be null
+
+        /**
+         * Three scenarios:
+         * clusterAlias and executionInfo are both null: DataNodeHandler case -
+         *   ACTION: do nothing in the refs Listener here, since took time was added in the acquireCompute layer
+         * clusterAlias is null, but executionInfo is not: local top level handler -
+         *   ACTION: update local cluster status (if present) and overall took time
+         * clusterAlias and executionInfo are both non-null: remote ESQL processing -
+         *   ACTION: create ComputeResponse with info from the remote ExecutionInfo (already in place)   XX DONE XX
+         */
+
         this.refs = new RefCountingListener(1, ActionListener.wrap(ignored -> {
             responseHeaders.finish();
             ComputeResponse result;
-            if (clusterAlias == null) {
-                result = new ComputeResponse(collectedProfiles.isEmpty() ? List.of() : collectedProfiles.stream().toList());
-            } else {
+
+            if (clusterAlias != null) {
                 // for remote executions - this ComputeResponse is created on the remote cluster/node and will be serialized back and
                 // received by the acquireCompute method callback on the coordinating cluster
                 EsqlExecutionInfo.Cluster cluster = esqlExecutionInfo.getCluster(clusterAlias);
@@ -106,6 +145,27 @@ final class ComputeListener implements Releasable {
                     cluster.getSkippedShards(),
                     cluster.getFailedShards()
                 );
+                System.err.printf(
+                    "REFS REFS REFS PATH 222: result.id: [%s]; took time into Resp: [%s]\n",
+                    result.uniqueId,
+                    cluster.getTook()
+                );
+
+            } else {
+                result = new ComputeResponse(collectedProfiles.isEmpty() ? List.of() : collectedProfiles.stream().toList());
+                System.err.printf("REFS REFS REFS PATH 111: result.id: [%s]\n", result.uniqueId);
+                if (executionInfo != null /*&& executionInfo.isCrossClusterSearch()*/) {  // MP TODO uncomment later once I have this
+                                                                                          // working
+                    System.err.printf("REFS REFS REFS PATH 111-BBB: result.id: [%s]\n", result.uniqueId);
+                    EsqlExecutionInfo.Cluster cluster = executionInfo.getCluster(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY);
+                    if (cluster != null) {
+                        executionInfo.swapCluster(
+                            RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY,
+                            (k, v) -> new EsqlExecutionInfo.Cluster.Builder(v).setStatus(EsqlExecutionInfo.Cluster.Status.SUCCESSFUL)
+                                .build()
+                        );
+                    }
+                }
             }
             delegate.onResponse(result);
         }, e -> delegate.onFailure(failureCollector.getFailure())));
@@ -131,48 +191,93 @@ final class ComputeListener implements Releasable {
     /**
      * Acquires a new listener that collects compute result. This listener will also collect warnings emitted during compute
      */
-    ActionListener<ComputeResponse> acquireCompute() {
+    ActionListener<ComputeResponse> acquireCompute(String clusterAlias) {
         return acquireAvoid().map(resp -> {
             responseHeaders.collect();
             var profiles = resp.getProfiles();
             if (profiles != null && profiles.isEmpty() == false) {
                 collectedProfiles.addAll(profiles);
             }
+
+            // MP TODO: - do I need all of these if guards? should some become asserts?
+            if (clusterAlias != null && queryStartTimeNanos > 0 && esqlExecutionInfo != null) {
+                long tookTimeNanos = System.nanoTime() - queryStartTimeNanos;
+                TimeValue tookTime = new TimeValue(tookTimeNanos, TimeUnit.NANOSECONDS);
+                System.err.println("AAA AAA >>> AAA acquireCompute took: " + tookTime);
+                esqlExecutionInfo.swapCluster(clusterAlias, (k, v) -> {
+                    if (v.getTook() == null || v.getTook().nanos() < tookTime.nanos()) {
+                        return new EsqlExecutionInfo.Cluster.Builder(v).setTook(tookTime).build();
+                    } else {
+                        return v;
+                    }
+                    // MP TODO: where do we set status as SUCCESSFUL?
+                    // if (countDown.countDown()) {
+                    // builder.setStatus(EsqlExecutionInfo.Cluster.Status.SUCCESSFUL);
+                    // }
+                });
+            }
+
             return null;
         });
     }
+
+    ActionListener<ComputeResponse> acquireCompute() {
+        return acquireCompute(null);
+    }
+
+    // coordinator "cluster-level" reduction time?
+    // ActionListener<ComputeResponse> acquireComputeCoord(long queryStartTimeNanosLoc) {
+    // return acquireAvoid().map(resp -> {
+    // System.err.println("CCC Coord >>> CCC1 ::: resp.uniqueID: " + resp.uniqueId);
+    // if (queryStartTimeNanos > 0) {
+    // long tookInstanceVar = System.nanoTime() - queryStartTimeNanos;
+    // TimeValue tookTimeInstanceVar = new TimeValue(tookInstanceVar, TimeUnit.NANOSECONDS);
+    // System.err.println("CCC Coord >>> CCC2 acquireComputeCoord: tookInstanceVar: " + tookTimeInstanceVar);
+    // }
+    // long tookTimeNanos = System.nanoTime() - queryStartTimeNanosLoc;
+    // TimeValue tookOnDataNode = new TimeValue(tookTimeNanos, TimeUnit.NANOSECONDS);
+    // System.err.println("CCC Coord >>> CCC3 acquireComputeCoord: tookOnDataNode: " + tookOnDataNode);
+    // responseHeaders.collect();
+    // var profiles = resp.getProfiles();
+    // if (profiles != null && profiles.isEmpty() == false) {
+    // collectedProfiles.addAll(profiles);
+    // }
+    // return null;
+    // });
+    // }
 
     /**
      * Acts like {@code acquireCompute} handling the response(s) from the runComputeOnDataNodes
      * phase. Per-cluster took time is recorded in the {@link EsqlExecutionInfo} and status is
      * set to SUCCESSFUL when the CountDown reaches zero.
      * @param clusterAlias remote cluster alias the data node compute is running on
-     * @param queryStartTimeNanos start time (on coordinating cluster) for computing took time (per cluster)
+     * @param queryStartTimeNanosLoc start time (on coordinating cluster) for computing took time (per cluster)
      * @param countDown counter of number of data nodes to wait for before changing cluster status from RUNNING to SUCCESSFUL
      */
-    ActionListener<ComputeResponse> acquireComputeForDataNodes(String clusterAlias, long queryStartTimeNanos, CountDown countDown) {
-        assert clusterAlias != null : "Must provide non-null cluster alias to acquireCompute";
-        return acquireAvoid().map(resp -> {
-            responseHeaders.collect();
-            var profiles = resp.getProfiles();
-            if (profiles != null && profiles.isEmpty() == false) {
-                collectedProfiles.addAll(profiles);
-            }
-            long tookTimeNanos = System.nanoTime() - queryStartTimeNanos;
-            TimeValue tookOnDataNode = new TimeValue(tookTimeNanos, TimeUnit.NANOSECONDS);
-            esqlExecutionInfo.swapCluster(clusterAlias, (k, v) -> {
-                EsqlExecutionInfo.Cluster.Builder builder = new EsqlExecutionInfo.Cluster.Builder(v);
-                if (v.getTook() == null || v.getTook().nanos() < tookOnDataNode.nanos()) {
-                    builder.setTook(tookOnDataNode);
-                }
-                if (countDown.countDown()) {
-                    builder.setStatus(EsqlExecutionInfo.Cluster.Status.SUCCESSFUL);
-                }
-                return builder.build();
-            });
-            return null;
-        });
-    }
+    // ActionListener<ComputeResponse> acquireComputeForDataNodes(String clusterAlias, long queryStartTimeNanosLoc, CountDown countDown) {
+    // assert clusterAlias != null : "Must provide non-null cluster alias to acquireCompute";
+    // return acquireAvoid().map(resp -> {
+    // responseHeaders.collect();
+    // var profiles = resp.getProfiles();
+    // if (profiles != null && profiles.isEmpty() == false) {
+    // collectedProfiles.addAll(profiles);
+    // }
+    // long tookTimeNanos = System.nanoTime() - queryStartTimeNanosLoc;
+    // TimeValue tookOnDataNode = new TimeValue(tookTimeNanos, TimeUnit.NANOSECONDS);
+    // System.err.println("AAA AAA >>> AAA acquireComputeForDataNodes: tookOnDataNode: " + tookOnDataNode);
+    // esqlExecutionInfo.swapCluster(clusterAlias, (k, v) -> {
+    // EsqlExecutionInfo.Cluster.Builder builder = new EsqlExecutionInfo.Cluster.Builder(v);
+    // if (v.getTook() == null || v.getTook().nanos() < tookOnDataNode.nanos()) {
+    // builder.setTook(tookOnDataNode);
+    // }
+    // if (countDown.countDown()) {
+    // builder.setStatus(EsqlExecutionInfo.Cluster.Status.SUCCESSFUL);
+    // }
+    // return builder.build();
+    // });
+    // return null;
+    // });
+    // }
 
     /**
      * The ActionListener to be used on the coordinating cluster when sending a cross-cluster

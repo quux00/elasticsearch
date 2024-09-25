@@ -126,7 +126,15 @@ public class ComputeListenerTests extends ESTestCase {
     public void testEmpty() {
         PlainActionFuture<ComputeResponse> results = new PlainActionFuture<>();
         EsqlExecutionInfo executionInfo = new EsqlExecutionInfo();
-        try (ComputeListener ignored = ComputeListener.createComputeListener(transportService, newTask(), executionInfo, results)) {
+        try (
+            ComputeListener ignored = ComputeListener.createComputeListener(
+                transportService,
+                newTask(),
+                executionInfo,
+                System.nanoTime(),
+                results
+            )
+        ) {
             assertFalse(results.isDone());
         }
         assertTrue(results.isDone());
@@ -137,7 +145,15 @@ public class ComputeListenerTests extends ESTestCase {
         PlainActionFuture<ComputeResponse> future = new PlainActionFuture<>();
         List<DriverProfile> allProfiles = new ArrayList<>();
         EsqlExecutionInfo executionInfo = new EsqlExecutionInfo();
-        try (ComputeListener computeListener = ComputeListener.createComputeListener(transportService, newTask(), executionInfo, future)) {
+        try (
+            ComputeListener computeListener = ComputeListener.createComputeListener(
+                transportService,
+                newTask(),
+                executionInfo,
+                System.nanoTime(),
+                future
+            )
+        ) {
             int tasks = randomIntBetween(1, 100);
             for (int t = 0; t < tasks; t++) {
                 if (randomBoolean()) {
@@ -172,7 +188,16 @@ public class ComputeListenerTests extends ESTestCase {
         List<DriverProfile> allProfiles = new ArrayList<>();
         EsqlExecutionInfo executionInfo = new EsqlExecutionInfo();
         executionInfo.swapCluster("rc1", (k, v) -> new EsqlExecutionInfo.Cluster("rc1", "logs*", false));
-        try (ComputeListener computeListener = ComputeListener.createOnRemote("rc1", transportService, newTask(), executionInfo, future)) {
+        try (
+            ComputeListener computeListener = ComputeListener.createOnRemote(
+                "rc1",
+                transportService,
+                newTask(),
+                executionInfo,
+                System.nanoTime(),
+                future
+            )
+        ) {
             int tasks = randomIntBetween(1, 5);
             for (int t = 0; t < tasks; t++) {
                 ComputeResponse resp = randomResponse(true);
@@ -227,7 +252,16 @@ public class ComputeListenerTests extends ESTestCase {
             )
         );
         long startTimeNanos = System.nanoTime() - 50000;
-        try (ComputeListener computeListener = ComputeListener.createOnRemote("rc1", transportService, newTask(), executionInfo, future)) {
+        try (
+            ComputeListener computeListener = ComputeListener.createOnRemote(
+                "rc1",
+                transportService,
+                newTask(),
+                executionInfo,
+                System.nanoTime(),
+                future
+            )
+        ) {
             int tasks = randomIntBetween(1, 5);
             CountDown countDown = new CountDown(tasks);
             for (int t = 0; t < tasks; t++) {
@@ -274,7 +308,15 @@ public class ComputeListenerTests extends ESTestCase {
         PlainActionFuture<ComputeResponse> rootListener = new PlainActionFuture<>();
         CancellableTask rootTask = newTask();
         EsqlExecutionInfo execInfo = new EsqlExecutionInfo();
-        try (ComputeListener computeListener = ComputeListener.createComputeListener(transportService, rootTask, execInfo, rootListener)) {
+        try (
+            ComputeListener computeListener = ComputeListener.createComputeListener(
+                transportService,
+                rootTask,
+                execInfo,
+                System.nanoTime(),
+                rootListener
+            )
+        ) {
             for (int i = 0; i < successTasks; i++) {
                 ActionListener<ComputeResponse> subListener = computeListener.acquireCompute();
                 threadPool.schedule(
@@ -334,6 +376,7 @@ public class ComputeListenerTests extends ESTestCase {
                 transportService,
                 newTask(),
                 executionInfo,
+                System.nanoTime(),
                 ActionListener.runAfter(rootListener, latch::countDown)
             )
         ) {

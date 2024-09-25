@@ -81,6 +81,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -135,7 +136,7 @@ public class ComputeService {
         CancellableTask rootTask,
         PhysicalPlan physicalPlan,
         Configuration configuration,
-        EsqlExecutionInfo executionInfo,
+        EsqlExecutionInfo execInfo,
         ActionListener<Result> listener
     ) {
         Tuple<PhysicalPlan, PhysicalPlan> coordinatorAndDataNodePlan = PlannerUtils.breakPlanBetweenCoordinatorAndDataNode(
@@ -176,8 +177,9 @@ public class ComputeService {
                 var computeListener = ComputeListener.createComputeListener(
                     transportService,
                     rootTask,
-                    executionInfo,
-                    listener.map(r -> new Result(physicalPlan.output(), collectedPages, r.getProfiles(), executionInfo))
+                    execInfo,
+                    configuration.getQueryStartTimeNanos(),
+                    listener.map(r -> new Result(physicalPlan.output(), collectedPages, r.getProfiles(), execInfo))
                 )
             ) {
                 runCompute(rootTask, computeContext, coordinatorPlan, computeListener.acquireCompute());
@@ -199,13 +201,15 @@ public class ComputeService {
             queryPragmas.exchangeBufferSize(),
             transportService.getThreadPool().executor(ThreadPool.Names.SEARCH)
         );
+        long start = configuration.getQueryStartTimeNanos();
         try (
             Releasable ignored = exchangeSource.addEmptySink();
             // this is the top level ComputeListener called once at the end (e.g., once all clusters have finished for a CCS)
-            var computeListener = ComputeListener.createComputeListener(transportService, rootTask, executionInfo, listener.map(r -> {
+            var computeListener = ComputeListener.createComputeListener(transportService, rootTask, execInfo, start, listener.map(r -> {
                 long tookTimeNanos = System.nanoTime() - configuration.getQueryStartTimeNanos();
-                executionInfo.overallTook(new TimeValue(tookTimeNanos, TimeUnit.NANOSECONDS));
-                return new Result(physicalPlan.output(), collectedPages, r.getProfiles(), executionInfo);
+                execInfo.overallTook(new TimeValue(tookTimeNanos, TimeUnit.NANOSECONDS));
+                System.err.println("AAA AAA >>> D D D D: FINAL TOP LEVEL computeListener: r.uniqueID: " + r.uniqueId);
+                return new Result(physicalPlan.output(), collectedPages, r.getProfiles(), execInfo);
             }))
         ) {
             // run compute on the coordinator
@@ -214,7 +218,8 @@ public class ComputeService {
                 rootTask,
                 new ComputeContext(sessionId, RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY, List.of(), configuration, exchangeSource, null),
                 coordinatorPlan,
-                computeListener.acquireCompute()
+                // computeListener.acquireComputeCoord(configuration.getQueryStartTimeNanos())
+                computeListener.acquireCompute(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY)
             );
             // starts computes on data nodes on the main cluster
             if (localConcreteIndices != null && localConcreteIndices.indices().length > 0) {
@@ -227,7 +232,7 @@ public class ComputeService {
                     Set.of(localConcreteIndices.indices()),
                     localOriginalIndices,
                     exchangeSource,
-                    executionInfo,
+                    execInfo,
                     computeListener
                 );
             }
@@ -319,11 +324,12 @@ public class ComputeService {
                         refs.acquire().delegateFailureAndWrap((l, unused) -> {
                             var remoteSink = exchangeService.newRemoteSink(parentTask, sessionId, transportService, node.connection);
                             exchangeSource.addRemoteSink(remoteSink, queryPragmas.concurrentExchangeClients());
-                            ActionListener<ComputeResponse> computeResponseListener = computeListener.acquireComputeForDataNodes(
-                                clusterAlias,
-                                configuration.getQueryStartTimeNanos(),
-                                countDown
-                            );
+                            ActionListener<ComputeResponse> computeResponseListener = computeListener.acquireCompute(clusterAlias);
+                            // ActionListener<ComputeResponse> computeResponseListener = computeListener.acquireComputeForDataNodes(
+                            // clusterAlias,
+                            // configuration.getQueryStartTimeNanos(),
+                            // countDown
+                            // );
                             var dataNodeListener = ActionListener.runBefore(computeResponseListener, () -> l.onResponse(null));
                             transportService.sendChildRequest(
                                 node.connection,
@@ -440,10 +446,14 @@ public class ComputeService {
             return;
         }
         ActionListener<Void> listenerCollectingStatus = listener.map(ignored -> {
+            System.err.println("AAA AAA >>> BBB COORD listenerCollectingStatus");
             if (context.configuration.profile()) {
                 return new ComputeResponse(drivers.stream().map(Driver::profile).toList());
             } else {
-                return new ComputeResponse(List.of());
+                // MP TODO: where does this ComputeResponse go?
+                final ComputeResponse response = new ComputeResponse(List.of());
+                System.err.println("AAA AAA >>> BBB COORD computeResponse ID: " + response.uniqueId);
+                return response;
             }
         });
         listenerCollectingStatus = ActionListener.releaseAfter(listenerCollectingStatus, () -> Releasables.close(drivers));
@@ -781,7 +791,7 @@ public class ComputeService {
                 request.indices(),
                 request.indicesOptions()
             );
-            try (var computeListener = ComputeListener.createComputeListener(transportService, (CancellableTask) task, null, listener)) {
+            try (var computeListener = ComputeListener.createComputeListener(transportService, (CancellableTask) task, listener)) {
                 runComputeOnDataNode((CancellableTask) task, sessionId, reducePlan, request, computeListener);
             }
         }
@@ -792,25 +802,34 @@ public class ComputeService {
     private class ClusterRequestHandler implements TransportRequestHandler<ClusterComputeRequest> {
         @Override
         public void messageReceived(ClusterComputeRequest request, TransportChannel channel, Task task) {
-            ChannelActionListener<ComputeResponse> listener = new ChannelActionListener<>(channel);
+            final int rand = ThreadLocalRandom.current().nextInt(885);
+            System.err.println(">>>> >>> SLEEP for : " + (1999 + rand));
+            try {
+                Thread.sleep(1999 + rand);
+            } catch (InterruptedException e) {
+                throw new RuntimeException(e);
+            }
+
+            ChannelActionListener<ComputeResponse> lnr = new ChannelActionListener<>(channel);
             RemoteClusterPlan remoteClusterPlan = request.remoteClusterPlan();
             var plan = remoteClusterPlan.plan();
             if (plan instanceof ExchangeSinkExec == false) {
-                listener.onFailure(new IllegalStateException("expected exchange sink for a remote compute; got " + plan));
+                lnr.onFailure(new IllegalStateException("expected exchange sink for a remote compute; got " + plan));
                 return;
             }
             String clusterAlias = request.clusterAlias();
             /*
              * This handler runs only on remote cluster coordinators, so it creates a new local EsqlExecutionInfo object to record
              * execution metadata for ES|QL processing local to this cluster. The execution info will be copied into the
-             * ComputeResponse that is sent back to the primary coordinating cluster
+             * ComputeResponse that is sent back to the primary coordinating cluster.
              */
             EsqlExecutionInfo execInfo = new EsqlExecutionInfo();
             execInfo.swapCluster(clusterAlias, (k, v) -> new EsqlExecutionInfo.Cluster(clusterAlias, Arrays.toString(request.indices())));
             CancellableTask cancellable = (CancellableTask) task;
-            try (var computeListener = ComputeListener.createOnRemote(clusterAlias, transportService, cancellable, execInfo, listener)) {
+            long start = request.configuration().getQueryStartTimeNanos();
+            try (var computeListener = ComputeListener.createOnRemote(clusterAlias, transportService, cancellable, execInfo, start, lnr)) {
                 runComputeOnRemoteCluster(
-                    request.clusterAlias(),
+                    clusterAlias,
                     request.sessionId(),
                     (CancellableTask) task,
                     request.configuration(),
@@ -866,7 +885,7 @@ public class ComputeService {
                 parentTask,
                 new ComputeContext(localSessionId, clusterAlias, List.of(), configuration, exchangeSource, exchangeSink),
                 coordinatorPlan,
-                computeListener.acquireCompute()
+                computeListener.acquireCompute() // TODO: this also needs to be instrumented to handle stats "cluster reduction" took time
             );
             startComputeOnDataNodes(
                 localSessionId,
