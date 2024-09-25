@@ -219,7 +219,7 @@ public class ComputeService {
                 new ComputeContext(sessionId, RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY, List.of(), configuration, exchangeSource, null),
                 coordinatorPlan,
                 // computeListener.acquireComputeCoord(configuration.getQueryStartTimeNanos())
-                computeListener.acquireCompute(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY)
+                computeListener.acquireCompute(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY, "_coord_")
             );
             // starts computes on data nodes on the main cluster
             if (localConcreteIndices != null && localConcreteIndices.indices().length > 0) {
@@ -324,7 +324,10 @@ public class ComputeService {
                         refs.acquire().delegateFailureAndWrap((l, unused) -> {
                             var remoteSink = exchangeService.newRemoteSink(parentTask, sessionId, transportService, node.connection);
                             exchangeSource.addRemoteSink(remoteSink, queryPragmas.concurrentExchangeClients());
-                            ActionListener<ComputeResponse> computeResponseListener = computeListener.acquireCompute(clusterAlias);
+                            ActionListener<ComputeResponse> computeResponseListener = computeListener.acquireCompute(
+                                clusterAlias,
+                                "+startComputeOnDataNodes+"
+                            );
                             // ActionListener<ComputeResponse> computeResponseListener = computeListener.acquireComputeForDataNodes(
                             // clusterAlias,
                             // configuration.getQueryStartTimeNanos(),
@@ -380,7 +383,8 @@ public class ComputeService {
                         var remotePlan = new RemoteClusterPlan(plan, cluster.concreteIndices, cluster.originalIndices);
                         var clusterRequest = new ClusterComputeRequest(cluster.clusterAlias, sessionId, configuration, remotePlan);
                         var clusterListener = ActionListener.runBefore(
-                            computeListener.acquireCCSCompute(cluster.clusterAlias()),
+                            // computeListener.acquireCCSCompute(cluster.clusterAlias()),
+                            computeListener.acquireCompute(cluster.clusterAlias(), "_startComputeOnRemoteClusters_"),
                             () -> l.onResponse(null)
                         );
                         transportService.sendChildRequest(
@@ -446,13 +450,11 @@ public class ComputeService {
             return;
         }
         ActionListener<Void> listenerCollectingStatus = listener.map(ignored -> {
-            System.err.println("AAA AAA >>> BBB COORD listenerCollectingStatus");
             if (context.configuration.profile()) {
                 return new ComputeResponse(drivers.stream().map(Driver::profile).toList());
             } else {
                 // MP TODO: where does this ComputeResponse go?
                 final ComputeResponse response = new ComputeResponse(List.of());
-                System.err.println("AAA AAA >>> BBB COORD computeResponse ID: " + response.uniqueId);
                 return response;
             }
         });

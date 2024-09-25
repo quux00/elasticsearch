@@ -37,6 +37,15 @@ final class ComputeResponse extends TransportResponse {
         this(profiles, null, null, null, null, null);
     }
 
+    @Override
+    public String toString() {
+        String id = "null";
+        if (uniqueId != null) {
+            id = uniqueId.toString().substring(0, 8);
+        }
+        return "ComputeResponse{" + " took=" + took + ", totalShards=" + totalShards + ", uniqueId=" + id + '}';
+    }
+
     ComputeResponse(
         List<DriverProfile> profiles,
         TimeValue took,
