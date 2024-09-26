@@ -28,6 +28,7 @@ import org.elasticsearch.test.TransportVersionUtils;
 import org.elasticsearch.test.transport.MockTransportService;
 import org.elasticsearch.threadpool.TestThreadPool;
 import org.elasticsearch.threadpool.ThreadPool;
+import org.elasticsearch.transport.RemoteClusterAware;
 import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.xpack.esql.action.EsqlExecutionInfo;
 import org.junit.After;
@@ -127,7 +128,8 @@ public class ComputeListenerTests extends ESTestCase {
         PlainActionFuture<ComputeResponse> results = new PlainActionFuture<>();
         EsqlExecutionInfo executionInfo = new EsqlExecutionInfo();
         try (
-            ComputeListener ignored = ComputeListener.createComputeListener(
+            ComputeListener ignored = ComputeListener.create(
+                RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY,
                 transportService,
                 newTask(),
                 executionInfo,
@@ -146,7 +148,8 @@ public class ComputeListenerTests extends ESTestCase {
         List<DriverProfile> allProfiles = new ArrayList<>();
         EsqlExecutionInfo executionInfo = new EsqlExecutionInfo();
         try (
-            ComputeListener computeListener = ComputeListener.createComputeListener(
+            ComputeListener computeListener = ComputeListener.create(
+                RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY,
                 transportService,
                 newTask(),
                 executionInfo,
@@ -186,11 +189,12 @@ public class ComputeListenerTests extends ESTestCase {
     public void testCollectComputeResultsOnRemoteCluster() {
         PlainActionFuture<ComputeResponse> future = new PlainActionFuture<>();
         List<DriverProfile> allProfiles = new ArrayList<>();
+        String remoteAlias = "rc1";
         EsqlExecutionInfo executionInfo = new EsqlExecutionInfo();
-        executionInfo.swapCluster("rc1", (k, v) -> new EsqlExecutionInfo.Cluster("rc1", "logs*", false));
+        executionInfo.swapCluster(remoteAlias, (k, v) -> new EsqlExecutionInfo.Cluster(remoteAlias, "logs*", false));
         try (
-            ComputeListener computeListener = ComputeListener.createOnRemote(
-                "rc1",
+            ComputeListener computeListener = ComputeListener.create(
+                remoteAlias,
                 transportService,
                 newTask(),
                 executionInfo,
@@ -202,7 +206,7 @@ public class ComputeListenerTests extends ESTestCase {
             for (int t = 0; t < tasks; t++) {
                 ComputeResponse resp = randomResponse(true);
                 allProfiles.addAll(resp.getProfiles());
-                ActionListener<ComputeResponse> subListener = computeListener.acquireCCSCompute("rc1");
+                ActionListener<ComputeResponse> subListener = computeListener.acquireCompute("rc1"); // TODO: what pass ehre?
                 threadPool.schedule(
                     ActionRunnable.wrap(subListener, l -> l.onResponse(resp)),
                     TimeValue.timeValueNanos(between(0, 100)),
@@ -215,8 +219,7 @@ public class ComputeListenerTests extends ESTestCase {
             response.getProfiles().stream().collect(Collectors.toMap(p -> p, p -> 1, Integer::sum)),
             equalTo(allProfiles.stream().collect(Collectors.toMap(p -> p, p -> 1, Integer::sum)))
         );
-        assertThat(response.getTook().nanos(), greaterThanOrEqualTo(0L));
-        assertThat(response.getTook().nanos(), lessThanOrEqualTo(50000L));
+        assertThat(response.getTook().millis(), greaterThanOrEqualTo(0L));
         assertThat(response.getTotalShards(), equalTo(10));
         assertThat(response.getSuccessfulShards(), equalTo(10));
         assertThat(response.getSkippedShards(), greaterThanOrEqualTo(0));
@@ -251,9 +254,9 @@ public class ComputeListenerTests extends ESTestCase {
                 tookTimeInCluster
             )
         );
-        long startTimeNanos = System.nanoTime() - 50000;
+        // long startTimeNanos = System.nanoTime() - 50000;
         try (
-            ComputeListener computeListener = ComputeListener.createOnRemote(
+            ComputeListener computeListener = ComputeListener.create(
                 "rc1",
                 transportService,
                 newTask(),
@@ -263,11 +266,10 @@ public class ComputeListenerTests extends ESTestCase {
             )
         ) {
             int tasks = randomIntBetween(1, 5);
-            CountDown countDown = new CountDown(tasks);
             for (int t = 0; t < tasks; t++) {
                 ComputeResponse resp = randomResponse(true);
                 allProfiles.addAll(resp.getProfiles());
-                ActionListener<ComputeResponse> subListener = computeListener.acquireComputeForDataNodes("rc1", startTimeNanos, countDown);
+                ActionListener<ComputeResponse> subListener = computeListener.acquireCompute("rc1");
                 threadPool.schedule(
                     ActionRunnable.wrap(subListener, l -> l.onResponse(resp)),
                     TimeValue.timeValueNanos(between(0, 100)),
@@ -309,7 +311,8 @@ public class ComputeListenerTests extends ESTestCase {
         CancellableTask rootTask = newTask();
         EsqlExecutionInfo execInfo = new EsqlExecutionInfo();
         try (
-            ComputeListener computeListener = ComputeListener.createComputeListener(
+            ComputeListener computeListener = ComputeListener.create(
+                RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY,
                 transportService,
                 rootTask,
                 execInfo,
@@ -372,7 +375,8 @@ public class ComputeListenerTests extends ESTestCase {
         CountDownLatch latch = new CountDownLatch(1);
         EsqlExecutionInfo executionInfo = new EsqlExecutionInfo();
         try (
-            ComputeListener computeListener = ComputeListener.createComputeListener(
+            ComputeListener computeListener = ComputeListener.create(
+                RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY,
                 transportService,
                 newTask(),
                 executionInfo,

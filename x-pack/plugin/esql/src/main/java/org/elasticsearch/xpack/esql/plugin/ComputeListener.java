@@ -25,7 +25,6 @@ import org.elasticsearch.xpack.esql.action.EsqlExecutionInfo;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.UUID;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -47,11 +46,9 @@ final class ComputeListener implements Releasable {
     private final TransportService transportService;
     private final List<DriverProfile> collectedProfiles;
     private final ResponseHeadersCollector responseHeaders;
-
     private final EsqlExecutionInfo esqlExecutionInfo;
     private final long queryStartTimeNanos;
-
-    // clusterAlias of where this ComputeListener is running
+    // clusterAlias indicating where this ComputeListener is running
     // used by the top level ComputeListener in ComputeService on both local and remote clusters
     private final String whereRunning;
 
@@ -76,29 +73,6 @@ final class ComputeListener implements Releasable {
         return new ComputeListener(transportService, task, clusterAlias, executionInfo, queryStartTimeNanos, delegate);
     }
 
-    /**
-     * Create a ComputeListener, specifying a clusterAlias. For use on remote clusters in the ComputeService.ClusterRequestHandler.
-     * The final ComputeResponse that is sent back to the querying cluster will have metadata about the search in the ComputeResponse:
-     * took time, and shard "accounting" (total, successful, skipped, failed),
-     * @param clusterAlias alias of the remote cluster on which the remote query is being done
-     * @param transportService
-     * @param task
-     * @param executionInfo to accumulate metadata about the search
-     * @param delegate
-     */
-    public static ComputeListener createOnRemote(
-        String clusterAlias,
-        TransportService transportService,
-        CancellableTask task,
-        EsqlExecutionInfo executionInfo,
-        long queryStartTimeNanos,
-        ActionListener<ComputeResponse> delegate
-    ) {
-        return new ComputeListener(transportService, task, clusterAlias, executionInfo, queryStartTimeNanos, delegate);
-    }
-
-    String listenerId = UUID.randomUUID().toString().substring(0, 7);
-
     private ComputeListener(
         TransportService transportService,
         CancellableTask task,
@@ -116,8 +90,8 @@ final class ComputeListener implements Releasable {
         this.whereRunning = clusterAlias;
         // for the DataNodeHandler ComputeListener, clusterAlias and executionInfo will be null
         // for the top level ComputeListener in ComputeService both will be non-null
-        assert (clusterAlias == null && executionInfo == null) || (clusterAlias != null && executionInfo != null) :
-            "clusterAlias and executionInfo must both be null or both non-null";
+        assert (clusterAlias == null && executionInfo == null) || (clusterAlias != null && executionInfo != null)
+            : "clusterAlias and executionInfo must both be null or both non-null";
 
         // listener that executes after all the sub-listeners refs (created via acquireCompute) have completed
         this.refs = new RefCountingListener(1, ActionListener.wrap(ignored -> {
@@ -142,8 +116,7 @@ final class ComputeListener implements Releasable {
                     // mark local cluster as finished once the coordinator and all data nodes have finished processing
                     executionInfo.swapCluster(
                         RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY,
-                        (k, v) -> new EsqlExecutionInfo.Cluster.Builder(v).setStatus(EsqlExecutionInfo.Cluster.Status.SUCCESSFUL)
-                            .build()
+                        (k, v) -> new EsqlExecutionInfo.Cluster.Builder(v).setStatus(EsqlExecutionInfo.Cluster.Status.SUCCESSFUL).build()
                     );
                 }
             }
@@ -152,8 +125,9 @@ final class ComputeListener implements Releasable {
     }
 
     private boolean localClusterIsSearchedInCCS() {
-        return esqlExecutionInfo != null && esqlExecutionInfo.isCrossClusterSearch() &&
-            esqlExecutionInfo.getCluster(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY) != null;
+        return esqlExecutionInfo != null
+            && esqlExecutionInfo.isCrossClusterSearch()
+            && esqlExecutionInfo.getCluster(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY) != null;
     }
 
     private boolean runningOnRemoteCluster() {
@@ -163,7 +137,6 @@ final class ComputeListener implements Releasable {
     private boolean shouldRecordTookTime() {
         return runningOnRemoteCluster() || localClusterIsSearchedInCCS();
     }
-
 
     /**
      * @param computeClusterAlias the clusterAlias passed to the acquireCompute method

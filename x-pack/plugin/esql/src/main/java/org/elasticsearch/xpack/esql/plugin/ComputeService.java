@@ -21,7 +21,6 @@ import org.elasticsearch.action.support.RefCountingRunnable;
 import org.elasticsearch.cluster.node.DiscoveryNode;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.util.BigArrays;
-import org.elasticsearch.common.util.concurrent.CountDown;
 import org.elasticsearch.compute.data.BlockFactory;
 import org.elasticsearch.compute.data.Page;
 import org.elasticsearch.compute.operator.Driver;
@@ -207,19 +206,12 @@ public class ComputeService {
         try (
             Releasable ignored = exchangeSource.addEmptySink();
             // this is the top level ComputeListener called once at the end (e.g., once all clusters have finished for a CCS)
-            var computeListener = ComputeListener.create(
-                local,
-                transportService,
-                rootTask,
-                execInfo,
-                start,
-                listener.map(r -> {
-                    long tookTimeNanos = System.nanoTime() - configuration.getQueryStartTimeNanos();
-                    execInfo.overallTook(new TimeValue(tookTimeNanos, TimeUnit.NANOSECONDS));
-                    System.err.println("AAA AAA >>> D D D D: FINAL TOP LEVEL computeListener: r.uniqueID: " + r.uniqueId);
-                    return new Result(physicalPlan.output(), collectedPages, r.getProfiles(), execInfo);
-                })
-            )
+            var computeListener = ComputeListener.create(local, transportService, rootTask, execInfo, start, listener.map(r -> {
+                long tookTimeNanos = System.nanoTime() - configuration.getQueryStartTimeNanos();
+                execInfo.overallTook(new TimeValue(tookTimeNanos, TimeUnit.NANOSECONDS));
+                System.err.println("AAA AAA >>> D D D D: FINAL TOP LEVEL computeListener: r.uniqueID: " + r.uniqueId);
+                return new Result(physicalPlan.output(), collectedPages, r.getProfiles(), execInfo);
+            }))
         ) {
             // run compute on the coordinator
             exchangeSource.addCompletionListener(computeListener.acquireAvoid());
@@ -827,7 +819,7 @@ public class ComputeService {
             execInfo.swapCluster(clusterAlias, (k, v) -> new EsqlExecutionInfo.Cluster(clusterAlias, Arrays.toString(request.indices())));
             CancellableTask cancellable = (CancellableTask) task;
             long start = request.configuration().getQueryStartTimeNanos();
-            try (var computeListener = ComputeListener.createOnRemote(clusterAlias, transportService, cancellable, execInfo, start, lnr)) {
+            try (var computeListener = ComputeListener.create(clusterAlias, transportService, cancellable, execInfo, start, lnr)) {
                 runComputeOnRemoteCluster(
                     clusterAlias,
                     request.sessionId(),
@@ -885,7 +877,7 @@ public class ComputeService {
                 parentTask,
                 new ComputeContext(localSessionId, clusterAlias, List.of(), configuration, exchangeSource, exchangeSink),
                 coordinatorPlan,
-                computeListener.acquireCompute() // TODO: this also needs to be instrumented to handle stats "cluster reduction" took time
+                computeListener.acquireCompute(clusterAlias)
             );
             startComputeOnDataNodes(
                 localSessionId,
