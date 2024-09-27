@@ -9,6 +9,7 @@ package org.elasticsearch.xpack.esql.session;
 
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.OriginalIndices;
+import org.elasticsearch.action.fieldcaps.FieldCapabilitiesFailure;
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.collect.Iterators;
@@ -23,6 +24,7 @@ import org.elasticsearch.indices.IndicesExpressionGrouper;
 import org.elasticsearch.logging.LogManager;
 import org.elasticsearch.logging.Logger;
 import org.elasticsearch.transport.RemoteClusterAware;
+import org.elasticsearch.transport.RemoteTransportException;
 import org.elasticsearch.xpack.esql.action.EsqlExecutionInfo;
 import org.elasticsearch.xpack.esql.action.EsqlQueryRequest;
 import org.elasticsearch.xpack.esql.analysis.Analyzer;
@@ -266,13 +268,20 @@ public class EsqlSession {
     }
 
     // visible for testing
-    static void updateExecutionInfoWithUnavailableClusters(EsqlExecutionInfo executionInfo, Set<String> unavailableClusters) {
-        for (String clusterAlias : unavailableClusters) {
-            executionInfo.swapCluster(
-                clusterAlias,
-                (k, v) -> new EsqlExecutionInfo.Cluster.Builder(v).setStatus(EsqlExecutionInfo.Cluster.Status.SKIPPED).build()
-            );
-            // TODO: follow-on PR will set SKIPPED status when skip_unavailable=true and throw an exception when skip_un=false
+    static void updateExecutionInfoWithUnavailableClusters(EsqlExecutionInfo execInfo, Map<String, FieldCapabilitiesFailure> unavailable) {
+        for (Map.Entry<String, FieldCapabilitiesFailure> entry : unavailable.entrySet()) {
+            String clusterAlias = entry.getKey();
+            if (execInfo.getCluster(clusterAlias).isSkipUnavailable()) {
+                execInfo.swapCluster(
+                    clusterAlias,
+                    (k, v) -> new EsqlExecutionInfo.Cluster.Builder(v).setStatus(EsqlExecutionInfo.Cluster.Status.SKIPPED).build()
+                );
+            } else {
+                throw new RemoteTransportException(
+                    Strings.format("Remote cluster [%s] with setting skip_unavailable=false is not available", clusterAlias),
+                    entry.getValue().getException()
+                );
+            }
         }
     }
 
@@ -285,10 +294,11 @@ public class EsqlSession {
         }
         Set<String> clustersRequested = executionInfo.clusterAliases();
         Set<String> clustersWithNoMatchingIndices = Sets.difference(clustersRequested, clustersWithResolvedIndices);
+        clustersWithNoMatchingIndices.remove(indexResolution.getUnavailableClusters().keySet());
         /*
-         * These are clusters in the original request that are not present in the field-caps response. They were
-         * specified with an index or indices that do not exist, so the search on that cluster is done.
-         * Mark it as SKIPPED with 0 shards searched and took=0.
+         * These are clusters in the original request that are not present in the field-caps response and did not have a
+         * failure indicating that the cluster was unavailable. They were specified with an index or indices that do not
+         * exist, so the search on that cluster is done. Mark it as SKIPPED with 0 shards searched and took=0.
          */
         for (String c : clustersWithNoMatchingIndices) {
             executionInfo.swapCluster(

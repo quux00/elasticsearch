@@ -7,9 +7,12 @@
 
 package org.elasticsearch.xpack.esql.session;
 
+import org.elasticsearch.action.fieldcaps.FieldCapabilitiesFailure;
 import org.elasticsearch.index.IndexMode;
 import org.elasticsearch.test.ESTestCase;
+import org.elasticsearch.transport.NoSeedNodeLeftException;
 import org.elasticsearch.transport.RemoteClusterAware;
+import org.elasticsearch.transport.RemoteTransportException;
 import org.elasticsearch.xpack.esql.action.EsqlExecutionInfo;
 import org.elasticsearch.xpack.esql.core.type.EsField;
 import org.elasticsearch.xpack.esql.index.EsIndex;
@@ -20,6 +23,7 @@ import java.util.HashMap;
 import java.util.Map;
 import java.util.Set;
 
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 
 public class EsqlSessionTests extends ESTestCase {
@@ -35,7 +39,9 @@ public class EsqlSessionTests extends ESTestCase {
             executionInfo.swapCluster(remote1Alias, (k, v) -> new EsqlExecutionInfo.Cluster(remote1Alias, "*", true));
             executionInfo.swapCluster(remote2Alias, (k, v) -> new EsqlExecutionInfo.Cluster(remote2Alias, "mylogs1,mylogs2,logs*", true));
 
-            EsqlSession.updateExecutionInfoWithUnavailableClusters(executionInfo, Set.of(remote1Alias, remote2Alias));
+            var failure = new FieldCapabilitiesFailure(new String[] { "logs-a" }, new NoSeedNodeLeftException("unable to connect"));
+            var unvailableClusters = Map.of(remote1Alias, failure, remote2Alias, failure);
+            EsqlSession.updateExecutionInfoWithUnavailableClusters(executionInfo, unvailableClusters);
 
             assertThat(executionInfo.clusterAliases(), equalTo(Set.of(localClusterAlias, remote1Alias, remote2Alias)));
             assertNull(executionInfo.overallTook());
@@ -53,8 +59,7 @@ public class EsqlSessionTests extends ESTestCase {
             assertClusterStatusAndHasNullCounts(remote2Cluster, EsqlExecutionInfo.Cluster.Status.SKIPPED);
         }
 
-        // skip_unavailable=false cluster is unavailable, marked as SKIPPED // TODO: in follow on PR this will change to throwing an
-        // Exception
+        // skip_unavailable=false cluster is unavailable, throws Exception
         {
             final String localClusterAlias = RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY;
             final String remote1Alias = "remote1";
@@ -64,22 +69,17 @@ public class EsqlSessionTests extends ESTestCase {
             executionInfo.swapCluster(remote1Alias, (k, v) -> new EsqlExecutionInfo.Cluster(remote1Alias, "*", true));
             executionInfo.swapCluster(remote2Alias, (k, v) -> new EsqlExecutionInfo.Cluster(remote2Alias, "mylogs1,mylogs2,logs*", false));
 
-            EsqlSession.updateExecutionInfoWithUnavailableClusters(executionInfo, Set.of(remote2Alias));
-
-            assertThat(executionInfo.clusterAliases(), equalTo(Set.of(localClusterAlias, remote1Alias, remote2Alias)));
-            assertNull(executionInfo.overallTook());
-
-            EsqlExecutionInfo.Cluster localCluster = executionInfo.getCluster(localClusterAlias);
-            assertThat(localCluster.getIndexExpression(), equalTo("logs*"));
-            assertClusterStatusAndHasNullCounts(localCluster, EsqlExecutionInfo.Cluster.Status.RUNNING);
-
-            EsqlExecutionInfo.Cluster remote1Cluster = executionInfo.getCluster(remote1Alias);
-            assertThat(remote1Cluster.getIndexExpression(), equalTo("*"));
-            assertClusterStatusAndHasNullCounts(remote1Cluster, EsqlExecutionInfo.Cluster.Status.RUNNING);
-
-            EsqlExecutionInfo.Cluster remote2Cluster = executionInfo.getCluster(remote2Alias);
-            assertThat(remote2Cluster.getIndexExpression(), equalTo("mylogs1,mylogs2,logs*"));
-            assertClusterStatusAndHasNullCounts(remote2Cluster, EsqlExecutionInfo.Cluster.Status.SKIPPED);
+            var failure = new FieldCapabilitiesFailure(new String[] { "logs-a" }, new NoSeedNodeLeftException("unable to connect"));
+            RemoteTransportException e = expectThrows(
+                RemoteTransportException.class,
+                () -> EsqlSession.updateExecutionInfoWithUnavailableClusters(executionInfo, Map.of(remote2Alias, failure))
+            );
+            assertThat(e.status().getStatus(), equalTo(500));
+            assertThat(
+                e.getDetailedMessage(),
+                containsString("Remote cluster [remote2] with setting skip_unavailable=false is not available")
+            );
+            assertThat(e.getCause().getMessage(), containsString("unable to connect"));
         }
 
         // all clusters available, no Clusters in ExecutionInfo should be modified
@@ -92,7 +92,7 @@ public class EsqlSessionTests extends ESTestCase {
             executionInfo.swapCluster(remote1Alias, (k, v) -> new EsqlExecutionInfo.Cluster(remote1Alias, "*", true));
             executionInfo.swapCluster(remote2Alias, (k, v) -> new EsqlExecutionInfo.Cluster(remote2Alias, "mylogs1,mylogs2,logs*", false));
 
-            EsqlSession.updateExecutionInfoWithUnavailableClusters(executionInfo, Set.of());
+            EsqlSession.updateExecutionInfoWithUnavailableClusters(executionInfo, Map.of());
 
             assertThat(executionInfo.clusterAliases(), equalTo(Set.of(localClusterAlias, remote1Alias, remote2Alias)));
             assertNull(executionInfo.overallTook());
@@ -138,7 +138,7 @@ public class EsqlSessionTests extends ESTestCase {
                     IndexMode.STANDARD
                 )
             );
-            IndexResolution indexResolution = IndexResolution.valid(esIndex, Set.of());
+            IndexResolution indexResolution = IndexResolution.valid(esIndex, Map.of());
 
             EsqlSession.updateExecutionInfoWithClustersWithNoMatchingIndices(executionInfo, indexResolution);
 
@@ -179,7 +179,7 @@ public class EsqlSessionTests extends ESTestCase {
                     IndexMode.STANDARD
                 )
             );
-            IndexResolution indexResolution = IndexResolution.valid(esIndex, Set.of());
+            IndexResolution indexResolution = IndexResolution.valid(esIndex, Map.of());
 
             EsqlSession.updateExecutionInfoWithClustersWithNoMatchingIndices(executionInfo, indexResolution);
 
@@ -216,7 +216,8 @@ public class EsqlSessionTests extends ESTestCase {
                 randomMapping(),
                 Map.of("logs-a", IndexMode.STANDARD)
             );
-            IndexResolution indexResolution = IndexResolution.valid(esIndex, Set.of(remote1Alias));
+            var failure = new FieldCapabilitiesFailure(new String[] { "logs-a" }, new NoSeedNodeLeftException("unable to connect"));
+            IndexResolution indexResolution = IndexResolution.valid(esIndex, Map.of(remote1Alias, failure));
 
             EsqlSession.updateExecutionInfoWithClustersWithNoMatchingIndices(executionInfo, indexResolution);
 
