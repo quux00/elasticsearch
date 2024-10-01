@@ -10,6 +10,7 @@ package org.elasticsearch.xpack.esql.session;
 import org.elasticsearch.action.ActionListener;
 import org.elasticsearch.action.OriginalIndices;
 import org.elasticsearch.action.fieldcaps.FieldCapabilitiesFailure;
+import org.elasticsearch.action.search.ShardSearchFailure;
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.common.Strings;
 import org.elasticsearch.common.collect.Iterators;
@@ -19,6 +20,7 @@ import org.elasticsearch.compute.operator.DriverProfile;
 import org.elasticsearch.core.Releasables;
 import org.elasticsearch.core.TimeValue;
 import org.elasticsearch.index.IndexMode;
+import org.elasticsearch.index.IndexNotFoundException;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.indices.IndicesExpressionGrouper;
 import org.elasticsearch.logging.LogManager;
@@ -271,16 +273,19 @@ public class EsqlSession {
     static void updateExecutionInfoWithUnavailableClusters(EsqlExecutionInfo execInfo, Map<String, FieldCapabilitiesFailure> unavailable) {
         for (Map.Entry<String, FieldCapabilitiesFailure> entry : unavailable.entrySet()) {
             String clusterAlias = entry.getKey();
+            RemoteTransportException e = new RemoteTransportException(
+                Strings.format("Remote cluster [%s] with setting skip_unavailable=false is not available", clusterAlias),
+                entry.getValue().getException()
+            );
             if (execInfo.getCluster(clusterAlias).isSkipUnavailable()) {
                 execInfo.swapCluster(
                     clusterAlias,
-                    (k, v) -> new EsqlExecutionInfo.Cluster.Builder(v).setStatus(EsqlExecutionInfo.Cluster.Status.SKIPPED).build()
+                    (k, v) -> new EsqlExecutionInfo.Cluster.Builder(v).setStatus(EsqlExecutionInfo.Cluster.Status.SKIPPED)
+                        .setFailures(List.of(new ShardSearchFailure(e)))
+                        .build()
                 );
             } else {
-                throw new RemoteTransportException(
-                    Strings.format("Remote cluster [%s] with setting skip_unavailable=false is not available", clusterAlias),
-                    entry.getValue().getException()
-                );
+                throw e;
             }
         }
     }
@@ -294,13 +299,28 @@ public class EsqlSession {
         }
         Set<String> clustersRequested = executionInfo.clusterAliases();
         Set<String> clustersWithNoMatchingIndices = Sets.difference(clustersRequested, clustersWithResolvedIndices);
-        clustersWithNoMatchingIndices.remove(indexResolution.getUnavailableClusters().keySet());
+        clustersWithNoMatchingIndices.removeAll(indexResolution.getUnavailableClusters().keySet());
         /*
          * These are clusters in the original request that are not present in the field-caps response and did not have a
          * failure indicating that the cluster was unavailable. They were specified with an index or indices that do not
          * exist, so the search on that cluster is done. Mark it as SKIPPED with 0 shards searched and took=0.
          */
         for (String c : clustersWithNoMatchingIndices) {
+            EsqlExecutionInfo.Cluster cluster = executionInfo.getCluster(c);
+            if (cluster.isSkipUnavailable() == false && RemoteClusterAware.indexHasWildcard(cluster.getIndexExpression()) == false) {
+                String alias = cluster.getClusterAlias().equals(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY)
+                    ? "local"
+                    : cluster.getClusterAlias();
+                throw new IndexNotFoundException(
+                    Strings.format(
+                        "No matching index for [%s] was found on [%s] cluster (which has skip_unavailable=false)",
+                        cluster.getIndexExpression(),
+                        alias
+                    ),
+                    cluster.getIndexExpression()
+                );
+            }
+
             executionInfo.swapCluster(
                 c,
                 (k, v) -> new EsqlExecutionInfo.Cluster.Builder(v).setStatus(EsqlExecutionInfo.Cluster.Status.SKIPPED)
@@ -309,6 +329,7 @@ public class EsqlSession {
                     .setSuccessfulShards(0)
                     .setSkippedShards(0)
                     .setFailedShards(0)
+                    .setFailures(List.of(new ShardSearchFailure(new IndexNotFoundException(v.getIndexExpression()))))
                     .build()
             );
         }

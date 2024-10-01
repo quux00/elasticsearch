@@ -129,7 +129,7 @@ public class EsqlExecutionInfo implements ChunkedToXContentObject, Writeable {
      */
     public boolean isSkipUnavailable(String clusterAlias) {
         if (RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY.equals(clusterAlias)) {
-            return false;
+            return true;
         }
         return skipUnavailablePredicate.test(clusterAlias);
     }

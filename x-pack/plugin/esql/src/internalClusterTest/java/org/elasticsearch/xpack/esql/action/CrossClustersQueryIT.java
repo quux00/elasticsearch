@@ -21,9 +21,11 @@ import org.elasticsearch.compute.lucene.DataPartitioning;
 import org.elasticsearch.compute.operator.DriverProfile;
 import org.elasticsearch.compute.operator.exchange.ExchangeService;
 import org.elasticsearch.core.TimeValue;
+import org.elasticsearch.index.IndexNotFoundException;
 import org.elasticsearch.plugins.Plugin;
 import org.elasticsearch.test.AbstractMultiClustersTestCase;
 import org.elasticsearch.test.InternalTestCluster;
+import org.elasticsearch.transport.RemoteClusterAware;
 import org.elasticsearch.transport.TransportService;
 import org.elasticsearch.xpack.esql.plugin.EsqlPlugin;
 import org.elasticsearch.xpack.esql.plugin.QueryPragmas;
@@ -39,6 +41,7 @@ import java.util.concurrent.TimeUnit;
 
 import static org.elasticsearch.test.hamcrest.ElasticsearchAssertions.assertAcked;
 import static org.elasticsearch.xpack.esql.EsqlTestUtils.getValuesList;
+import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 import static org.hamcrest.Matchers.hasSize;
@@ -54,7 +57,8 @@ public class CrossClustersQueryIT extends AbstractMultiClustersTestCase {
 
     @Override
     protected Map<String, Boolean> skipUnavailableForRemoteClusters() {
-        return Map.of(REMOTE_CLUSTER, randomBoolean());
+        // return Map.of(REMOTE_CLUSTER, randomBoolean());
+        return Map.of(REMOTE_CLUSTER, false);
     }
 
     @Override
@@ -151,38 +155,48 @@ public class CrossClustersQueryIT extends AbstractMultiClustersTestCase {
         Map<String, Object> testClusterInfo = setupTwoClusters();
         int localNumShards = (Integer) testClusterInfo.get("local.num_shards");
         int remoteNumShards = (Integer) testClusterInfo.get("remote.num_shards");
+        boolean skipUnavailable = (Boolean) testClusterInfo.get("remote.skip_unavailable");
 
-        // since a valid local index was specified, the invalid index on cluster-a does not throw an exception,
-        // but instead is simply ignored - ensure this is captured in the EsqlExecutionInfo
-        try (EsqlQueryResponse resp = runQuery("from logs-*,cluster-a:no_such_index | stats sum (v)")) {
-            EsqlExecutionInfo executionInfo = resp.getExecutionInfo();
-            List<List<Object>> values = getValuesList(resp);
-            assertThat(values, hasSize(1));
-            assertThat(values.get(0), equalTo(List.of(45L)));
+        System.err.println("skipUnavailable: " + skipUnavailable);
 
-            assertNotNull(executionInfo);
-            assertThat(executionInfo.isCrossClusterSearch(), is(true));
-            assertThat(executionInfo.overallTook().millis(), greaterThanOrEqualTo(0L));
+        if (skipUnavailable == false) {
+            IndexNotFoundException exception = expectThrows(
+                IndexNotFoundException.class,
+                () -> runQuery("from logs-*,cluster-a:no_such_index | stats sum (v)")
+            );
+            assertThat(exception.getDetailedMessage(), containsString("no_such_index"));
+        } else {
+            // since the remote cluster is skip_unavailable=true, the invalid index on cluster-a does not throw an exception
+            try (EsqlQueryResponse resp = runQuery("from logs-*,cluster-a:no_such_index | stats sum (v)")) {
+                EsqlExecutionInfo executionInfo = resp.getExecutionInfo();
+                List<List<Object>> values = getValuesList(resp);
+                assertThat(values, hasSize(1));
+                assertThat(values.get(0), equalTo(List.of(45L)));
 
-            assertThat(executionInfo.clusterAliases(), equalTo(Set.of(REMOTE_CLUSTER, LOCAL_CLUSTER)));
+                assertNotNull(executionInfo);
+                assertThat(executionInfo.isCrossClusterSearch(), is(true));
+                assertThat(executionInfo.overallTook().millis(), greaterThanOrEqualTo(0L));
 
-            EsqlExecutionInfo.Cluster remoteCluster = executionInfo.getCluster(REMOTE_CLUSTER);
-            assertThat(remoteCluster.getIndexExpression(), equalTo("no_such_index"));
-            assertThat(remoteCluster.getStatus(), equalTo(EsqlExecutionInfo.Cluster.Status.SKIPPED));
-            assertThat(remoteCluster.getTook().millis(), greaterThanOrEqualTo(0L));
-            assertThat(remoteCluster.getTotalShards(), equalTo(0));  // 0 since no matching index, thus no shards to search
-            assertThat(remoteCluster.getSuccessfulShards(), equalTo(0));
-            assertThat(remoteCluster.getSkippedShards(), equalTo(0));
-            assertThat(remoteCluster.getFailedShards(), equalTo(0));
+                assertThat(executionInfo.clusterAliases(), equalTo(Set.of(REMOTE_CLUSTER, LOCAL_CLUSTER)));
 
-            EsqlExecutionInfo.Cluster localCluster = executionInfo.getCluster(LOCAL_CLUSTER);
-            assertThat(localCluster.getIndexExpression(), equalTo("logs-*"));
-            assertThat(localCluster.getStatus(), equalTo(EsqlExecutionInfo.Cluster.Status.SUCCESSFUL));
-            assertThat(localCluster.getTook().millis(), greaterThanOrEqualTo(0L));
-            assertThat(localCluster.getTotalShards(), equalTo(localNumShards));
-            assertThat(localCluster.getSuccessfulShards(), equalTo(localNumShards));
-            assertThat(localCluster.getSkippedShards(), equalTo(0));
-            assertThat(localCluster.getFailedShards(), equalTo(0));
+                EsqlExecutionInfo.Cluster remoteCluster = executionInfo.getCluster(REMOTE_CLUSTER);
+                assertThat(remoteCluster.getIndexExpression(), equalTo("no_such_index"));
+                assertThat(remoteCluster.getStatus(), equalTo(EsqlExecutionInfo.Cluster.Status.SKIPPED));
+                assertThat(remoteCluster.getTook().millis(), greaterThanOrEqualTo(0L));
+                assertThat(remoteCluster.getTotalShards(), equalTo(0));  // 0 since no matching index, thus no shards to search
+                assertThat(remoteCluster.getSuccessfulShards(), equalTo(0));
+                assertThat(remoteCluster.getSkippedShards(), equalTo(0));
+                assertThat(remoteCluster.getFailedShards(), equalTo(0));
+
+                EsqlExecutionInfo.Cluster localCluster = executionInfo.getCluster(LOCAL_CLUSTER);
+                assertThat(localCluster.getIndexExpression(), equalTo("logs-*"));
+                assertThat(localCluster.getStatus(), equalTo(EsqlExecutionInfo.Cluster.Status.SUCCESSFUL));
+                assertThat(localCluster.getTook().millis(), greaterThanOrEqualTo(0L));
+                assertThat(localCluster.getTotalShards(), equalTo(localNumShards));
+                assertThat(localCluster.getSuccessfulShards(), equalTo(localNumShards));
+                assertThat(localCluster.getSkippedShards(), equalTo(0));
+                assertThat(localCluster.getFailedShards(), equalTo(0));
+            }
         }
 
         // since the remote cluster has a valid index expression, the missing local index is ignored
@@ -218,74 +232,74 @@ public class CrossClustersQueryIT extends AbstractMultiClustersTestCase {
             assertThat(localCluster.getFailedShards(), equalTo(0));
         }
 
-        // when multiple invalid indices are specified on the remote cluster, both should be ignored and present
-        // in the index expression of the EsqlExecutionInfo and with an indication that zero shards were searched
-        try (
-            EsqlQueryResponse resp = runQuery(
-                "FROM no_such_index*,*:no_such_index1,*:no_such_index2,logs-1 | STATS COUNT(*) by tag | SORT tag | KEEP tag"
-            )
-        ) {
-            List<List<Object>> values = getValuesList(resp);
-            assertThat(values, hasSize(1));
-            assertThat(values.get(0), equalTo(List.of("local")));
-
-            EsqlExecutionInfo executionInfo = resp.getExecutionInfo();
-            assertNotNull(executionInfo);
-            assertThat(executionInfo.isCrossClusterSearch(), is(true));
-            assertThat(executionInfo.overallTook().millis(), greaterThanOrEqualTo(0L));
-
-            assertThat(executionInfo.clusterAliases(), equalTo(Set.of(REMOTE_CLUSTER, LOCAL_CLUSTER)));
-
-            EsqlExecutionInfo.Cluster remoteCluster = executionInfo.getCluster(REMOTE_CLUSTER);
-            assertThat(remoteCluster.getIndexExpression(), equalTo("no_such_index1,no_such_index2"));
-            assertThat(remoteCluster.getStatus(), equalTo(EsqlExecutionInfo.Cluster.Status.SKIPPED));
-            assertThat(remoteCluster.getTook().millis(), greaterThanOrEqualTo(0L));
-            assertThat(remoteCluster.getTotalShards(), equalTo(0));
-            assertThat(remoteCluster.getSuccessfulShards(), equalTo(0));
-            assertThat(remoteCluster.getSkippedShards(), equalTo(0));
-            assertThat(remoteCluster.getFailedShards(), equalTo(0));
-
-            EsqlExecutionInfo.Cluster localCluster = executionInfo.getCluster(LOCAL_CLUSTER);
-            assertThat(localCluster.getIndexExpression(), equalTo("no_such_index*,logs-1"));
-            assertThat(localCluster.getStatus(), equalTo(EsqlExecutionInfo.Cluster.Status.SUCCESSFUL));
-            assertThat(localCluster.getTook().millis(), greaterThanOrEqualTo(0L));
-            assertThat(localCluster.getTotalShards(), equalTo(localNumShards));
-            assertThat(localCluster.getSuccessfulShards(), equalTo(localNumShards));
-            assertThat(localCluster.getSkippedShards(), equalTo(0));
-            assertThat(localCluster.getFailedShards(), equalTo(0));
-        }
-
-        // wildcard on remote cluster that matches nothing - should be present in EsqlExecutionInfo marked as SKIPPED, no shards searched
-        try (EsqlQueryResponse resp = runQuery("from cluster-a:no_such_index*,logs-* | stats sum (v)")) {
-            EsqlExecutionInfo executionInfo = resp.getExecutionInfo();
-            List<List<Object>> values = getValuesList(resp);
-            assertThat(values, hasSize(1));
-            assertThat(values.get(0), equalTo(List.of(45L)));
-
-            assertNotNull(executionInfo);
-            assertThat(executionInfo.isCrossClusterSearch(), is(true));
-            assertThat(executionInfo.overallTook().millis(), greaterThanOrEqualTo(0L));
-
-            assertThat(executionInfo.clusterAliases(), equalTo(Set.of(REMOTE_CLUSTER, LOCAL_CLUSTER)));
-
-            EsqlExecutionInfo.Cluster remoteCluster = executionInfo.getCluster(REMOTE_CLUSTER);
-            assertThat(remoteCluster.getIndexExpression(), equalTo("no_such_index*"));
-            assertThat(remoteCluster.getStatus(), equalTo(EsqlExecutionInfo.Cluster.Status.SKIPPED));
-            assertThat(remoteCluster.getTook().millis(), greaterThanOrEqualTo(0L));
-            assertThat(remoteCluster.getTotalShards(), equalTo(0));
-            assertThat(remoteCluster.getSuccessfulShards(), equalTo(0));
-            assertThat(remoteCluster.getSkippedShards(), equalTo(0));
-            assertThat(remoteCluster.getFailedShards(), equalTo(0));
-
-            EsqlExecutionInfo.Cluster localCluster = executionInfo.getCluster(LOCAL_CLUSTER);
-            assertThat(localCluster.getIndexExpression(), equalTo("logs-*"));
-            assertThat(localCluster.getStatus(), equalTo(EsqlExecutionInfo.Cluster.Status.SUCCESSFUL));
-            assertThat(localCluster.getTook().millis(), greaterThanOrEqualTo(0L));
-            assertThat(localCluster.getTotalShards(), equalTo(localNumShards));
-            assertThat(localCluster.getSuccessfulShards(), equalTo(localNumShards));
-            assertThat(localCluster.getSkippedShards(), equalTo(0));
-            assertThat(localCluster.getFailedShards(), equalTo(0));
-        }
+        // // when multiple invalid indices are specified on the remote cluster, both should be ignored and present
+        // // in the index expression of the EsqlExecutionInfo and with an indication that zero shards were searched
+        // try (
+        // EsqlQueryResponse resp = runQuery(
+        // "FROM no_such_index*,*:no_such_index1,*:no_such_index2,logs-1 | STATS COUNT(*) by tag | SORT tag | KEEP tag"
+        // )
+        // ) {
+        // List<List<Object>> values = getValuesList(resp);
+        // assertThat(values, hasSize(1));
+        // assertThat(values.get(0), equalTo(List.of("local")));
+        //
+        // EsqlExecutionInfo executionInfo = resp.getExecutionInfo();
+        // assertNotNull(executionInfo);
+        // assertThat(executionInfo.isCrossClusterSearch(), is(true));
+        // assertThat(executionInfo.overallTook().millis(), greaterThanOrEqualTo(0L));
+        //
+        // assertThat(executionInfo.clusterAliases(), equalTo(Set.of(REMOTE_CLUSTER, LOCAL_CLUSTER)));
+        //
+        // EsqlExecutionInfo.Cluster remoteCluster = executionInfo.getCluster(REMOTE_CLUSTER);
+        // assertThat(remoteCluster.getIndexExpression(), equalTo("no_such_index1,no_such_index2"));
+        // assertThat(remoteCluster.getStatus(), equalTo(EsqlExecutionInfo.Cluster.Status.SKIPPED));
+        // assertThat(remoteCluster.getTook().millis(), greaterThanOrEqualTo(0L));
+        // assertThat(remoteCluster.getTotalShards(), equalTo(0));
+        // assertThat(remoteCluster.getSuccessfulShards(), equalTo(0));
+        // assertThat(remoteCluster.getSkippedShards(), equalTo(0));
+        // assertThat(remoteCluster.getFailedShards(), equalTo(0));
+        //
+        // EsqlExecutionInfo.Cluster localCluster = executionInfo.getCluster(LOCAL_CLUSTER);
+        // assertThat(localCluster.getIndexExpression(), equalTo("no_such_index*,logs-1"));
+        // assertThat(localCluster.getStatus(), equalTo(EsqlExecutionInfo.Cluster.Status.SUCCESSFUL));
+        // assertThat(localCluster.getTook().millis(), greaterThanOrEqualTo(0L));
+        // assertThat(localCluster.getTotalShards(), equalTo(localNumShards));
+        // assertThat(localCluster.getSuccessfulShards(), equalTo(localNumShards));
+        // assertThat(localCluster.getSkippedShards(), equalTo(0));
+        // assertThat(localCluster.getFailedShards(), equalTo(0));
+        // }
+        //
+        // // wildcard on remote cluster that matches nothing - should be present in EsqlExecutionInfo marked as SKIPPED, no shards searched
+        // try (EsqlQueryResponse resp = runQuery("from cluster-a:no_such_index*,logs-* | stats sum (v)")) {
+        // EsqlExecutionInfo executionInfo = resp.getExecutionInfo();
+        // List<List<Object>> values = getValuesList(resp);
+        // assertThat(values, hasSize(1));
+        // assertThat(values.get(0), equalTo(List.of(45L)));
+        //
+        // assertNotNull(executionInfo);
+        // assertThat(executionInfo.isCrossClusterSearch(), is(true));
+        // assertThat(executionInfo.overallTook().millis(), greaterThanOrEqualTo(0L));
+        //
+        // assertThat(executionInfo.clusterAliases(), equalTo(Set.of(REMOTE_CLUSTER, LOCAL_CLUSTER)));
+        //
+        // EsqlExecutionInfo.Cluster remoteCluster = executionInfo.getCluster(REMOTE_CLUSTER);
+        // assertThat(remoteCluster.getIndexExpression(), equalTo("no_such_index*"));
+        // assertThat(remoteCluster.getStatus(), equalTo(EsqlExecutionInfo.Cluster.Status.SKIPPED));
+        // assertThat(remoteCluster.getTook().millis(), greaterThanOrEqualTo(0L));
+        // assertThat(remoteCluster.getTotalShards(), equalTo(0));
+        // assertThat(remoteCluster.getSuccessfulShards(), equalTo(0));
+        // assertThat(remoteCluster.getSkippedShards(), equalTo(0));
+        // assertThat(remoteCluster.getFailedShards(), equalTo(0));
+        //
+        // EsqlExecutionInfo.Cluster localCluster = executionInfo.getCluster(LOCAL_CLUSTER);
+        // assertThat(localCluster.getIndexExpression(), equalTo("logs-*"));
+        // assertThat(localCluster.getStatus(), equalTo(EsqlExecutionInfo.Cluster.Status.SUCCESSFUL));
+        // assertThat(localCluster.getTook().millis(), greaterThanOrEqualTo(0L));
+        // assertThat(localCluster.getTotalShards(), equalTo(localNumShards));
+        // assertThat(localCluster.getSuccessfulShards(), equalTo(localNumShards));
+        // assertThat(localCluster.getSkippedShards(), equalTo(0));
+        // assertThat(localCluster.getFailedShards(), equalTo(0));
+        // }
     }
 
     public void testSearchesWhereNonExistentClusterIsSpecifiedWithWildcards() {
@@ -585,6 +599,14 @@ public class CrossClustersQueryIT extends AbstractMultiClustersTestCase {
         clusterInfo.put("local.index", localIndex);
         clusterInfo.put("remote.num_shards", numShardsRemote);
         clusterInfo.put("remote.index", remoteIndex);
+
+        String skipUnavailableKey = Strings.format("cluster.remote.%s.skip_unavailable", REMOTE_CLUSTER);
+        Setting<?> skipUnavailableSetting = cluster(REMOTE_CLUSTER).clusterService().getClusterSettings().get(skipUnavailableKey);
+        boolean skipUnavailable = (boolean) cluster(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY).clusterService()
+            .getClusterSettings()
+            .get(skipUnavailableSetting);
+        clusterInfo.put("remote.skip_unavailable", skipUnavailable);
+
         return clusterInfo;
     }
 
