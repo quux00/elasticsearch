@@ -155,7 +155,73 @@ public class RemoteClusterAwareTests extends ESTestCase {
             IllegalArgumentException.class,
             "The '-' exclusions in the index expression list excludes all indexes"
         );
+    }
 
+    public void testIsRemoteIndexExpression() {
+        String[] localIndexExpressions = new String[] {
+            "*",
+            "foo",
+            "foo*",
+            "<datemath-{2001-01-01-13||+1h/h{yyyy-MM-dd-HH|-07:00}}>",
+            "-<datemath-{2001-01-01-13||+1h/h{yyyy-MM-dd-HH|-07:00}}>",
+            "-foo",
+            "-foo*" };
+        for (String localIndexExpression : localIndexExpressions) {
+            assertFalse(localIndexExpression, RemoteClusterAware.isRemoteIndexExpression(localIndexExpression));
+        }
+
+        String[] remoteIndexExpressions = new String[] {
+            "*:*",
+            "*:logs",
+            "cluster:foo",
+            "cluster:foo*",
+            "c*:foo",
+            "cluster:<datemath-{2001-01-01-13||+1h/h{yyyy-MM-dd-HH|-07:00}}>",
+            "cluster:-<datemath-{2001-01-01-13||+1h/h{yyyy-MM-dd-HH|-07:00}}>",
+            "-cluster:*",
+            "cluster:-foo",
+            "cluster:-foo*", };
+        for (String remoteIndexExpression : remoteIndexExpressions) {
+            assertTrue(remoteIndexExpression, RemoteClusterAware.isRemoteIndexExpression(remoteIndexExpression));
+        }
+    }
+
+    public void testIsConcreteIndexName() {
+        // inputs with a csv based multi-index expression are not allowed in RemoteClusterAware.isConcreteIndexName
+        String[] invalidInputs = new String[] {
+            "*,*:*",
+            "foo,*:logs",
+            "foo,bar",
+            "cluster:foo,cluster_b:bar",
+            "cluster:foo,*:bar*",
+            "cluster:foo,*:bar*", };
+        for (String invalidInput : invalidInputs) {
+            expectThrows(AssertionError.class, invalidInput, () -> RemoteClusterAware.isConcreteIndexName(invalidInput));
+        }
+
+        String[] notConcrete = new String[] {
+            "*:-index1",
+            "logs-*",
+            "my*index",
+            "my*index*",
+            "*",
+            "*my",
+            "cluster2:*",
+            "*:*",
+            "remote*:logs*",
+            "remote1:-logs*",
+            "<datemath-{2001-01-01-13||+1h/h{yyyy-MM-dd-HH|-07:00}}>",
+            "cluster1:<datemath-{2001-01-01-13||+1h/h{yyyy-MM-dd-HH|-07:00}}>",
+            "-<datemath-{2001-01-01-13||+1h/h{yyyy-MM-dd-HH|00:00}}>",
+            "cluster2:-<datemath-{2001-01-01-13||+1h/h{yyyy-MM-dd-HH|-07:00}}>" };
+        for (String input : notConcrete) {
+            assertFalse(input, RemoteClusterAware.isConcreteIndexName(input));
+        }
+
+        String[] concrete = new String[] { ".async-search", "cluster*:index1", "cluster1:index1", "*:index1", "myindex" };
+        for (String input : concrete) {
+            assertTrue(input, RemoteClusterAware.isConcreteIndexName(input));
+        }
     }
 
     private static class RemoteClusterAwareTest extends RemoteClusterAware {

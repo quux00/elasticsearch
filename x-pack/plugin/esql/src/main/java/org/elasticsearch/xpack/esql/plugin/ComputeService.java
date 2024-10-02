@@ -81,6 +81,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.Executor;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 
@@ -154,8 +155,13 @@ public class ComputeService {
             listener.onFailure(new IllegalStateException("expected data node plan starts with an ExchangeSink; got " + dataNodePlan));
             return;
         }
+        // MP TODO has blogs only in OriginalIndices.indices, not the missing "q" index
         Map<String, OriginalIndices> clusterToConcreteIndices = transportService.getRemoteClusterService()
             .groupIndices(SearchRequest.DEFAULT_INDICES_OPTIONS, PlannerUtils.planConcreteIndices(physicalPlan).toArray(String[]::new));
+
+        System.err.println("XXX planConcreteIndices: " + PlannerUtils.planConcreteIndices(physicalPlan));
+        System.err.println("XXX planOriginalIndices: " + PlannerUtils.planOriginalIndices(physicalPlan));
+
         QueryPragmas queryPragmas = configuration.pragmas();
         if (dataNodePlan == null) {
             if (clusterToConcreteIndices.values().stream().allMatch(v -> v.indices().length == 0) == false) {
@@ -197,6 +203,8 @@ public class ComputeService {
                 return;
             }
         }
+        // MP TODO: why do we want clusterToOriginalIndices rather than using clusterToConcreteIndices created up above?
+        // MP TODO:  Answer seems to be to support aliases :-( 
         Map<String, OriginalIndices> clusterToOriginalIndices = transportService.getRemoteClusterService()
             .groupIndices(SearchRequest.DEFAULT_INDICES_OPTIONS, PlannerUtils.planOriginalIndices(physicalPlan));
         var localOriginalIndices = clusterToOriginalIndices.remove(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY);
@@ -238,8 +246,8 @@ public class ComputeService {
                     rootTask,
                     configuration,
                     dataNodePlan,
-                    Set.of(localConcreteIndices.indices()),
-                    localOriginalIndices,
+                    Set.of(localConcreteIndices.indices()), // MP TODO: hmm, we also pass in the localConcrete
+                    localOriginalIndices,  // MP TODO: why are we not passing localConcreteIndices here?
                     exchangeSource,
                     execInfo,
                     computeListener
@@ -619,15 +627,32 @@ public class ComputeService {
             }
             return new DataNodeResult(dataNodes, totalShards, skippedShards);
         });
-        SearchShardsRequest searchShardsRequest = new SearchShardsRequest(
-            originalIndices.indices(),
-            originalIndices.indicesOptions(),
-            filter,
-            null,
-            null,
-            false,
-            clusterAlias
-        );
+        // MP TODO: shouldn't we be passing in the concrete indices here and the not original?
+        SearchShardsRequest searchShardsRequest;
+
+        if (ThreadLocalRandom.current().nextBoolean()) {
+            System.err.println(">>> AAA1 SearchShardsRequest with __originalIndices.indices()__: " + Arrays.toString(originalIndices.indices()));
+            searchShardsRequest = new SearchShardsRequest(
+                originalIndices.indices(),
+                originalIndices.indicesOptions(),
+                filter,
+                null,
+                null,
+                false,
+                clusterAlias
+            );
+        } else {
+            System.err.println(">>> AAA2 SearchShardsRequest with __concrte indices__: " + concreteIndices);
+            searchShardsRequest = new SearchShardsRequest(
+                concreteIndices.toArray(new String[0]),
+                originalIndices.indicesOptions(),   // MP TODO: can we use the originalIndices indicesOptions?
+                filter,
+                null,
+                null,
+                false,
+                clusterAlias
+            );
+        }
         transportService.sendChildRequest(
             transportService.getLocalNode(),
             EsqlSearchShardsAction.TYPE.name(),
