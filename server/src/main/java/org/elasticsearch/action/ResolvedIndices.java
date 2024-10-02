@@ -156,6 +156,9 @@ public class ResolvedIndices {
         );
         final OriginalIndices localIndices = remoteClusterIndices.remove(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY);
 
+        // MP TODO: we need to not include missing indices in the IndicesRequest - that can happen with a query like:
+        //   FROM remote1:b*,remote2:b*,q,b*  where "q" does not exist. The local cluster had one matching index, but
+        //        "q" needs to be removed? or else it causes a 404 IndexNotFoundException thrown by the SearchShards API (in INdexNameExpressionResolver?)
         Index[] concreteLocalIndices = localIndices == null
             ? Index.EMPTY_ARRAY
             : indexNameExpressionResolver.concreteIndices(clusterState, localIndices, startTimeInMillis);

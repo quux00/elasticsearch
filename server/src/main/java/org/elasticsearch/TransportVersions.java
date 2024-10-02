@@ -233,6 +233,7 @@ public class TransportVersions {
     public static final TransportVersion REGEX_AND_RANGE_INTERVAL_QUERIES = def(8_757_00_0);
     public static final TransportVersion RRF_QUERY_REWRITE = def(8_758_00_0);
     public static final TransportVersion SEARCH_FAILURE_STATS = def(8_759_00_0);
+    public static final TransportVersion ESQL_CCS_EXEC_INFO_WITH_FAILURES = def(8_760_00_0);
 
     /*
      * STOP! READ THIS FIRST! No, really,
