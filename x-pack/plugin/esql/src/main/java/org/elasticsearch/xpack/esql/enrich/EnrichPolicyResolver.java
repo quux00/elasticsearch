@@ -98,12 +98,12 @@ public class EnrichPolicyResolver {
     /**
      * Resolves a set of enrich policies
      *
-     * @param targetClusters     the target clusters
+     * @param targetClusters     the target clusters; v1: cluster alias; v2: skip_unavailable setting (null for local cluster)
      * @param unresolvedPolicies the unresolved policies
      * @param listener           notified with the enrich resolution
      */
     public void resolvePolicies(
-        Collection<String> targetClusters,
+        Collection<Tuple<String, Boolean>> targetClusters,
         Collection<UnresolvedPolicy> unresolvedPolicies,
         ActionListener<EnrichResolution> listener
     ) {
@@ -111,9 +111,9 @@ public class EnrichPolicyResolver {
             listener.onResponse(new EnrichResolution());
             return;
         }
-        final Set<String> remoteClusters = new HashSet<>(targetClusters);
-        final boolean includeLocal = remoteClusters.remove(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY);
-        lookupPolicies(remoteClusters, includeLocal, unresolvedPolicies, listener.map(lookupResponses -> {
+        final Set<Tuple<String, Boolean>> remotes = new HashSet<>(targetClusters);
+        final boolean includeLocal = remotes.removeIf(t -> t.v1().equals(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY));
+        lookupPolicies(remotes.stream().map(t -> t.v1()).toList(), includeLocal, unresolvedPolicies, listener.map(lookupResponses -> {
             final EnrichResolution enrichResolution = new EnrichResolution();
 
             Map<String, LookupResponse> lookupResponsesToProcess = new HashMap<>();
@@ -121,38 +121,50 @@ public class EnrichPolicyResolver {
             for (Map.Entry<String, LookupResponse> entry : lookupResponses.entrySet()) {
                 String clusterAlias = entry.getKey();
                 if (entry.getValue().connectionError != null) {
-                    enrichResolution.addUnavailableCluster(clusterAlias, entry.getValue().connectionError);
+                    enrichResolution.addUnusableRemote(clusterAlias, entry.getValue().connectionError);
                     // remove unavailable cluster from the list of clusters which is used below to create the ResolvedEnrichPolicy
-                    remoteClusters.remove(clusterAlias);
+                    boolean removed = remotes.removeIf(t -> t.v1().equals(clusterAlias));
+                    assert removed : "Remote " + clusterAlias + " was not removed from the remotes list.";
                 } else {
                     lookupResponsesToProcess.put(clusterAlias, entry.getValue());
                 }
             }
 
             for (UnresolvedPolicy unresolved : unresolvedPolicies) {
-                Tuple<ResolvedEnrichPolicy, String> resolved = mergeLookupResults(
+                MergedPolicyLookupResult resolved = mergeLookupResults(
                     unresolved,
-                    calculateTargetClusters(unresolved.mode, includeLocal, remoteClusters),
+                    calculateTargetClusters(unresolved.mode, includeLocal, remotes),
                     lookupResponsesToProcess
                 );
 
-                if (resolved.v1() != null) {
-                    enrichResolution.addResolvedPolicy(unresolved.name, unresolved.mode, resolved.v1());
-                } else {
-                    assert resolved.v2() != null;
-                    enrichResolution.addError(unresolved.name, unresolved.mode, resolved.v2());
+                for (Map.Entry<String, Exception> entry : resolved.remotesToBeSkipped().entrySet()) {
+                    enrichResolution.addUnusableRemote(entry.getKey(), entry.getValue());
+                }
+                // If a remote-only CCS is done and all the remotes are "unusable" due to missing enrich policies
+                // and skippable (skip_unavailable=true), don't fill in either the resolved policy or the error
+                // on the enrichResolution object. The only field with contents will be the "unusable remotes" collection.
+                if (resolved.resolvedPolicy() != null) {
+                    enrichResolution.addResolvedPolicy(unresolved.name, unresolved.mode, resolved.resolvedPolicy());
+                } else if (resolved.error() != null) {
+                    enrichResolution.addError(unresolved.name, unresolved.mode, resolved.error());
                 }
             }
             return enrichResolution;
         }));
     }
 
-    private Collection<String> calculateTargetClusters(Enrich.Mode mode, boolean includeLocal, Set<String> remoteClusters) {
+    record MergedPolicyLookupResult(ResolvedEnrichPolicy resolvedPolicy, Map<String, Exception> remotesToBeSkipped, String error) {}
+
+    private Collection<Tuple<String, Boolean>> calculateTargetClusters(
+        Enrich.Mode mode,
+        boolean includeLocal,
+        Set<Tuple<String, Boolean>> remoteClusters
+    ) {
         return switch (mode) {
-            case ANY -> CollectionUtils.appendToCopy(remoteClusters, RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY);
-            case COORDINATOR -> List.of(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY);
+            case ANY -> CollectionUtils.appendToCopy(remoteClusters, new Tuple<>(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY, null));
+            case COORDINATOR -> List.of(new Tuple<>(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY, null));
             case REMOTE -> includeLocal
-                ? CollectionUtils.appendToCopy(remoteClusters, RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY)
+                ? CollectionUtils.appendToCopy(remoteClusters, new Tuple<>(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY, null))
                 : remoteClusters;
         };
     }
@@ -161,18 +173,25 @@ public class EnrichPolicyResolver {
      * Resolve an enrich policy by merging the lookup responses from the target clusters.
      * @return a resolved enrich policy or an error
      */
-    private Tuple<ResolvedEnrichPolicy, String> mergeLookupResults(
+    private MergedPolicyLookupResult mergeLookupResults(
         UnresolvedPolicy unresolved,
-        Collection<String> targetClusters,
+        Collection<Tuple<String, Boolean>> targetClusters,
         Map<String, LookupResponse> lookupResults
     ) {
         String policyName = unresolved.name;
         if (targetClusters.isEmpty()) {
-            return Tuple.tuple(null, "enrich policy [" + policyName + "] cannot be resolved since remote clusters are unavailable");
+            return new MergedPolicyLookupResult(
+                null,
+                null,
+                "enrich policy [" + policyName + "] cannot be resolved since remote clusters are unavailable"
+            );
         }
         final Map<String, ResolvedEnrichPolicy> policies = new HashMap<>();
-        final List<String> failures = new ArrayList<>();
-        for (String cluster : targetClusters) {
+        final List<String> failures = new ArrayList<>(); // (fatal) failures on local or skip_unavailable=false remote
+        final Map<String, Exception> remotesToBeSkipped = new HashMap<>(); // skip_unavailable=true remotes with no enrich policy or errors
+        for (Tuple<String, Boolean> clusterInfo : targetClusters) {
+            String cluster = clusterInfo.v1();
+            boolean skipUnavailable = clusterInfo.v2() == null ? false : clusterInfo.v2();
             LookupResponse lookupResult = lookupResults.get(cluster);
             if (lookupResult != null) {
                 assert lookupResult.connectionError == null : "Should never have a non-null connectionError here";
@@ -182,21 +201,36 @@ public class EnrichPolicyResolver {
                 } else {
                     final String failure = lookupResult.failures.get(policyName);
                     if (failure != null) {
-                        failures.add(failure);
+                        if (skipUnavailable) {
+                            remotesToBeSkipped.put(cluster, new IllegalStateException(failure));
+                        } else {
+                            failures.add(failure);
+                        }
+                    } else if (skipUnavailable) {
+                        // path where there was no enrich policy found at all on the remote
+                        remotesToBeSkipped.put(cluster, new IllegalStateException("failed to resolve enrich policy [" + policyName + "]"));
                     }
                 }
             }
         }
-        if (targetClusters.size() != policies.size()) {
+        if (targetClusters.size() != policies.size() + remotesToBeSkipped.size()) {
             final String reason;
             if (failures.isEmpty()) {
-                List<String> missingClusters = targetClusters.stream().filter(c -> policies.containsKey(c) == false).sorted().toList();
-                reason = missingPolicyError(policyName, targetClusters, missingClusters);
+                List<String> missingClusters = targetClusters.stream()
+                    .filter(t -> policies.containsKey(t.v1()) == false)
+                    .map(t -> t.v1())
+                    .sorted()
+                    .toList();
+                reason = missingPolicyError(policyName, targetClusters.stream().map(t -> t.v1()).toList(), missingClusters);
             } else {
                 reason = "failed to resolve enrich policy [" + policyName + "]; reason " + failures;
             }
-            return Tuple.tuple(null, reason);
+            return new MergedPolicyLookupResult(null, null, reason);
+        } else if (targetClusters.size() == remotesToBeSkipped.size()) {
+            // MP TODO: document this if it works as hoped
+            return new MergedPolicyLookupResult(null, remotesToBeSkipped, null);
         }
+
         Map<String, EsField> mappings = new HashMap<>();
         Map<String, String> concreteIndices = new HashMap<>();
         ResolvedEnrichPolicy last = null;
@@ -205,12 +239,12 @@ public class EnrichPolicyResolver {
             if (last != null && last.matchField().equals(curr.matchField()) == false) {
                 String error = "enrich policy [" + policyName + "] has different match fields ";
                 error += "[" + last.matchField() + ", " + curr.matchField() + "] across clusters";
-                return Tuple.tuple(null, error);
+                return new MergedPolicyLookupResult(null, null, error);
             }
             if (last != null && last.matchType().equals(curr.matchType()) == false) {
                 String error = "enrich policy [" + policyName + "] has different match types ";
                 error += "[" + last.matchType() + ", " + curr.matchType() + "] across clusters";
-                return Tuple.tuple(null, error);
+                return new MergedPolicyLookupResult(null, null, error);
             }
             // merge mappings
             for (Map.Entry<String, EsField> m : curr.mapping().entrySet()) {
@@ -226,7 +260,7 @@ public class EnrichPolicyResolver {
                 if (old != null && old.getDataType().equals(field.getDataType()) == false) {
                     String error = "field [" + m.getKey() + "] of enrich policy [" + policyName + "] has different data types ";
                     error += "[" + old.getDataType() + ", " + field.getDataType() + "] across clusters";
-                    return Tuple.tuple(null, error);
+                    return new MergedPolicyLookupResult(null, null, error);
                 }
             }
             if (last != null) {
@@ -237,7 +271,11 @@ public class EnrichPolicyResolver {
                 var diff = counts.entrySet().stream().filter(f -> f.getValue() < 2).map(Map.Entry::getKey).limit(20).sorted().toList();
                 if (diff.isEmpty() == false) {
                     String detailed = "these fields are missing in some policies: " + diff;
-                    return Tuple.tuple(null, "enrich policy [" + policyName + "] has different enrich fields across clusters; " + detailed);
+                    return new MergedPolicyLookupResult(
+                        null,
+                        null,
+                        "enrich policy [" + policyName + "] has different enrich fields across clusters; " + detailed
+                    );
                 }
             }
             // merge concrete indices
@@ -246,7 +284,7 @@ public class EnrichPolicyResolver {
         }
         assert last != null;
         var resolved = new ResolvedEnrichPolicy(last.matchField(), last.matchType(), last.enrichFields(), concreteIndices, mappings);
-        return Tuple.tuple(resolved, null);
+        return new MergedPolicyLookupResult(resolved, remotesToBeSkipped, null);
     }
 
     private String missingPolicyError(String policyName, Collection<String> targetClusters, List<String> missingClusters) {

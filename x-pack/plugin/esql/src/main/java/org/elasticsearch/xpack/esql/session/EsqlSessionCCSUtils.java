@@ -192,7 +192,7 @@ class EsqlSessionCCSUtils {
 
         /**
          * Rules enforced at planning time around non-matching indices
-         * P1. fail query if no matching indices on any cluster (VerificationException) - that is handled elsewhere (TODO: document where)
+         * P1. fail query if no matching indices on any cluster (VerificationException) - that is handled elsewhere
          * P2. fail query if a skip_unavailable:false cluster has no matching indices (the local cluster already has this rule
          *     enforced at planning time)
          * P3. fail query if the local cluster has no matching indices and a concrete index was specified
@@ -204,6 +204,11 @@ class EsqlSessionCCSUtils {
          * Mark it as SKIPPED with 0 shards searched and took=0.
          */
         for (String c : clustersWithNoMatchingIndices) {
+            if (executionInfo.getCluster(c).getStatus() == EsqlExecutionInfo.Cluster.Status.SKIPPED) {
+                // if cluster was already marked SKIPPED during enrich policy resolution, do not overwrite
+                continue;
+            }
+
             final String indexExpression = executionInfo.getCluster(c).getIndexExpression();
             if (missingIndicesIsFatal(c, executionInfo)) {
                 String error = Strings.format(
@@ -257,7 +262,6 @@ class EsqlSessionCCSUtils {
         return true;
     }
 
-    // MP TODO: is there a better method for doing this, say in RemoteClusterService or RemoteClusterAware?
     private static boolean concreteIndexRequested(String indexExpression) {
         for (String expr : indexExpression.split(",")) {
             // TODO need to also detect date math before this check?
