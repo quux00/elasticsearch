@@ -158,6 +158,7 @@ class EsqlSessionCCSUtils {
     static void updateExecutionInfoWithUnavailableClusters(EsqlExecutionInfo execInfo, Map<String, FieldCapabilitiesFailure> unavailable) {
         for (Map.Entry<String, FieldCapabilitiesFailure> entry : unavailable.entrySet()) {
             String clusterAlias = entry.getKey();
+            System.err.println("ZZZ CCSUtils: updateUnvailable: unavailable: " + clusterAlias);
             boolean skipUnavailable = execInfo.getCluster(clusterAlias).isSkipUnavailable();
             RemoteTransportException e = new RemoteTransportException(
                 Strings.format("Remote cluster [%s] (with setting skip_unavailable=%s) is not available", clusterAlias, skipUnavailable),
@@ -190,6 +191,9 @@ class EsqlSessionCCSUtils {
         Set<String> clustersWithNoMatchingIndices = Sets.difference(clustersRequested, clustersWithResolvedIndices);
         clustersWithNoMatchingIndices.removeAll(indexResolution.getUnavailableClusters().keySet());
 
+        System.err.println("ZZZ CCSUtils.updateExecutionInfoWithClustersWithNoMatchingIndices: clustersWithNoMatchingIndices: " +
+            clustersWithNoMatchingIndices);
+
         /**
          * Rules enforced at planning time around non-matching indices
          * P1. fail query if no matching indices on any cluster (VerificationException) - that is handled elsewhere (TODO: document where)
@@ -204,6 +208,7 @@ class EsqlSessionCCSUtils {
          * Mark it as SKIPPED with 0 shards searched and took=0.
          */
         for (String c : clustersWithNoMatchingIndices) {
+            System.err.println("ZZZ CCSUtils cluster with no matching indices: " + c);
             final String indexExpression = executionInfo.getCluster(c).getIndexExpression();
             if (missingIndicesIsFatal(c, executionInfo)) {
                 String error = Strings.format(
@@ -215,6 +220,7 @@ class EsqlSessionCCSUtils {
                 } else {
                     fatalErrorMessage += "; " + error;
                 }
+                System.err.println("  FATAL ZZZ CCSUtils cluster with no matching indices: " + error);
             } else {
                 // handles local cluster (when no concrete indices requested) and skip_unavailable=true clusters
                 EsqlExecutionInfo.Cluster.Status status;
@@ -226,6 +232,8 @@ class EsqlSessionCCSUtils {
                     status = EsqlExecutionInfo.Cluster.Status.SKIPPED;
                     failure = new ShardSearchFailure(new VerificationException("Unknown index [" + indexExpression + "]"));
                 }
+                System.err.println("  _NOT_ FATAL ZZZ CCSUtils cluster with no matching indices: " + status + "; failure: " +
+                    failure.reason());
                 executionInfo.swapCluster(c, (k, v) -> {
                     var builder = new EsqlExecutionInfo.Cluster.Builder(v).setStatus(status)
                         .setTook(new TimeValue(0))
@@ -269,6 +277,7 @@ class EsqlSessionCCSUtils {
 
     // visible for testing
     static void updateExecutionInfoAtEndOfPlanning(EsqlExecutionInfo execInfo) {
+        System.err.println("ZZZ CCSUtils: updateExecutionInfoAtEndOfPlanning - END OF PLANNING");
         // TODO: this logic assumes a single phase execution model, so it may need to altered once INLINESTATS is made CCS compatible
         if (execInfo.isCrossClusterSearch()) {
             execInfo.markEndPlanning();

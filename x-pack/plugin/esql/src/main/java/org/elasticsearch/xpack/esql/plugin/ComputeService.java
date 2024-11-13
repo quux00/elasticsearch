@@ -56,6 +56,7 @@ import org.elasticsearch.transport.TransportChannel;
 import org.elasticsearch.transport.TransportRequestHandler;
 import org.elasticsearch.transport.TransportRequestOptions;
 import org.elasticsearch.transport.TransportService;
+import org.elasticsearch.xpack.core.security.action.user.UserRequest;
 import org.elasticsearch.xpack.esql.action.EsqlExecutionInfo;
 import org.elasticsearch.xpack.esql.action.EsqlQueryAction;
 import org.elasticsearch.xpack.esql.action.EsqlSearchShardsAction;
@@ -136,6 +137,7 @@ public class ComputeService {
         EsqlExecutionInfo execInfo,
         ActionListener<Result> listener
     ) {
+        System.err.println("ZZZ YYY starting execution");
         Tuple<PhysicalPlan, PhysicalPlan> coordinatorAndDataNodePlan = PlannerUtils.breakPlanBetweenCoordinatorAndDataNode(
             physicalPlan,
             configuration
@@ -154,6 +156,7 @@ public class ComputeService {
         }
         Map<String, OriginalIndices> clusterToConcreteIndices = transportService.getRemoteClusterService()
             .groupIndices(SearchRequest.DEFAULT_INDICES_OPTIONS, PlannerUtils.planConcreteIndices(physicalPlan).toArray(String[]::new));
+        System.err.println("ZZZ YYY clusterToConcreteIndices: " + clusterToConcreteIndices);
         QueryPragmas queryPragmas = configuration.pragmas();
         if (dataNodePlan == null) {
             if (clusterToConcreteIndices.values().stream().allMatch(v -> v.indices().length == 0) == false) {
@@ -188,6 +191,7 @@ public class ComputeService {
         }
         Map<String, OriginalIndices> clusterToOriginalIndices = transportService.getRemoteClusterService()
             .groupIndices(SearchRequest.DEFAULT_INDICES_OPTIONS, PlannerUtils.planOriginalIndices(physicalPlan));
+        System.err.println("ZZZ YYY clusterToOriginalIndices: " + clusterToOriginalIndices);
         var localOriginalIndices = clusterToOriginalIndices.remove(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY);
         var localConcreteIndices = clusterToConcreteIndices.remove(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY);
         final var exchangeSource = new ExchangeSourceHandler(
@@ -206,6 +210,7 @@ public class ComputeService {
             // this is the top level ComputeListener called once at the end (e.g., once all clusters have finished for a CCS)
             var computeListener = ComputeListener.create(local, transportService, rootTask, execInfo, listener.map(r -> {
                 execInfo.markEndQuery();  // TODO: revisit this time recording model as part of INLINESTATS improvements
+                System.err.println("ZZZ ALL OVER: execInfo: " + execInfo);
                 return new Result(outputAttributes, collectedPages, r.getProfiles(), execInfo);
             }))
         ) {
@@ -802,8 +807,10 @@ public class ComputeService {
     public static final String CLUSTER_ACTION_NAME = EsqlQueryAction.NAME + "/cluster";
 
     private class ClusterRequestHandler implements TransportRequestHandler<ClusterComputeRequest> {
+
         @Override
         public void messageReceived(ClusterComputeRequest request, TransportChannel channel, Task task) {
+            System.err.println("ZZZ ClusterRequestHandler: " + request.clusterAlias());
             ChannelActionListener<ComputeResponse> listener = new ChannelActionListener<>(channel);
             RemoteClusterPlan remoteClusterPlan = request.remoteClusterPlan();
             var plan = remoteClusterPlan.plan();

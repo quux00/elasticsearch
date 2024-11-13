@@ -136,7 +136,10 @@ final class ComputeListener implements Releasable {
                 }
             }
             delegate.onResponse(result);
-        }, e -> delegate.onFailure(failureCollector.getFailure())));
+        }, e -> {
+            System.err.println("ZZZ ComputeListener error handler 1: " + e);
+            delegate.onFailure(failureCollector.getFailure());
+        }));
     }
 
     /**

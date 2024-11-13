@@ -147,6 +147,7 @@ public class EsqlSession {
      */
     public void execute(EsqlQueryRequest request, EsqlExecutionInfo executionInfo, PlanRunner planRunner, ActionListener<Result> listener) {
         LOGGER.debug("ESQL query:\n{}", request.query());
+        System.err.println("ZZZ: EsqlSession: execute");
         analyzedPlan(
             parse(request.query(), request.params()),
             executionInfo,
@@ -279,6 +280,7 @@ public class EsqlSession {
             var plan = analyzer.analyze(parsed);
             plan.setAnalyzed();
             LOGGER.debug("Analyzed plan:\n{}", plan);
+            System.err.println("ZZZ: Analyzed plan: " + plan);
             return plan;
         }, listener);
     }
@@ -298,7 +300,9 @@ public class EsqlSession {
                 .flatMap(t -> Arrays.stream(Strings.commaDelimitedListToStringArray(t.id().index())))
                 .toArray(String[]::new)
         ).keySet();
+        System.err.println("ZZZ: EsqlSession.preAnalyze - before enrich lookup");
         enrichPolicyResolver.resolvePolicies(targetClusters, unresolvedPolicies, listener.delegateFailureAndWrap((l, enrichResolution) -> {
+            System.err.println("ZZZ: EsqlSession.preAnalyze - enrich lookup callback");
             // first we need the match_fields names from enrich policies and THEN, with an updated list of fields, we call field_caps API
             var matchFields = enrichResolution.resolvedEnrichPolicies()
                 .stream()
@@ -306,6 +310,11 @@ public class EsqlSession {
                 .collect(Collectors.toSet());
             Map<String, Exception> unavailableClusters = enrichResolution.getUnavailableClusters();
             preAnalyzeIndices(parsed, executionInfo, unavailableClusters, l.delegateFailureAndWrap((ll, indexResolution) -> {
+                System.err.printf("ZZZ: EsqlSession.preAnalyze - callback after field-caps with IndexResolution: " +
+                        "resolved indices [%s]; unavailable clusters: [%s]; isValid: [%s]; esIndex ConcreteIndexes: [%s]; " +
+                        "esIndex IndexNameWithModes: [%s]\n",
+                    indexResolution.getResolvedIndices(), indexResolution.getUnavailableClusters().keySet(), indexResolution.isValid(),
+                    indexResolution.get().concreteIndices(), indexResolution.get().indexNameWithModes());
                 // TODO in follow-PR (for skip_unavailble handling of missing concrete indexes) add some tests for invalid index
                 // resolution to updateExecutionInfo
                 if (indexResolution.isValid()) {
@@ -389,6 +398,7 @@ public class EsqlSession {
                 // if this was a pure remote CCS request (no local indices) and all remotes are offline, return an empty IndexResolution
                 listener.onResponse(IndexResolution.valid(new EsIndex(table.index(), Map.of(), Map.of()), Collections.emptySet()));
             } else {
+                System.err.println("ZZZ: EsqlSession.preAnalyzeIndices - about to call field-caps");
                 // call the EsqlResolveFieldsAction (field-caps) to resolve indices and get field types
                 indexResolver.resolveAsMergedMapping(indexExpressionToResolve, fieldNames, listener);
             }
