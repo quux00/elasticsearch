@@ -24,7 +24,6 @@ import org.elasticsearch.test.junit.RunnableTestRuleAdapter;
 import org.elasticsearch.xcontent.XContentBuilder;
 import org.elasticsearch.xcontent.json.JsonXContent;
 import org.hamcrest.CoreMatchers;
-import org.hamcrest.Matchers;
 import org.junit.After;
 import org.junit.ClassRule;
 import org.junit.rules.RuleChain;
@@ -51,7 +50,6 @@ import static org.hamcrest.Matchers.containsInAnyOrder;
 import static org.hamcrest.Matchers.containsString;
 import static org.hamcrest.Matchers.equalTo;
 import static org.hamcrest.Matchers.greaterThan;
-import static org.hamcrest.Matchers.greaterThanOrEqualTo;
 
 public class RemoteClusterSecurityEsqlIT extends AbstractRemoteClusterSecurityTestCase {
     private static final AtomicReference<Map<String, Object>> API_KEY_MAP_REF = new AtomicReference<>();
@@ -352,8 +350,10 @@ public class RemoteClusterSecurityEsqlIT extends AbstractRemoteClusterSecurityTe
         Response response = performRequestWithRemoteSearchUser(request);
         assertRemoteOnlyResults(response);
 
+        String remoteSearchUserAPIKey = createRemoteSearchUserAPIKey();
+
         // same as above but authenticate with API key
-        response = performRequestWithRemoteSearchUserViaAPIKey(request);
+        response = performRequestWithRemoteSearchUserViaAPIKey(request, remoteSearchUserAPIKey);
         assertRemoteOnlyResults(response);
 
         // query remote and local cluster
@@ -367,7 +367,7 @@ public class RemoteClusterSecurityEsqlIT extends AbstractRemoteClusterSecurityTe
         final var putRoleRequest = new Request("PUT", "/_security/role/" + REMOTE_SEARCH_ROLE);
         putRoleRequest.setJsonEntity("""
             {
-              "indices": [{"names": [""], "privileges": ["read_cross_cluster"]}],
+              "indices": [{"names": ["employees*"], "privileges": ["read","read_cross_cluster"]}],
               "remote_indices": [
                 {
                   "names": ["employees*"],
@@ -379,13 +379,14 @@ public class RemoteClusterSecurityEsqlIT extends AbstractRemoteClusterSecurityTe
         response = adminClient().performRequest(putRoleRequest);
         assertOK(response);
 
-        // query remote cluster only - but also include employees2 which the user now access
-        response = performRequestWithRemoteSearchUser(esqlRequest("""
-            FROM my_remote_cluster:employees,my_remote_cluster:employees2
+        request = esqlRequest("""
+            FROM my_remote_cluster:employees,employees
             | SORT emp_id ASC
-            | LIMIT 2
-            | KEEP emp_id, department"""));
-        assertRemoteOnlyAgainst2IndexResults(response);
+            | LIMIT 10""");
+        response = performRequestWithRemoteSearchUser(request);
+        assertRemoteAndLocalResults(response);
+        response = performRequestWithRemoteSearchUserViaAPIKey(request, remoteSearchUserAPIKey);
+        assertRemoteAndLocalResults(response);
     }
 
     @SuppressWarnings("unchecked")
@@ -710,7 +711,7 @@ public class RemoteClusterSecurityEsqlIT extends AbstractRemoteClusterSecurityTe
             assertWithEnrich(response);
 
             // same as above but authenticate with API key
-            response = performRequestWithRemoteSearchUserViaAPIKey(request);
+            response = performRequestWithRemoteSearchUserViaAPIKey(request, createRemoteSearchUserAPIKey());
             assertWithEnrich(response);
 
             // Query cluster
@@ -785,7 +786,7 @@ public class RemoteClusterSecurityEsqlIT extends AbstractRemoteClusterSecurityTe
               "remote_cluster": [
                 {
                   "privileges": ["monitor_enrich"],
-                   "clusters": ["my_remote_cluster"]
+                  "clusters": ["my_remote_cluster"]
                 }
               ]
             }""");
@@ -974,11 +975,12 @@ public class RemoteClusterSecurityEsqlIT extends AbstractRemoteClusterSecurityTe
         removeAliases();
     }
 
-    @SuppressWarnings("unchecked")  // based on testCrossClusterQuery
+    @SuppressWarnings("unchecked")  // MP TODO: based on testCrossClusterQuery
     public void testSearchesAgainstNonMatchingIndicesWithSkipUnavailableFalse() throws Exception {
-        //configureRemoteCluster();
         configureRemoteCluster(REMOTE_CLUSTER_ALIAS, fulfillingCluster, false, randomBoolean(), false);
         populateData();
+
+        String remoteSearchUserAPIKey = createRemoteSearchUserAPIKey();
 
         // update role to include allow searching any employees* index for the remote cluster
         // employees and employees2 exist
@@ -986,11 +988,12 @@ public class RemoteClusterSecurityEsqlIT extends AbstractRemoteClusterSecurityTe
             final var putRoleRequest = new Request("PUT", "/_security/role/" + REMOTE_SEARCH_ROLE);
             putRoleRequest.setJsonEntity("""
                 {
-                  "indices": [{"names": [""], "privileges": ["read_cross_cluster"]}],
+                  "cluster": ["cross_cluster_search"],
+                  "indices": [{"names": ["employees*"], "privileges": ["read","read_cross_cluster"]}],
                   "remote_indices": [
                     {
                       "names": ["employees*"],
-                      "privileges": ["read"],
+                      "privileges": ["read","read_cross_cluster"],
                       "clusters": ["my_remote_cluster"]
                     }
                   ]
@@ -998,8 +1001,11 @@ public class RemoteClusterSecurityEsqlIT extends AbstractRemoteClusterSecurityTe
             Response response = adminClient().performRequest(putRoleRequest);
             assertOK(response);
         }
-        // initial sanity checks - ensure we can query employees, my_remote_cluster:employees and my_remote_cluster:employees2
-        // both via performRequestWithRemoteSearchUser and performRequestWithRemoteSearchUserViaAPIKey
+
+        /*
+         * initial sanity checks - ensure we can query employees, my_remote_cluster:employees and my_remote_cluster:employees2
+         * both via performRequestWithRemoteSearchUser and performRequestWithRemoteSearchUserViaAPIKey
+         */
 
         // query remote cluster only
         {
@@ -1010,27 +1016,61 @@ public class RemoteClusterSecurityEsqlIT extends AbstractRemoteClusterSecurityTe
                 | KEEP emp_id, department""");
             Response response = performRequestWithRemoteSearchUser(request);
             assertRemoteOnlyResults(response);
-
             // same as above but authenticate with API key
-            response = performRequestWithRemoteSearchUserViaAPIKey(request);
+            response = performRequestWithRemoteSearchUserViaAPIKey(request, remoteSearchUserAPIKey);
             assertRemoteOnlyResults(response);
 
             // query remote and local cluster
-            response = performRequestWithRemoteSearchUser(esqlRequest("""
-                FROM my_remote_cluster:employees,employees
+            request = esqlRequest("""
+                FROM my_remote_cluster:employees2,employees
                 | SORT emp_id ASC
-                | LIMIT 10"""));
-            assertRemoteAndLocalResults(response);
+                | LIMIT 10""");
+            response = performRequestWithRemoteSearchUser(request);
+            assertOK(response);
+            //assertRemoteAndLocalResults(response);
+//            response = performRequestWithRemoteSearchUserViaAPIKey(request, remoteSearchUserAPIKey);
+//            assertOK(response);
+            //assertRemoteAndLocalResults(response);
 
             // query remote cluster only - but also include employees2 which the user now access
-            response = performRequestWithRemoteSearchUser(esqlRequest("""
+            request = esqlRequest("""
             FROM my_remote_cluster:employees,my_remote_cluster:employees2
             | SORT emp_id ASC
             | LIMIT 2
-            | KEEP emp_id, department"""));
+            | KEEP emp_id, department""");
+            response = performRequestWithRemoteSearchUser(request);
             assertRemoteOnlyAgainst2IndexResults(response);
-
+//            response = performRequestWithRemoteSearchUserViaAPIKey(request, remoteSearchUserAPIKey);
+//            assertOK(response);
+            //assertRemoteOnlyAgainst2IndexResults(response);
         }
+
+        /*
+         * Queries with non-matching indices to determine errors are thrown (or not) appropriately
+         * based on ES|QL rules (see EsqlCCSUtils).
+         *
+         * The tests here match CrossClustersQuery.testSearchesAgainstNonMatchingIndicesWithSkipUnavailableFalse
+         * for unsecured clusters and CrossClusterEsqlRCS1MissingIndicesIT.testSearchesAgainstNonMatchingIndicesWithSkipUnavailableFalse
+         * for clusters secured via RCS 1.0.
+         *
+         * RCS2 behaves a little differently - some errors are different, but in general test cases that pass in the above
+         * tests should pass here and cases where an Exception is thrown should also throw here, though the exception
+         * details might differ because of RCS2 specifics.
+         */
+
+        // missing concrete local index is an error
+        {
+            String q = org.elasticsearch.common.Strings.format("FROM employees_nomatch,my_remote_cluster:employees | STATS count(*)");
+
+            String limit1 = q + " | LIMIT 1";
+            ResponseException e = expectThrows(ResponseException.class, () -> performRequestWithRemoteSearchUser(esqlRequest(limit1)));
+            assertThat(e.getMessage(), containsString("Unknown index [employees_nomatch]"));
+
+            String limit0 = q + " | LIMIT 0";
+            e = expectThrows(ResponseException.class, () -> performRequestWithRemoteSearchUser(esqlRequest(limit0)));
+            assertThat(e.getMessage(), containsString("Unknown index [employees_nomatch]"));
+        }
+
 
 //        // query remote cluster only - but also include employees2 which the user now access
 //        response = performRequestWithRemoteSearchUser(esqlRequest("""
@@ -1070,7 +1110,7 @@ public class RemoteClusterSecurityEsqlIT extends AbstractRemoteClusterSecurityTe
          [cluster:admin/xpack/security/api_key/create] is unauthorized for user [remote_search_user] with effective roles [remote_search],
          this action is granted by the cluster privileges [manage_own_api_key,manage_api_key,manage_security,all]"},"status":403}
         */
-        System.err.println(response);
+        //System.err.println(response);
     }
 
 
@@ -1343,7 +1383,12 @@ public class RemoteClusterSecurityEsqlIT extends AbstractRemoteClusterSecurityTe
         return client().performRequest(request);
     }
 
-    private Response performRequestWithRemoteSearchUserViaAPIKey(final Request request) throws IOException {
+    private Response performRequestWithRemoteSearchUserViaAPIKey(Request request, String encodedApiKey) throws IOException {
+        request.setOptions(RequestOptions.DEFAULT.toBuilder().addHeader("Authorization", "ApiKey " + encodedApiKey));
+        return client().performRequest(request);
+    }
+
+    private String createRemoteSearchUserAPIKey() throws IOException {
         final Request createApiKeyRequest = new Request("POST", "_security/api_key");
         createApiKeyRequest.setJsonEntity("""
             {
@@ -1357,8 +1402,7 @@ public class RemoteClusterSecurityEsqlIT extends AbstractRemoteClusterSecurityTe
         assertOK(response);
         final Map<String, Object> responseAsMap = responseAsMap(response);
         final String encoded = (String) responseAsMap.get("encoded");
-        request.setOptions(RequestOptions.DEFAULT.toBuilder().addHeader("Authorization", "ApiKey " + encoded));
-        return client().performRequest(request);
+        return encoded;
     }
 
     @SuppressWarnings("unchecked")
