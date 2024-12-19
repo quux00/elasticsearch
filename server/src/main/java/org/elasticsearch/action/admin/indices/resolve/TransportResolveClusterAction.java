@@ -28,6 +28,7 @@ import org.elasticsearch.cluster.ClusterState;
 import org.elasticsearch.cluster.metadata.IndexNameExpressionResolver;
 import org.elasticsearch.cluster.service.ClusterService;
 import org.elasticsearch.common.util.concurrent.EsExecutors;
+import org.elasticsearch.core.Nullable;
 import org.elasticsearch.core.Strings;
 import org.elasticsearch.index.IndexNotFoundException;
 import org.elasticsearch.injection.guice.Inject;
@@ -92,15 +93,38 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
         if (ccsCheckCompatibility) {
             checkCCSVersionCompatibility(request);
         }
+
+        System.err.println(">>> 0000: INCOMING request: " + request);
+
         assert task instanceof CancellableTask;
         final CancellableTask resolveClusterTask = (CancellableTask) task;
         ClusterState clusterState = clusterService.state();
-        Map<String, OriginalIndices> remoteClusterIndices = remoteClusterService.groupIndices(request.indicesOptions(), request.indices());
+
+        Map<String, OriginalIndices> remoteClusterIndices;
+        if (request.clusterInfoOnly() && request.queryingCluster()) {
+            System.err.println(">>> DEBUG A1");
+            // user does not want to check whether an index expression matches
+            remoteClusterIndices = remoteClusterService.groupIndices(request.indicesOptions(), new String[] { "*:*" }, false);
+            for (String clusterAlias : remoteClusterIndices.keySet()) {
+                remoteClusterIndices.put(clusterAlias, new OriginalIndices(new String[0], IndicesOptions.DEFAULT));
+            }
+            if (remoteClusterIndices.isEmpty()) {
+                System.err.println(">>> DEBUG A2: ABORT ------------- !!");
+                listener.onResponse(new ResolveClusterActionResponse(Map.of()));
+                return;
+            }
+        } else {
+            System.err.println(">>> DEBUG B");
+            remoteClusterIndices = remoteClusterService.groupIndices(request.indicesOptions(), request.indices(), false);
+        }
+
         OriginalIndices localIndices = remoteClusterIndices.remove(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY);
 
+        System.err.println(">>> DEBUG C");
         Map<String, ResolveClusterInfo> clusterInfoMap = new ConcurrentHashMap<>();
         // add local cluster info if in scope of the index-expression from user
         if (localIndices != null) {
+            System.err.println(">>> DEBUG C1");
             try {
                 boolean matchingIndices = hasMatchingIndices(localIndices, request.indicesOptions(), clusterState);
                 clusterInfoMap.put(
@@ -111,10 +135,14 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
                 clusterInfoMap.put(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY, new ResolveClusterInfo(true, false, e.getMessage()));
             }
         } else if (request.isLocalIndicesRequested()) {
+            System.err.println(">>> DEBUG C2");
             // the localIndices entry can be null even when the user requested a local index, as the index resolution
             // process can remove them (see RemoteClusterActionRequest for more details), so if we get here, no matching
             // index was found and no security exception was thrown, so just set matchingIndices=false
             clusterInfoMap.put(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY, new ResolveClusterInfo(true, false, false, Build.current()));
+        } else if (request.queryingCluster() == false && request.clusterInfoOnly()) {
+            // on the remote cluster if cluster info only is requested (localIndices == null), just return build info
+            clusterInfoMap.put(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY, new ResolveClusterInfo(true, false, null, Build.current()));
         }
 
         final var finishedOrCancelled = new AtomicBoolean();
@@ -136,14 +164,22 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
             for (Map.Entry<String, OriginalIndices> remoteIndices : remoteClusterIndices.entrySet()) {
                 resolveClusterTask.ensureNotCancelled();
                 String clusterAlias = remoteIndices.getKey();
-                OriginalIndices originalIndices = remoteIndices.getValue();
+                // MP NOTE: this can now be null
+                OriginalIndices originalIndices = remoteIndices.getValue();  // indices=[blog*]
                 boolean skipUnavailable = remoteClusterService.isSkipUnavailable(clusterAlias);
                 RemoteClusterClient remoteClusterClient = remoteClusterService.getRemoteClusterClient(
                     clusterAlias,
                     searchCoordinationExecutor,
                     RemoteClusterService.DisconnectedStrategy.RECONNECT_IF_DISCONNECTED
                 );
-                var remoteRequest = new ResolveClusterActionRequest(originalIndices.indices(), request.indicesOptions());
+                String[] remoteIndicesArray = originalIndices.indices() != null ? originalIndices.indices() : new String[0];
+                var remoteRequest = new ResolveClusterActionRequest(
+                    remoteIndicesArray,
+                    request.indicesOptions(),
+                    request.clusterInfoOnly(),
+                    false
+                );
+                System.err.printf(">> Remote request for %s: %s\n", clusterAlias, remoteRequest);
                 // allow cancellation requests to propagate to remote clusters
                 remoteRequest.setParentTask(clusterService.localNode().getId(), task.getId());
 
@@ -154,9 +190,12 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
                             releaseResourcesOnCancel(clusterInfoMap);
                             return;
                         }
+                        // MP LEFTOFF - coming back as null from the remote now - why? Do I need to pass request.clusterInfoOnly to the
+                        // remote (Line 167)? TODO needs to be serialized eitehr way
                         ResolveClusterInfo info = response.getResolveClusterInfo().get(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY);
+                        System.err.println("... RESPONSE ResolveClusterInfo: " + info);
                         if (info != null) {
-                            clusterInfoMap.put(clusterAlias, new ResolveClusterInfo(info, skipUnavailable));
+                            clusterInfoMap.put(clusterAlias, new ResolveClusterInfo(info, skipUnavailable, request.clusterInfoOnly()));
                         }
                         if (resolveClusterTask.isCancelled()) {
                             releaseResourcesOnCancel(clusterInfoMap);
@@ -165,6 +204,7 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
 
                     @Override
                     public void onFailure(Exception failure) {
+                        System.err.println("... RESPONSE FAILURE " + failure);
                         if (resolveClusterTask.isCancelled()) {
                             releaseResourcesOnCancel(clusterInfoMap);
                             return;
@@ -187,16 +227,22 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
                                 && cause.getMessage().contains(TRANSPORT_VERSION_ERROR_MESSAGE)) {
                                 // Since this cluster does not have _resolve/cluster, we call the _resolve/index
                                 // endpoint to fill in the matching_indices field of the response for that cluster
+                                String[] remoteIndicesArray = originalIndices.indices() != null
+                                    ? originalIndices.indices()
+                                    : new String[] { "*" };  // MP TODO: need to test this!!
                                 ResolveIndexAction.Request resolveIndexRequest = new ResolveIndexAction.Request(
-                                    originalIndices.indices(),
+                                    remoteIndicesArray,
                                     originalIndices.indicesOptions()
                                 );
                                 ActionListener<ResolveIndexAction.Response> resolveIndexActionListener = new ActionListener<>() {
                                     @Override
                                     public void onResponse(ResolveIndexAction.Response response) {
-                                        boolean matchingIndices = response.getIndices().size() > 0
-                                            || response.getAliases().size() > 0
-                                            || response.getDataStreams().size() > 0;
+                                        Boolean matchingIndices = null;
+                                        if (originalIndices != null) {
+                                            matchingIndices = response.getIndices().size() > 0
+                                                || response.getAliases().size() > 0
+                                                || response.getDataStreams().size() > 0;
+                                        }
                                         clusterInfoMap.put(
                                             clusterAlias,
                                             new ResolveClusterInfo(true, skipUnavailable, matchingIndices, null)
@@ -253,7 +299,13 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
      * @return true if indices has at least one matching non-closed index or any aliases or data streams match
      * @throws IndexNotFoundException if a (non-wildcarded) index, alias or data stream is requested
      */
-    private boolean hasMatchingIndices(OriginalIndices localIndices, IndicesOptions indicesOptions, ClusterState clusterState) {
+    private boolean hasMatchingIndices(@Nullable OriginalIndices localIndices, IndicesOptions indicesOptions, ClusterState clusterState) {
+        System.err.println(">>> DEBUG F");
+        if (localIndices == null) {
+            return false;
+        }
+        System.err.println(">>> DEBUG F-2");
+
         List<ResolveIndexAction.ResolvedIndex> indices = new ArrayList<>();
         List<ResolveIndexAction.ResolvedAlias> aliases = new ArrayList<>();
         List<ResolveIndexAction.ResolvedDataStream> dataStreams = new ArrayList<>();
