@@ -43,8 +43,8 @@ public class ResolveClusterActionRequestTests extends AbstractWireSerializingTes
             randomBoolean(),
             randomBoolean()
         );
-        // MP TODO: add tests for resolveClustersOnly=true
-        return new ResolveClusterActionRequest(names, indicesOptions, false);
+        // MP TODO: add tests for resolveClustersOnly=true and/or queryingCluster=false
+        return new ResolveClusterActionRequest(names, indicesOptions, false, true);
     }
 
     @Override

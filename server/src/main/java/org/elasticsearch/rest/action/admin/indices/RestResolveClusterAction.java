@@ -51,7 +51,8 @@ public class RestResolveClusterAction extends BaseRestHandler {
         ResolveClusterActionRequest resolveRequest = new ResolveClusterActionRequest(
             indexExpressions,
             IndicesOptions.fromRequest(request, ResolveIndexAction.Request.DEFAULT_INDICES_OPTIONS),
-            clusterInfoOnly
+            clusterInfoOnly,
+            true
         );
         return channel -> new RestCancellableNodeClient(client, request.getHttpChannel()).admin()
             .indices()
