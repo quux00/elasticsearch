@@ -36,10 +36,17 @@ public class ResolveClusterInfo implements Writeable {
 
     public ResolveClusterInfo(boolean connected, Boolean skipUnavailable, Boolean matchingIndices, Build build) {
         this(connected, skipUnavailable, matchingIndices, build, null);
+        assert matchingIndices != null || connected == false : "If matchingIndices is null, connected must be false";
     }
 
-    public ResolveClusterInfo(ResolveClusterInfo copyFrom, boolean skipUnavailable) {
-        this(copyFrom.isConnected(), skipUnavailable, copyFrom.getMatchingIndices(), copyFrom.getBuild(), copyFrom.getError());
+    public ResolveClusterInfo(ResolveClusterInfo copyFrom, boolean skipUnavailable, boolean clusterInfoOnly) {
+        this(
+            copyFrom.isConnected(),
+            skipUnavailable,
+            clusterInfoOnly ? null : copyFrom.getMatchingIndices(),
+            copyFrom.getBuild(),
+            copyFrom.getError()
+        );
     }
 
     private ResolveClusterInfo(boolean connected, Boolean skipUnavailable, Boolean matchingIndices, Build build, String error) {
@@ -48,7 +55,6 @@ public class ResolveClusterInfo implements Writeable {
         this.matchingIndices = matchingIndices;
         this.build = build;
         this.error = error;
-        assert error != null || matchingIndices != null || connected == false : "If matchingIndices is null, connected must be false";
     }
 
     public ResolveClusterInfo(StreamInput in) throws IOException {
