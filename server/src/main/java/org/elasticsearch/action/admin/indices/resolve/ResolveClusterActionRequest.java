@@ -67,6 +67,8 @@ public class ResolveClusterActionRequest extends ActionRequest implements Indice
         this.indicesOptions = indicesOptions;
         this.clusterInfoOnly = clusterInfoOnly;
         this.isQueryingCluster = queryingCluster;
+        assert clusterInfoOnly == false || (names != null && names.length == 0)
+            : "If clusterInfoOnly is true, the indices array must be an empty";
     }
 
     @SuppressWarnings("this-escape")

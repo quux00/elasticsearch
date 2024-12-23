@@ -36,7 +36,6 @@ public class ResolveClusterInfo implements Writeable {
 
     public ResolveClusterInfo(boolean connected, Boolean skipUnavailable, Boolean matchingIndices, Build build) {
         this(connected, skipUnavailable, matchingIndices, build, null);
-        assert matchingIndices != null || connected == false : "If matchingIndices is null, connected must be false";
     }
 
     public ResolveClusterInfo(ResolveClusterInfo copyFrom, boolean skipUnavailable, boolean clusterInfoOnly) {
