@@ -50,18 +50,28 @@ public class ResolveClusterActionRequest extends ActionRequest implements Indice
     private boolean localIndicesRequested = false;
     private IndicesOptions indicesOptions;
 
+    private boolean clusterInfoOnly;
+    private boolean isQueryingCluster;
+
     public ResolveClusterActionRequest(String[] names) {
         this(names, DEFAULT_INDICES_OPTIONS);
     }
 
-    @SuppressWarnings("this-escape")
+    // TODO: remove this ctor
     public ResolveClusterActionRequest(String[] names, IndicesOptions indicesOptions) {
         this.names = names;
         this.localIndicesRequested = localIndicesPresent(names);
         this.indicesOptions = indicesOptions;
     }
 
-    @SuppressWarnings("this-escape")
+    public ResolveClusterActionRequest(String[] names, IndicesOptions indicesOptions, boolean clusterInfoOnly, boolean queryingCluster) {
+        this.names = names;
+        this.localIndicesRequested = localIndicesPresent(names);
+        this.indicesOptions = indicesOptions;
+        this.clusterInfoOnly = clusterInfoOnly;
+        this.isQueryingCluster = queryingCluster;
+    }
+
     public ResolveClusterActionRequest(StreamInput in) throws IOException {
         super(in);
         if (in.getTransportVersion().before(TransportVersions.V_8_13_0)) {
@@ -75,6 +85,12 @@ public class ResolveClusterActionRequest extends ActionRequest implements Indice
         this.names = in.readStringArray();
         this.indicesOptions = IndicesOptions.readIndicesOptions(in);
         this.localIndicesRequested = localIndicesPresent(names);
+        if (in.getTransportVersion().onOrAfter(TransportVersions.RESOLVE_CLUSTER_EXTRA_PARAMS)) {
+            clusterInfoOnly = in.readBoolean();
+            isQueryingCluster = in.readBoolean();
+            System.err.println(">>> >>> READ IN clusterInfoOnly: " + clusterInfoOnly);
+            System.err.println(">>> >>> READ IN isQueryingCluster: " + isQueryingCluster);
+        }
     }
 
     @Override
@@ -90,6 +106,12 @@ public class ResolveClusterActionRequest extends ActionRequest implements Indice
         }
         out.writeStringArray(names);
         indicesOptions.writeIndicesOptions(out);
+        if (out.getTransportVersion().onOrAfter(TransportVersions.RESOLVE_CLUSTER_EXTRA_PARAMS)) {
+            out.writeBoolean(clusterInfoOnly);
+            out.writeBoolean(isQueryingCluster);
+            System.err.println(">>> >>> WRITE OUT clusterInfoOnly: " + clusterInfoOnly);
+            System.err.println(">>> >>> WRITE OUT isQueryingCluster: " + isQueryingCluster);
+        }
     }
 
     @Override
@@ -142,6 +164,14 @@ public class ResolveClusterActionRequest extends ActionRequest implements Indice
         return this;
     }
 
+    public boolean clusterInfoOnly() {
+        return clusterInfoOnly;
+    }
+
+    public boolean queryingCluster() {
+        return isQueryingCluster;
+    }
+
     @Override
     public boolean allowsRemoteIndices() {
         return true;
@@ -163,7 +193,7 @@ public class ResolveClusterActionRequest extends ActionRequest implements Indice
         };
     }
 
-    boolean localIndicesPresent(String[] indices) {
+    static boolean localIndicesPresent(String[] indices) {
         for (String index : indices) {
             if (RemoteClusterAware.isRemoteIndexName(index) == false) {
                 return true;

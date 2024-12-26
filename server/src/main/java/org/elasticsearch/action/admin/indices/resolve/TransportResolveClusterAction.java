@@ -40,6 +40,7 @@ import org.elasticsearch.transport.RemoteClusterService;
 import org.elasticsearch.transport.TransportService;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -92,25 +93,31 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
         if (ccsCheckCompatibility) {
             checkCCSVersionCompatibility(request);
         }
+        System.err.println("... OLDER CODE DEBUG A: request indices: " + Arrays.toString(request.indices()));
         assert task instanceof CancellableTask;
         final CancellableTask resolveClusterTask = (CancellableTask) task;
         ClusterState clusterState = clusterService.state();
         Map<String, OriginalIndices> remoteClusterIndices = remoteClusterService.groupIndices(request.indicesOptions(), request.indices());
         OriginalIndices localIndices = remoteClusterIndices.remove(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY);
 
+        System.err.println("... OLDER CODE DEBUG A2: remoteClusterIndices: " + remoteClusterIndices);
+
         Map<String, ResolveClusterInfo> clusterInfoMap = new ConcurrentHashMap<>();
         // add local cluster info if in scope of the index-expression from user
         if (localIndices != null) {
             try {
                 boolean matchingIndices = hasMatchingIndices(localIndices, request.indicesOptions(), clusterState);
+                System.err.println("... OLDER CODE DEBUG B: matchingIndices: " + matchingIndices);
                 clusterInfoMap.put(
                     RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY,
                     new ResolveClusterInfo(true, false, matchingIndices, Build.current())
                 );
             } catch (IndexNotFoundException e) {
+                System.err.println("... OLDER CODE DEBUG B2: IndexNotFoundException");
                 clusterInfoMap.put(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY, new ResolveClusterInfo(true, false, e.getMessage()));
             }
         } else if (request.isLocalIndicesRequested()) {
+            System.err.println("... OLDER CODE DEBUG B3: request.isLocalIndicesRequested");
             // the localIndices entry can be null even when the user requested a local index, as the index resolution
             // process can remove them (see RemoteClusterActionRequest for more details), so if we get here, no matching
             // index was found and no security exception was thrown, so just set matchingIndices=false
@@ -136,6 +143,7 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
             for (Map.Entry<String, OriginalIndices> remoteIndices : remoteClusterIndices.entrySet()) {
                 resolveClusterTask.ensureNotCancelled();
                 String clusterAlias = remoteIndices.getKey();
+                System.err.println("... OLDER CODE DEBUG z: making CCS for " + clusterAlias);
                 OriginalIndices originalIndices = remoteIndices.getValue();
                 boolean skipUnavailable = remoteClusterService.isSkipUnavailable(clusterAlias);
                 RemoteClusterClient remoteClusterClient = remoteClusterService.getRemoteClusterClient(
