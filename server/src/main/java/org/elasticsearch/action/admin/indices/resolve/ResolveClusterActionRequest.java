@@ -30,6 +30,8 @@ public class ResolveClusterActionRequest extends ActionRequest implements Indice
 
     public static final IndicesOptions DEFAULT_INDICES_OPTIONS = IndicesOptions.strictExpandOpen();
 
+    public static final String TRANSPORT_VERSION_ERROR_MESSAGE_PREFIX = "ResolveClusterAction requires at least version";
+
     private String[] names;
     /*
      * Tracks whether the user originally requested any local indices
@@ -50,9 +52,9 @@ public class ResolveClusterActionRequest extends ActionRequest implements Indice
     private IndicesOptions indicesOptions;
     // true if the user did not provide any index expression - they only want cluster level info, not index matching
     private boolean clusterInfoOnly;
-    // whether this request is being processing on the primary cluster being queried ("local") or on a remote
-    // this is needed when clusterInfoOnly=true and we need to know whether to list out all possible clusters
-    // on a node. (We don't want cross-cluster chaining on remotes that might be configured with their own remotes)
+    // whether this request is being processing on the primary ("local") cluster being queried or on a remote
+    // this is needed when clusterInfoOnly=true since we need to know whether to list out all possible remotes
+    // on a node. (We don't want cross-cluster chaining on remotes that might be configured with their own remotes.)
     private boolean isQueryingCluster;
 
     public ResolveClusterActionRequest(String[] names) {
@@ -67,8 +69,6 @@ public class ResolveClusterActionRequest extends ActionRequest implements Indice
         this.indicesOptions = indicesOptions;
         this.clusterInfoOnly = clusterInfoOnly;
         this.isQueryingCluster = queryingCluster;
-        assert clusterInfoOnly == false || (names != null && names.length == 0)
-            : "If clusterInfoOnly is true, the indices array must be an empty";
     }
 
     @SuppressWarnings("this-escape")
@@ -76,7 +76,7 @@ public class ResolveClusterActionRequest extends ActionRequest implements Indice
         super(in);
         if (in.getTransportVersion().before(TransportVersions.V_8_13_0)) {
             throw new UnsupportedOperationException(
-                "ResolveClusterAction requires at least version "
+                TRANSPORT_VERSION_ERROR_MESSAGE_PREFIX
                     + TransportVersions.V_8_13_0.toReleaseVersion()
                     + " but was "
                     + in.getTransportVersion().toReleaseVersion()

@@ -41,6 +41,7 @@ import org.elasticsearch.transport.RemoteClusterService;
 import org.elasticsearch.transport.TransportService;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
@@ -52,8 +53,6 @@ import static org.elasticsearch.action.search.TransportSearchHelper.checkCCSVers
 public class TransportResolveClusterAction extends HandledTransportAction<ResolveClusterActionRequest, ResolveClusterActionResponse> {
 
     private static final Logger logger = LogManager.getLogger(TransportResolveClusterAction.class);
-    private static final String TRANSPORT_VERSION_ERROR_MESSAGE = "ResolveClusterAction requires at least Transport Version";
-
     public static final String NAME = "indices:admin/resolve/cluster";
     public static final ActionType<ResolveClusterActionResponse> TYPE = new ActionType<>(NAME);
     public static final RemoteClusterActionType<ResolveClusterActionResponse> REMOTE_TYPE = new RemoteClusterActionType<>(
@@ -104,11 +103,11 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
         if (request.clusterInfoOnly() && request.queryingCluster()) {
             System.err.println(">>> DEBUG A1");
             // user does not want to check whether an index expression matches
+            // use "*:*" to 1) discover all the configured remote clusters and 2) specify an index pattern
+            // of "*" for older clusters that do not have/understand the clusterInfoOnly flag on the request
             remoteClusterIndices = remoteClusterService.groupIndices(request.indicesOptions(), new String[] { "*:*" }, false);
-            for (String clusterAlias : remoteClusterIndices.keySet()) {
-                remoteClusterIndices.put(clusterAlias, new OriginalIndices(new String[0], IndicesOptions.DEFAULT));
-            }
             if (remoteClusterIndices.isEmpty()) {
+                // no remote clusters are configured on the primary "querying" cluster
                 System.err.println(">>> DEBUG A2: ABORT ------------- !!");
                 listener.onResponse(new ResolveClusterActionResponse(Map.of()));
                 return;
@@ -123,7 +122,12 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
         System.err.println(">>> DEBUG C");
         Map<String, ResolveClusterInfo> clusterInfoMap = new ConcurrentHashMap<>();
         // add local cluster info if in scope of the index-expression from user
-        if (localIndices != null) {
+        if (request.clusterInfoOnly() && request.queryingCluster() == false) {
+            System.err.println(">>> DEBUG C0");
+            // on the remote cluster if cluster info only is requested (localIndices == null), just return build info
+            ResolveClusterInfo resolveClusterInfo = new ResolveClusterInfo(true, false, null, Build.current());
+            clusterInfoMap.put(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY, resolveClusterInfo);
+        } else if (localIndices != null) {
             System.err.println(">>> DEBUG C1");
             try {
                 boolean matchingIndices = hasMatchingIndices(localIndices, request.indicesOptions(), clusterState);
@@ -132,6 +136,7 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
                     new ResolveClusterInfo(true, false, matchingIndices, Build.current())
                 );
             } catch (IndexNotFoundException e) {
+                System.err.println(">>> DEBUG C1 - Error");
                 clusterInfoMap.put(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY, new ResolveClusterInfo(true, false, e.getMessage()));
             }
         } else if (request.isLocalIndicesRequested()) {
@@ -140,9 +145,6 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
             // process can remove them (see RemoteClusterActionRequest for more details), so if we get here, no matching
             // index was found and no security exception was thrown, so just set matchingIndices=false
             clusterInfoMap.put(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY, new ResolveClusterInfo(true, false, false, Build.current()));
-        } else if (request.queryingCluster() == false && request.clusterInfoOnly()) {
-            // on the remote cluster if cluster info only is requested (localIndices == null), just return build info
-            clusterInfoMap.put(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY, new ResolveClusterInfo(true, false, null, Build.current()));
         }
 
         final var finishedOrCancelled = new AtomicBoolean();
@@ -164,8 +166,7 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
             for (Map.Entry<String, OriginalIndices> remoteIndices : remoteClusterIndices.entrySet()) {
                 resolveClusterTask.ensureNotCancelled();
                 String clusterAlias = remoteIndices.getKey();
-                // MP NOTE: this can now be null
-                OriginalIndices originalIndices = remoteIndices.getValue();  // indices=[blog*]
+                OriginalIndices originalIndices = remoteIndices.getValue();
                 boolean skipUnavailable = remoteClusterService.isSkipUnavailable(clusterAlias);
                 RemoteClusterClient remoteClusterClient = remoteClusterService.getRemoteClusterClient(
                     clusterAlias,
@@ -179,7 +180,7 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
                     request.clusterInfoOnly(),
                     false
                 );
-                System.err.printf(">> Remote request for %s: %s\n", clusterAlias, remoteRequest);
+                System.err.printf(">> DEBUG XXX Remote request for %s: %s\n", clusterAlias, remoteRequest);
                 // allow cancellation requests to propagate to remote clusters
                 remoteRequest.setParentTask(clusterService.localNode().getId(), task.getId());
 
@@ -190,10 +191,8 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
                             releaseResourcesOnCancel(clusterInfoMap);
                             return;
                         }
-                        // MP LEFTOFF - coming back as null from the remote now - why? Do I need to pass request.clusterInfoOnly to the
-                        // remote (Line 167)? TODO needs to be serialized eitehr way
                         ResolveClusterInfo info = response.getResolveClusterInfo().get(RemoteClusterAware.LOCAL_CLUSTER_GROUP_KEY);
-                        System.err.println("... RESPONSE ResolveClusterInfo: " + info);
+                        System.err.println("... DEBUG RESPONSE ResolveClusterInfo: " + info);
                         if (info != null) {
                             clusterInfoMap.put(clusterAlias, new ResolveClusterInfo(info, skipUnavailable, request.clusterInfoOnly()));
                         }
@@ -204,7 +203,7 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
 
                     @Override
                     public void onFailure(Exception failure) {
-                        System.err.println("... RESPONSE FAILURE " + failure);
+                        System.err.println("... DEBUG RESPONSE FAILURE " + failure);
                         if (resolveClusterTask.isCancelled()) {
                             releaseResourcesOnCancel(clusterInfoMap);
                             return;
@@ -224,12 +223,14 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
                             // this error at the Transport layer BEFORE it sends the request to the remote cluster, since there
                             // are version guards on the Writeables for this Action, namely ResolveClusterActionRequest.writeTo
                             if (cause instanceof UnsupportedOperationException
-                                && cause.getMessage().contains(TRANSPORT_VERSION_ERROR_MESSAGE)) {
+                                && cause.getMessage().contains(ResolveClusterActionRequest.TRANSPORT_VERSION_ERROR_MESSAGE_PREFIX)) {
+                                System.err.println("##### #### ### FALLBACK 1");
                                 // Since this cluster does not have _resolve/cluster, we call the _resolve/index
                                 // endpoint to fill in the matching_indices field of the response for that cluster
-                                String[] remoteIndicesArray = originalIndices.indices() != null
-                                    ? originalIndices.indices()
-                                    : new String[] { "*" };  // MP TODO: need to test this!!
+                                // MP TODO: if clusterInfoOnly, what is the least expensive index pattern to send?
+                                // MP TODO: IDEA: just pick a random index name (e.g. foo) and handle IndexNotFoundExceptions below
+                                String[] remoteIndicesArray = request.clusterInfoOnly() ? new String[] { "*" } : originalIndices.indices();
+                                System.err.println("##### #### ### FALLBACK 2: remoteIndicesArray: " + Arrays.toString(remoteIndicesArray));
                                 ResolveIndexAction.Request resolveIndexRequest = new ResolveIndexAction.Request(
                                     remoteIndicesArray,
                                     originalIndices.indicesOptions()
@@ -238,11 +239,13 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
                                     @Override
                                     public void onResponse(ResolveIndexAction.Response response) {
                                         Boolean matchingIndices = null;
-                                        if (originalIndices != null) {
+                                        if (request.clusterInfoOnly() == false) {
+                                            System.err.println("##### #### ### FALLBACK 3");
                                             matchingIndices = response.getIndices().size() > 0
                                                 || response.getAliases().size() > 0
                                                 || response.getDataStreams().size() > 0;
                                         }
+                                        System.err.println("##### #### ### FALLBACK 4 for " + clusterAlias);
                                         clusterInfoMap.put(
                                             clusterAlias,
                                             new ResolveClusterInfo(true, skipUnavailable, matchingIndices, null)
@@ -251,6 +254,7 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
 
                                     @Override
                                     public void onFailure(Exception e) {
+                                        System.err.println("##### #### ### FALLBACK 5: " + e);
                                         Throwable cause = ExceptionsHelper.unwrapCause(e);
                                         clusterInfoMap.put(clusterAlias, new ResolveClusterInfo(false, skipUnavailable, cause.toString()));
                                         logger.warn(
@@ -259,6 +263,7 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
                                         );
                                     }
                                 };
+                                System.err.println("##### #### ### FALLBACK EXECUTE REMOTE");
                                 remoteClusterClient.execute(
                                     ResolveIndexAction.REMOTE_TYPE,
                                     resolveIndexRequest,

@@ -22,7 +22,7 @@ public class ResolveClusterInfo implements Writeable {
 
     private final boolean connected;
     private final Boolean skipUnavailable;  // remote clusters don't know their setting, so they put null and querying cluster fills in
-    private final Boolean matchingIndices;  // null means 'unknown' when not connected
+    private final Boolean matchingIndices;  // null means no index expression requested by user or remote cluster was not connected
     private final Build build;
     private final String error;
 
