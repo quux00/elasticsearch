@@ -59,6 +59,7 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
         NAME,
         ResolveClusterActionResponse::new
     );
+    private static final String DUMMY_IDX = "dummy";
 
     private final Executor searchCoordinationExecutor;
     private final ClusterService clusterService;
@@ -105,7 +106,7 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
             // user does not want to check whether an index expression matches
             // use "*:*" to 1) discover all the configured remote clusters and 2) specify an index pattern
             // of "*" for older clusters that do not have/understand the clusterInfoOnly flag on the request
-            remoteClusterIndices = remoteClusterService.groupIndices(request.indicesOptions(), new String[] { "*:*" }, false);
+            remoteClusterIndices = remoteClusterService.groupIndices(request.indicesOptions(), new String[] { "*:" + DUMMY_IDX }, false);
             if (remoteClusterIndices.isEmpty()) {
                 // no remote clusters are configured on the primary "querying" cluster
                 System.err.println(">>> DEBUG A2: ABORT ------------- !!");
@@ -173,9 +174,10 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
                     searchCoordinationExecutor,
                     RemoteClusterService.DisconnectedStrategy.RECONNECT_IF_DISCONNECTED
                 );
-                String[] remoteIndicesArray = originalIndices.indices() != null ? originalIndices.indices() : new String[0];
+                // // MP TODO: can this ever actually be null now?
+                // String[] remoteIndicesArray = originalIndices.indices() != null ? originalIndices.indices() : new String[0];
                 var remoteRequest = new ResolveClusterActionRequest(
-                    remoteIndicesArray,
+                    originalIndices.indices(),
                     request.indicesOptions(),
                     request.clusterInfoOnly(),
                     false
@@ -214,9 +216,9 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
                             failure,
                             ElasticsearchSecurityException.class
                         ) instanceof ElasticsearchSecurityException ese) {
-                            clusterInfoMap.put(clusterAlias, new ResolveClusterInfo(true, skipUnavailable, ese.getMessage()));
+                            clusterInfoMap.put(clusterAlias, createResolveClusterInfo(skipUnavailable, request.clusterInfoOnly(), ese));
                         } else if (ExceptionsHelper.unwrap(failure, IndexNotFoundException.class) instanceof IndexNotFoundException infe) {
-                            clusterInfoMap.put(clusterAlias, new ResolveClusterInfo(true, skipUnavailable, infe.getMessage()));
+                            clusterInfoMap.put(clusterAlias, createResolveClusterInfo(skipUnavailable, request.clusterInfoOnly(), infe));
                         } else {
                             Throwable cause = ExceptionsHelper.unwrapCause(failure);
                             // when querying an older cluster that does not have the _resolve/cluster endpoint, we will get
@@ -229,10 +231,11 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
                                 // endpoint to fill in the matching_indices field of the response for that cluster
                                 // MP TODO: if clusterInfoOnly, what is the least expensive index pattern to send?
                                 // MP TODO: IDEA: just pick a random index name (e.g. foo) and handle IndexNotFoundExceptions below
-                                String[] remoteIndicesArray = request.clusterInfoOnly() ? new String[] { "*" } : originalIndices.indices();
-                                System.err.println("##### #### ### FALLBACK 2: remoteIndicesArray: " + Arrays.toString(remoteIndicesArray));
+                                // String[] remoteIndicesArray = request.clusterInfoOnly() ? new String[] { "*" } :
+                                // originalIndices.indices();
+                                System.err.println("##### ### FALLBACK 2: searching for: " + Arrays.toString(originalIndices.indices()));
                                 ResolveIndexAction.Request resolveIndexRequest = new ResolveIndexAction.Request(
-                                    remoteIndicesArray,
+                                    originalIndices.indices(),
                                     originalIndices.indicesOptions()
                                 );
                                 ActionListener<ResolveIndexAction.Response> resolveIndexActionListener = new ActionListener<>() {
@@ -255,12 +258,40 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
                                     @Override
                                     public void onFailure(Exception e) {
                                         System.err.println("##### #### ### FALLBACK 5: " + e);
-                                        Throwable cause = ExceptionsHelper.unwrapCause(e);
-                                        clusterInfoMap.put(clusterAlias, new ResolveClusterInfo(false, skipUnavailable, cause.toString()));
-                                        logger.warn(
-                                            () -> Strings.format("Failure from _resolve/cluster lookup against cluster %s: ", clusterAlias),
-                                            e
-                                        );
+                                        if (ExceptionsHelper.unwrap(
+                                            e,
+                                            ElasticsearchSecurityException.class
+                                        ) instanceof ElasticsearchSecurityException ese) {
+                                            clusterInfoMap.put(
+                                                clusterAlias,
+                                                createResolveClusterInfo(skipUnavailable, request.clusterInfoOnly(), ese)
+                                            );
+                                        } else if (ExceptionsHelper.unwrap(
+                                            e,
+                                            IndexNotFoundException.class
+                                        ) instanceof IndexNotFoundException infe) {
+                                            clusterInfoMap.put(
+                                                clusterAlias,
+                                                createResolveClusterInfo(skipUnavailable, request.clusterInfoOnly(), infe)
+                                            );
+                                        } else {
+                                            ResolveClusterInfo resolveClusterInfo;
+                                            boolean remoteUnavailableException = ExceptionsHelper.isRemoteUnavailableException(e);
+                                            if (request.clusterInfoOnly() && remoteUnavailableException == false) {
+                                                resolveClusterInfo = new ResolveClusterInfo(true, skipUnavailable);
+                                            } else {
+                                                String errorMessage = ExceptionsHelper.unwrapCause(e).getMessage();
+                                                resolveClusterInfo = new ResolveClusterInfo(false, skipUnavailable, errorMessage);
+                                                logger.warn(
+                                                    () -> Strings.format(
+                                                        "Failure from _resolve/index lookup against cluster %s: ",
+                                                        clusterAlias
+                                                    ),
+                                                    e
+                                                );
+                                            }
+                                            clusterInfoMap.put(clusterAlias, resolveClusterInfo);
+                                        }
                                     }
                                 };
                                 System.err.println("##### #### ### FALLBACK EXECUTE REMOTE");
@@ -292,6 +323,15 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
                 );
             }
         }
+    }
+
+    private static ResolveClusterInfo createResolveClusterInfo(boolean skipUnavailable, boolean clusterInfoOnly, Exception e) {
+        if (clusterInfoOnly) {
+            return new ResolveClusterInfo(true, skipUnavailable);
+        } else {
+            return new ResolveClusterInfo(true, skipUnavailable, e.getMessage());
+        }
+
     }
 
     /**

@@ -44,7 +44,7 @@ public class ResolveClusterInfo implements Writeable {
             skipUnavailable,
             clusterInfoOnly ? null : copyFrom.getMatchingIndices(),
             copyFrom.getBuild(),
-            copyFrom.getError()
+            clusterInfoOnly ? null : copyFrom.getError()
         );
     }
 
