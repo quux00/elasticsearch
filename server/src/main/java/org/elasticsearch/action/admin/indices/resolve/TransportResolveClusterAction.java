@@ -238,62 +238,12 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
                                     originalIndices.indices(),
                                     originalIndices.indicesOptions()
                                 );
-                                ActionListener<ResolveIndexAction.Response> resolveIndexActionListener = new ActionListener<>() {
-                                    @Override
-                                    public void onResponse(ResolveIndexAction.Response response) {
-                                        Boolean matchingIndices = null;
-                                        if (request.clusterInfoOnly() == false) {
-                                            System.err.println("##### #### ### FALLBACK 3");
-                                            matchingIndices = response.getIndices().size() > 0
-                                                || response.getAliases().size() > 0
-                                                || response.getDataStreams().size() > 0;
-                                        }
-                                        System.err.println("##### #### ### FALLBACK 4 for " + clusterAlias);
-                                        clusterInfoMap.put(
-                                            clusterAlias,
-                                            new ResolveClusterInfo(true, skipUnavailable, matchingIndices, null)
-                                        );
-                                    }
-
-                                    @Override
-                                    public void onFailure(Exception e) {
-                                        System.err.println("##### #### ### FALLBACK 5: " + e);
-                                        if (ExceptionsHelper.unwrap(
-                                            e,
-                                            ElasticsearchSecurityException.class
-                                        ) instanceof ElasticsearchSecurityException ese) {
-                                            clusterInfoMap.put(
-                                                clusterAlias,
-                                                createResolveClusterInfo(skipUnavailable, request.clusterInfoOnly(), ese)
-                                            );
-                                        } else if (ExceptionsHelper.unwrap(
-                                            e,
-                                            IndexNotFoundException.class
-                                        ) instanceof IndexNotFoundException infe) {
-                                            clusterInfoMap.put(
-                                                clusterAlias,
-                                                createResolveClusterInfo(skipUnavailable, request.clusterInfoOnly(), infe)
-                                            );
-                                        } else {
-                                            ResolveClusterInfo resolveClusterInfo;
-                                            boolean remoteUnavailableException = ExceptionsHelper.isRemoteUnavailableException(e);
-                                            if (request.clusterInfoOnly() && remoteUnavailableException == false) {
-                                                resolveClusterInfo = new ResolveClusterInfo(true, skipUnavailable);
-                                            } else {
-                                                String errorMessage = ExceptionsHelper.unwrapCause(e).getMessage();
-                                                resolveClusterInfo = new ResolveClusterInfo(false, skipUnavailable, errorMessage);
-                                                logger.warn(
-                                                    () -> Strings.format(
-                                                        "Failure from _resolve/index lookup against cluster %s: ",
-                                                        clusterAlias
-                                                    ),
-                                                    e
-                                                );
-                                            }
-                                            clusterInfoMap.put(clusterAlias, resolveClusterInfo);
-                                        }
-                                    }
-                                };
+                                ActionListener<ResolveIndexAction.Response> resolveIndexActionListener = createResolveIndexActionListener(
+                                    clusterAlias,
+                                    request.clusterInfoOnly(),
+                                    skipUnavailable,
+                                    clusterInfoMap
+                                );
                                 System.err.println("##### #### ### FALLBACK EXECUTE REMOTE");
                                 remoteClusterClient.execute(
                                     ResolveIndexAction.REMOTE_TYPE,
@@ -315,6 +265,62 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
                             releaseResourcesOnCancel(clusterInfoMap);
                         }
                     }
+
+                    /**
+                     * Create an ActionListener to handle responses from calls when falling back to use the resolve/index
+                     * endpoint from older clusters that don't have the resolve/cluster endpoint.
+                     */
+                    private static ActionListener<ResolveIndexAction.Response> createResolveIndexActionListener(
+                        String clusterAlias,
+                        boolean clusterInfoOnly,
+                        boolean skipUnavailable,
+                        Map<String, ResolveClusterInfo> clusterInfoMap
+                    ) {
+                        ActionListener<ResolveIndexAction.Response> resolveIndexActionListener = new ActionListener<>() {
+                            @Override
+                            public void onResponse(ResolveIndexAction.Response response) {
+                                Boolean matchingIndices = null;
+                                if (clusterInfoOnly == false) {
+                                    System.err.println("##### #### ### FALLBACK 3");
+                                    matchingIndices = response.getIndices().size() > 0
+                                        || response.getAliases().size() > 0
+                                        || response.getDataStreams().size() > 0;
+                                }
+                                System.err.println("##### #### ### FALLBACK 4 for " + clusterAlias);
+                                clusterInfoMap.put(clusterAlias, new ResolveClusterInfo(true, skipUnavailable, matchingIndices, null));
+                            }
+
+                            @Override
+                            public void onFailure(Exception e) {
+                                System.err.println("##### #### ### FALLBACK 5: " + e);
+                                ResolveClusterInfo resolveClusterInfo;
+                                if (ExceptionsHelper.isRemoteUnavailableException((e))) {
+                                    resolveClusterInfo = new ResolveClusterInfo(false, skipUnavailable);
+                                } else if (clusterInfoOnly) {
+                                    resolveClusterInfo = new ResolveClusterInfo(true, skipUnavailable);
+                                } else {
+                                    Throwable knownCause = ExceptionsHelper.unwrap(
+                                        e,
+                                        ElasticsearchSecurityException.class,
+                                        IndexNotFoundException.class
+                                    );
+                                    if (knownCause != null) {
+                                        resolveClusterInfo = new ResolveClusterInfo(true, skipUnavailable, knownCause.getMessage());
+                                    } else {
+                                        // not clear what the error is here, so be safe and mark the cluster as not connected
+                                        String errorMessage = ExceptionsHelper.unwrapCause(e).getMessage();
+                                        resolveClusterInfo = new ResolveClusterInfo(false, skipUnavailable, errorMessage);
+                                        logger.warn(
+                                            () -> Strings.format("Failure from _resolve/index lookup against cluster %s: ", clusterAlias),
+                                            e
+                                        );
+                                    }
+                                }
+                                clusterInfoMap.put(clusterAlias, resolveClusterInfo);
+                            }
+                        };
+                        return resolveIndexActionListener;
+                    }
                 };
                 remoteClusterClient.execute(
                     TransportResolveClusterAction.REMOTE_TYPE,
@@ -325,6 +331,7 @@ public class TransportResolveClusterAction extends HandledTransportAction<Resolv
         }
     }
 
+    // MP TODO: remove this method - don't need it
     private static ResolveClusterInfo createResolveClusterInfo(boolean skipUnavailable, boolean clusterInfoOnly, Exception e) {
         if (clusterInfoOnly) {
             return new ResolveClusterInfo(true, skipUnavailable);
